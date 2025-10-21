@@ -2,19 +2,14 @@
 <package format="3">
   <name>planning_pkg</name>
   <version>0.0.0</version>
-  <description>C++ Path Planning Node</description>
-  <maintainer email="sugosugo222@gmail.com">misys</maintainer>
-  <license>TODO: License declaration</license>
+  <description>C++ Path Planning Node (Fixed Path Publisher)</description>
+  <maintainer email="sugosugo222@gmail.com">andantinow</maintainer>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
-  <depend>tf2</depend>
-  <depend>tf2_ros</depend>
-  
-  <test_depend>ament_lint_auto</test_depend>
+  <depend>nav_msgs</depend>           <depend>geometry_msgs</depend>      <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
   <export>

@@ -1,9 +1,7 @@
-// 파일: ~/ros2_ws/src/planning_pkg/src/simple_path_planner.cpp
-
 #include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/pose_stamped.hpp" 
 #include "nav_msgs/msg/path.hpp"             
-#include <tf2/LinearMath/Quaternion.h>       
+#include "nav_msgs/msg/odometry.hpp" // Added for subscription
+#include "geometry_msgs/msg/pose_stamped.hpp" 
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -11,56 +9,57 @@ using namespace std::chrono_literals;
 class PathPlanner : public rclcpp::Node
 {
 public:
-    PathPlanner() : Node("simple_path_planner")
+    PathPlanner() : Node("path_planner")
     {
-        // 구독자: /odom 토픽 구독
-        odom_subscriber_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/odom", 10, std::bind(&PathPlanner::odom_callback, this, std::placeholders::_1));
+        // 구독자: /localization/pose 토픽 구독 (Odometry type)
+        odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/localization/pose", 10, std::bind(&PathPlanner::odom_callback, this, std::placeholders::_1));
 
-        // 발행자: /path 토픽 발행
-        path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
+        // 발행자: /planning/path 토픽 발행 (Path type)
+        path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/planning/path", 10);
 
-        RCLCPP_INFO(this->get_logger(), "Path Planner 노드 시작됨. /odom 대기 및 /path 발행 준비.");
+        // Path를 주기적으로 발행하기 위한 타이머 (2초)
+        timer_ = this->create_wall_timer(
+            2000ms, 
+            std::bind(&PathPlanner::publish_path_fixed, this)); 
+
+        RCLCPP_INFO(this->get_logger(), "Path Planner Node started, publishing to /planning/path.");
     }
 
 private:
-    void odom_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
-        // **[핵심] /odom 메시지를 받을 때마다 고정된 경로를 발행 (A* 알고리즘 대신 단순 경로)**
-        
-        nav_msgs::msg::Path path_msg;
+        // [TODO]: 로봇 위치를 받아 동적으로 경로를 계산하는 로직 삽입 예정
+    }
+    
+    void publish_path_fixed()
+    {
+        // [Core Logic] 고정된 2개의 Waypoint를 가진 Path 메시지 발행
+        auto path_msg = nav_msgs::msg::Path();
         path_msg.header.stamp = this->now();
         path_msg.header.frame_id = "world";
 
-        // 고정된 3개의 목표 지점 (순수 테스트용 경로)
-        std::vector<geometry_msgs::msg::PoseStamped> poses;
+        // Waypoint 1: (6.0, 1.0)
+        auto start_pose = geometry_msgs::msg::PoseStamped(); // Corrected PoseStamped
+        start_pose.header = path_msg.header;
+        start_pose.pose.position.x = 6.0;
+        start_pose.pose.position.y = 1.0;
+        path_msg.poses.push_back(start_pose);
         
-        // 지점 1: (5, 0)
-        geometry_msgs::msg::PoseStamped p1;
-        p1.header = path_msg.header;
-        p1.pose.position.x = 5.0; p1.pose.position.y = 0.0;
-        poses.push_back(p1);
-
-        // 지점 2: (5, 5)
-        geometry_msgs::msg::PoseStamped p2;
-        p2.header = path_msg.header;
-        p2.pose.position.x = 5.0; p2.pose.position.y = 5.0;
-        poses.push_back(p2);
-
-        // 지점 3: (0, 5)
-        geometry_msgs::msg::PoseStamped p3;
-        p3.header = path_msg.header;
-        p3.pose.position.x = 0.0; p3.pose.position.y = 5.0;
-        poses.push_back(p3);
-
-        path_msg.poses = poses;
+        // Waypoint 2: (5.0, 0.0)
+        auto end_pose = geometry_msgs::msg::PoseStamped(); // Corrected PoseStamped
+        end_pose.header = path_msg.header;
+        end_pose.pose.position.x = 5.0;
+        end_pose.pose.position.y = 0.0;
+        path_msg.poses.push_back(end_pose);
 
         path_publisher_->publish(path_msg);
-        RCLCPP_INFO(this->get_logger(), "New Path published with %zu waypoints.", path_msg.poses.size());
+        RCLCPP_INFO(this->get_logger(), "New fixed path published.");
     }
 
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr odom_subscriber_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
+    rclcpp::TimerBase::SharedPtr timer_;
 };
 
 int main(int argc, char * argv[])

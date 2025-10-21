@@ -1,85 +1,99 @@
-// 파일: ~/ros2_ws/src/control_pkg/src/simple_controller.cpp
-
 #include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/pose_stamped.hpp" // /odom 구독
-#include "nav_msgs/msg/path.hpp"             // /path 구독
-#include "geometry_msgs/msg/twist.hpp"       // /cmd_vel 발행
-#include <cmath> 
+#include "geometry_msgs/msg/twist.hpp"
+#include "nav_msgs/msg/odometry.hpp" // Corrected Odometry
+#include "nav_msgs/msg/path.hpp"     // Corrected Path
+#include <cmath>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/transform_datatypes.h>
+#include <tf2/LinearMath/Matrix3x3.h> 
 
 using std::placeholders::_1;
 
 class SimpleController : public rclcpp::Node
 {
 public:
-    SimpleController() : Node("simple_controller_node")
+    SimpleController() : Node("controller_node")
     {
-        // 1. 구독자 생성: /odom (현재 위치)
-        odom_subscriber_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/odom", 10, std::bind(&SimpleController::odom_callback, this, _1));
+        // 1. Subscribers (Odom and Path)
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/localization/pose", 10, std::bind(&SimpleController::pose_callback, this, _1));
+        path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
+            "/planning/path", 10, std::bind(&SimpleController::path_callback, this, _1));
 
-        // 2. 구독자 생성: /path (목표 경로)
-        path_subscriber_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/path", 10, std::bind(&SimpleController::path_callback, this, _1));
+        // 2. Publisher (Control Command)
+        cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
 
-        // 3. 발행자 생성: /cmd_vel (속도 명령)
-        cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
-
-        RCLCPP_INFO(this->get_logger(), "Controller 노드 시작됨. 제어 명령 준비.");
+        RCLCPP_INFO(this->get_logger(), "Controller Node started, ready for control logic.");
     }
 
 private:
-    void odom_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+    nav_msgs::msg::Odometry current_pose_;
+    nav_msgs::msg::Path current_path_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
+
+    // Utility function to convert Quaternion to Yaw
+    double get_yaw_from_quaternion(const geometry_msgs::msg::Quaternion& q) {
+        tf2::Quaternion tf_q(q.x, q.y, q.z, q.w);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(tf_q).getRPY(roll, pitch, yaw);
+        return yaw;
+    }
+
+    void pose_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
         current_pose_ = *msg;
-        publish_control_command();
+        if (!current_path_.poses.empty()) {
+            control_callback(); 
+        }
     }
 
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg)
     {
-        if (!msg->poses.empty()) {
-            target_pose_ = msg->poses[0]; 
-            RCLCPP_INFO(this->get_logger(), "Target Updated: X=%.2f, Y=%.2f", target_pose_.pose.position.x, target_pose_.pose.position.y);
-        } else {
-            // 경로가 비어있으면 로봇 정지
-            stop_robot();
+        current_path_ = *msg;
+        if (!current_path_.poses.empty()) {
+            control_callback();
         }
     }
 
-    void publish_control_command()
+    void control_callback()
     {
-        auto twist_msg = geometry_msgs::msg::Twist();
-        
-        // [임시 제어 로직] 
-        // 목표 지점에 도달했는지 확인 (원점 5, 0으로 가정)
-        double dx = target_pose_.pose.position.x - current_pose_.pose.position.x;
-        double dy = target_pose_.pose.position.y - current_pose_.pose.position.y;
-        double distance = std::sqrt(dx * dx + dy * dy);
-
-        if (distance < 3.0) { // 원점 주변에 오면 정지 (테스트 용도)
-            stop_robot();
-            RCLCPP_INFO(this->get_logger(), "Target Reached (Distance < 3.0). Stopping.");
+        if (current_path_.poses.empty()) {
             return;
         }
 
-        twist_msg.linear.x = 0.5;  // 전진 속도
-        twist_msg.angular.z = 0.0; // 회전 속도 (나중에 Pure Pursuit 로직으로 대체)
+        // --- [Core Control Logic: Simplified Pure Pursuit] ---
+        double x = current_pose_.pose.pose.position.x;
+        double y = current_pose_.pose.pose.position.y;
+        double current_yaw = get_yaw_from_quaternion(current_pose_.pose.pose.orientation);
 
-        cmd_vel_publisher_->publish(twist_msg);
-    }
-    
-    void stop_robot()
-    {
-        auto twist_msg = geometry_msgs::msg::Twist();
-        twist_msg.linear.x = 0.0;
-        twist_msg.angular.z = 0.0;
-        cmd_vel_publisher_->publish(twist_msg);
-    }
+        // Target Waypoint (First point in path)
+        double target_x = current_path_.poses[0].pose.position.x;
+        double target_y = current_path_.poses[0].pose.position.y;
 
-    geometry_msgs::msg::PoseStamped current_pose_;
-    geometry_msgs::msg::PoseStamped target_pose_; 
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr odom_subscriber_;
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_subscriber_;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
+        // Calculate Angular Error
+        double dx = target_x - x;
+        double dy = target_y - y;
+        double absolute_angle = std::atan2(dy, dx);
+        double angle_to_target = absolute_angle - current_yaw;
+
+        // Angle normalization (-PI ~ PI)
+        if (angle_to_target > M_PI) {
+            angle_to_target -= 2 * M_PI;
+        } else if (angle_to_target < -M_PI) {
+            angle_to_target += 2 * M_PI;
+        }
+
+        // Calculate Twist Command
+        double Kp_angular = 1.0; 
+        geometry_msgs::msg::Twist twist_msg;
+        twist_msg.linear.x = 2.0; 
+        twist_msg.angular.z = Kp_angular * angle_to_target; 
+
+        cmd_vel_pub_->publish(twist_msg);
+    }
 };
 
 int main(int argc, char * argv[])

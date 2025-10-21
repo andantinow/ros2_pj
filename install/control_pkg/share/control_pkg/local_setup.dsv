@@ -1,2 +1,1 @@
-source;share/control_pkg/environment/ament_prefix_path.sh
-source;share/control_pkg/environment/path.sh
+/home/misys/ros2_ws/build/control_pkg/ament_cmake_environment_hooks/local_setup.dsv
