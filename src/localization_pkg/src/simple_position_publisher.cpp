@@ -1,58 +1,35 @@
 #include "rclcpp/rclcpp.hpp"
-#include "nav_msgs/msg/odometry.hpp" // Changed to Odometry (Capital 'O')
-#include <chrono>
-#include <cmath>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include "nav_msgs/msg/odometry.hpp" 
 
-using namespace std::chrono_literals;
+using std::placeholders::_1;
 
-class PosePublisher : public rclcpp::Node
+class F1TenthOdomSubscriber : public rclcpp::Node
 {
 public:
-    PosePublisher() : Node("pose_publisher"), theta_(0.0)
+    F1TenthOdomSubscriber() : Node("f1tenth_odom_subscriber")
     {
-        publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("/localization/pose", 10);
-        timer_ = this->create_wall_timer(
-            100ms, 
-            std::bind(&PosePublisher::publish_pose, this));
-        RCLCPP_INFO(this->get_logger(), "Localization Publisher Node started, publishing to /localization/pose.");
+        // 1. Subscriber: Subscribes to the actual F1TENTH vehicle's Odom topic
+        // TOPIC CHANGED: /localization/pose -> /sim/ego_racecar/odom
+        odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/sim/ego_racecar/odom", 10, std::bind(&F1TenthOdomSubscriber::odom_callback, this, _1));
+
+        RCLCPP_INFO(this->get_logger(), "Localization package (Subscriber) is now waiting for /sim/ego_racecar/odom.");
     }
 
 private:
-    void publish_pose()
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
-        auto odom_msg = nav_msgs::msg::Odometry();
-        
-        odom_msg.header.stamp = this->now();
-        odom_msg.header.frame_id = "world";
-        odom_msg.child_frame_id = "base_link";
-        
-        double radius = 1.0;
-        double speed = 0.5; // rad/s
-        theta_ += speed * 0.1; 
-
-        odom_msg.pose.pose.position.x = 5.0 + radius * std::cos(theta_);
-        odom_msg.pose.pose.position.y = radius * std::sin(theta_);
-
-        tf2::Quaternion q;
-        q.setRPY(0, 0, theta_ + M_PI/2.0); 
-        odom_msg.pose.pose.orientation = tf2::toMsg(q);
-
-        RCLCPP_INFO(this->get_logger(), "Publishing Pose (X:%.2f, Y:%.2f)", 
-                    odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y);
-        publisher_->publish(odom_msg);
+        // This confirms that data is successfully flowing from the F1TENTH simulator.
+        RCLCPP_INFO_ONCE(this->get_logger(), "Successfully received first Odom message from F1TENTH system.");
     }
 
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr publisher_;
-    double theta_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
 };
 
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<PosePublisher>());
+    rclcpp::spin(std::make_shared<F1TenthOdomSubscriber>());
     rclcpp::shutdown();
     return 0;
 }

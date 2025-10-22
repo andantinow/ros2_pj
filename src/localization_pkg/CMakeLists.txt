@@ -15,19 +15,15 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-# -----------------------------------
+# -----------------------------
 
-# Define Executable and link dependencies
-add_executable(pose_publisher src/simple_position_publisher.cpp)
-ament_target_dependencies(pose_publisher rclcpp nav_msgs geometry_msgs tf2 tf2_geometry_msgs)
+# 실행 파일 정의 및 의존성 연결
+add_executable(odom_subscriber src/simple_position_publisher.cpp)
+ament_target_dependencies(odom_subscriber rclcpp nav_msgs geometry_msgs)
 
-include_directories(include)
-
-# Install the compiled executable
+# 컴파일된 실행 파일 설치
 install(TARGETS
-  pose_publisher
+  odom_subscriber
   DESTINATION lib/${PROJECT_NAME}
 )
 
