@@ -8,7 +8,7 @@ def generate_launch_description():
         # 1. Localization Node (Publishes simulated Odometry to /localization/pose)
         Node(
             package='localization_pkg',
-            executable='pose_publisher',
+            executable='odom_subscriber',
             name='loc_publisher',
             output='screen'
         ),
