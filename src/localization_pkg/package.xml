@@ -2,14 +2,14 @@
 <package format="3">
   <name>localization_pkg</name>
   <version>0.0.0</version>
-  <description>ROS C++ Subscriber for F1TENTH Odometry</description>
+  <description>Localization package for F1Tenth project, handling odometry and sensor data.</description>
   <maintainer email="sugosugo222@gmail.com">andantinow</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>nav_msgs</depend>           <depend>geometry_msgs</depend>      <test_depend>ament_lint_auto</test_depend>
+  <depend>nav_msgs</depend>           <depend>geometry_msgs</depend>      <depend>sensor_msgs</depend>        <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
   <export>

@@ -12,25 +12,19 @@ endif()
 find_package(ament_cmake REQUIRED)
 
 # --- [ROS2 Dependency Discovery] ---
-# Essential ROS2 client library
 find_package(rclcpp REQUIRED)
-# Odometry message type
 find_package(nav_msgs REQUIRED)
-# Pose, Quaternion types
 find_package(geometry_msgs REQUIRED)
-# TF2 libraries for coordinate transforms
-find_package(tf2 REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-# -----------------------------------
+find_package(sensor_msgs REQUIRED) # <-- Sensor_msgs 추가
+# -----------------------------
 
 # Define Executable and link dependencies
-# The executable name 'pose_publisher' must match the name used in the launch file.
-add_executable(pose_publisher src/simple_position_publisher.cpp)
-ament_target_dependencies(pose_publisher rclcpp nav_msgs geometry_msgs tf2 tf2_geometry_msgs)
+add_executable(odom_subscriber src/simple_position_publisher.cpp)
+ament_target_dependencies(odom_subscriber rclcpp nav_msgs geometry_msgs sensor_msgs) # <-- Sensor_msgs 연결
 
 # Install the compiled executable
 install(TARGETS
-  pose_publisher
+  odom_subscriber
   DESTINATION lib/${PROJECT_NAME}
 )
 
