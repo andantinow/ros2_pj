@@ -30,17 +30,13 @@ private:
         double speed = std::sqrt(vx * vx + vy * vy);
         
         double steering_angle = 0.0;
-        double acceleration = 0.5;
-        
-        if (speed < 0.1) {
-            acceleration = 1.0;
-        }
+        double target_speed = 1.0;
         
         auto drive_msg = ackermann_msgs::msg::AckermannDriveStamped();
         drive_msg.header.stamp = now();
         drive_msg.header.frame_id = "base_link";
         drive_msg.drive.steering_angle = steering_angle;
-        drive_msg.drive.acceleration = acceleration;
+        drive_msg.drive.speed = target_speed;
         
         drive_pub_->publish(drive_msg);
     }
@@ -55,3 +51,4 @@ int main(int argc, char** argv) {
     rclcpp::shutdown();
     return 0;
 }
+
