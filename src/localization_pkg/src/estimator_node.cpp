@@ -111,7 +111,9 @@ private:
     vehicle_model_msgs::msg::AdaptiveVehicleModel model;
     model.stamp = now();
     model.frame_id = "base_link";
-    model.mu=mu_; model.Cf=Cf_; model.Cr=Cr_;
+    model.mu = mu_;
+    model.cf = Cf_;
+    model.cr = Cr_;
     model_pub_->publish(model);
   }
 };
