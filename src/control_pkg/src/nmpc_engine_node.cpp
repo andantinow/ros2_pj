@@ -4,8 +4,9 @@
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
 #include <vehicle_model_msgs/msg/adaptive_vehicle_model.hpp>
-#include "control_pkg/path_utils.hpp"
+#include "path_utils.hpp"
 #include <optional>
+#include <algorithm>
 
 using std::placeholders::_1;
 using ctrl_utils::normalize_angle;
@@ -34,6 +35,10 @@ public:
     speed_limit_       = get_parameter("speed_limit").as_double();
     lookahead_dist_    = get_parameter("lookahead_distance").as_double();
     use_vref_          = get_parameter("use_vref").as_bool();
+
+    // Initialize rate limiters AFTER reading parameters to avoid UB
+    steer_rl_ = RateLimiter(steer_rate_limit_);
+    speed_rl_ = RateLimiter(3.0);
 
     odom_sub_  = create_subscription<nav_msgs::msg::Odometry>("/perfect_odom",20,
                   std::bind(&NmpcEngineNode::odomCb,this,_1));
@@ -71,7 +76,8 @@ private:
   ackermann_msgs::msg::AckermannDriveStamped last_good_cmd_;
   bool has_last_good_{false};
 
-  RateLimiter steer_rl_{steer_rate_limit_};
+  // Initialize with safe defaults; real limits set in constructor after param load
+  RateLimiter steer_rl_{0.0};
   RateLimiter speed_rl_{3.0};
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
@@ -152,7 +158,7 @@ private:
 #endif
 
     double v_cmd = speed_rl_.step(v_des, dt);
-    cmd.header.stamp = now();
+    cmd.header.stamp = this->now();
     cmd.header.frame_id = "base_link";
     cmd.drive.steering_angle = steer;
     cmd.drive.speed = v_cmd;
