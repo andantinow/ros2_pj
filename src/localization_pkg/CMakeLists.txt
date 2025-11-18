@@ -1,30 +1,27 @@
 cmake_minimum_required(VERSION 3.8)
 project(localization_pkg)
 
-if(NOT CMAKE_C_STANDARD)
-  set(CMAKE_C_STANDARD 17)
-endif()
-
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-find_package(ament_cmake REQUIRED)
+add_compile_options(-Wall -Wextra -Wpedantic)
 
-# --- [ROS2 Dependency Discovery] ---
+find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED) # <-- Sensor_msgs 추가
-# -----------------------------
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(vehicle_model_msgs REQUIRED)
 
-# Define Executable and link dependencies
-add_executable(odom_subscriber src/simple_position_publisher.cpp)
-ament_target_dependencies(odom_subscriber rclcpp nav_msgs geometry_msgs sensor_msgs) # <-- Sensor_msgs 연결
+add_executable(estimator_node src/estimator_node.cpp)
+ament_target_dependencies(estimator_node
+  rclcpp nav_msgs sensor_msgs geometry_msgs tf2 tf2_geometry_msgs vehicle_model_msgs
+)
 
-# Install the compiled executable
-install(TARGETS
-  odom_subscriber
+install(TARGETS estimator_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

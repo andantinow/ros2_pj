@@ -1,9 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>control_pkg</name>
-  <version>0.0.1</version>
-  <description>Control package for F1TENTH racing</description>
-
+  <version>0.0.2</version>
+  <description>Control package with NMPC engine and safe fallback</description>
   <maintainer email="user@example.com">User</maintainer>
   <license>Apache-2.0</license>
 
@@ -13,10 +12,10 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>ackermann_msgs</depend>
-  <depend>nlohmann_json</depend>
+  <depend>std_msgs</depend>
+  <depend>vehicle_model_msgs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-
