@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 
