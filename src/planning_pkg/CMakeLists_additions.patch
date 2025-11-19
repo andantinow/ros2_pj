@@ -1,0 +1,15 @@
+# Add the following to src/planning_pkg/CMakeLists.txt after add_executable(...) entries:
+
+# install generate_raceline executable (if built)
+if(TARGET generate_raceline)
+  install(TARGETS generate_raceline
+    DESTINATION lib/${PROJECT_NAME}
+  )
+endif()
+
+# install raceline_server node (if built)
+if(TARGET raceline_server)
+  install(TARGETS raceline_server
+    DESTINATION lib/${PROJECT_NAME}
+  )
+endif()
