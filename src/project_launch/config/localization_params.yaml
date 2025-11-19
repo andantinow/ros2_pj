@@ -1,9 +1,8 @@
 estimator_node:
   ros__parameters:
-    mu_init: 1.0
-    Cf_init: 15000.0
-    Cr_init: 15000.0
-    mu_alpha: 0.001
-    Cf_alpha: 0.001
-    gate_param_update_on_straight: true
-    kappa_gate_threshold: 0.01
+    frame_id: map
+    use_imu: true
+    odom_topic: /perfect_odom
+    publish_rate: 50.0
+    position_noise: 0.05
+    orientation_noise: 0.01
