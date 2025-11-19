@@ -55,14 +55,16 @@ public:
     timer_   = create_wall_timer(std::chrono::milliseconds(10),
                   std::bind(&NmpcEngineNode::loop,this));
 
-    RCLCPP_INFO(get_logger(),
-      "NMPC Engine Node started (100 Hz). acados: %s",
+    // Determine acados status string outside of macro argument list to avoid
+    // embedding preprocessor directives inside macro arguments (non-portable).
+    const char* acados_status =
 #ifdef HAVE_ACADOS
-      "ENABLED"
+      "ENABLED";
 #else
-      "DISABLED (fallback)"
+      "DISABLED (fallback)";
 #endif
-    );
+
+    RCLCPP_INFO(get_logger(), "NMPC Engine Node started (100 Hz). acados: %s", acados_status);
   }
 
 private:

@@ -19,19 +19,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/simple_path_planner.cpp")
   install(TARGETS simple_path_planner DESTINATION lib/${PROJECT_NAME})
 endif()
 
-# New: raceline server (C++) - publishes Path (+v_ref) once with latched QoS
+# Raceline server (publishes Path (+v_ref) once with latched QoS)
 add_executable(raceline_server src/raceline_server_node.cpp)
 ament_target_dependencies(raceline_server rclcpp nav_msgs geometry_msgs std_msgs)
 install(TARGETS raceline_server DESTINATION lib/${PROJECT_NAME})
 
-# New: C++ CLI to generate raceline.csv from centerline.csv
+# CLI to generate raceline.csv from centerline.csv
 add_executable(generate_raceline src/generate_raceline.cpp)
 ament_target_dependencies(generate_raceline rclcpp)
 install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
 
-# Install config/data/tracks resources
-install(DIRECTORY config data tracks
-  DESTINATION share/${PROJECT_NAME}
-  PATTERN ".gitkeep" EXCLUDE)
+# Install resources only if they exist
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
+  install(DIRECTORY config
+    DESTINATION share/${PROJECT_NAME}
+    PATTERN ".gitkeep" EXCLUDE)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data")
+  install(DIRECTORY data
+    DESTINATION share/${PROJECT_NAME}
+    PATTERN ".gitkeep" EXCLUDE)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tracks")
+  install(DIRECTORY tracks
+    DESTINATION share/${PROJECT_NAME}
+    PATTERN ".gitkeep" EXCLUDE)
+endif()
 
 ament_package()
