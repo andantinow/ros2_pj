@@ -11,7 +11,6 @@ def generate_launch_description():
     raceline_file = LaunchConfiguration('raceline_file')
     control_params_file = LaunchConfiguration('control_params_file')
     localization_params_file = LaunchConfiguration('localization_params_file')
-    use_rviz = LaunchConfiguration('use_rviz')
     
     declare_raceline_file = DeclareLaunchArgument(
         'raceline_file',
@@ -28,14 +27,9 @@ def generate_launch_description():
         default_value=os.path.join(project_launch_dir, 'config', 'localization_params.yaml'),
         description='Path to localization parameters YAML')
     
-    declare_use_rviz = DeclareLaunchArgument(
-        'use_rviz',
-        default_value='false',
-        description='Launch RViz visualization')
-    
     raceline_node = Node(
         package='planning_pkg',
-        executable='raceline_server_node',
+        executable='raceline_server',
         name='raceline_server_node',
         parameters=[{
             'raceline_file': raceline_file,
@@ -63,7 +57,6 @@ def generate_launch_description():
         declare_raceline_file,
         declare_control_params,
         declare_localization_params,
-        declare_use_rviz,
         raceline_node,
         estimator_node,
         nmpc_node

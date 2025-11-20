@@ -1,1 +1,1 @@
-/home/misys/ros2_pj/install/control_pkg:/home/misys/ros2_pj/install/main_executor_node:/home/misys/ros2_pj/install/vehicle_model_msgs:/home/misys/ros2_pj/install/project_launch:/home/misys/ros2_pj/install/planning_pkg:/home/misys/ros2_pj/install/localization_pkg:/opt/ros/humble
+/home/misys/ros2_pj/install/localization_pkg:/home/misys/ros2_pj/install/control_pkg:/home/misys/ros2_pj/install/vehicle_model_msgs:/home/misys/ros2_pj/install/planning_pkg:/opt/ros/humble
