@@ -1,1 +1,1 @@
-rclcpp;nav_msgs;geometry_msgs;sensor_msgs;ament_lint_auto;ament_lint_common
+rclcpp;nav_msgs;sensor_msgs;geometry_msgs;tf2;tf2_geometry_msgs;vehicle_model_msgs

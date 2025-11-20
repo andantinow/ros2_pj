@@ -16,7 +16,7 @@ set(_localization_pkg_CONFIG_INCLUDED TRUE)
 
 # output package information
 if(NOT localization_pkg_FIND_QUIETLY)
-  message(STATUS "Found localization_pkg: 0.0.0 (${localization_pkg_DIR})")
+  message(STATUS "Found localization_pkg: 0.0.2 (${localization_pkg_DIR})")
 endif()
 
 # warn when using a deprecated package

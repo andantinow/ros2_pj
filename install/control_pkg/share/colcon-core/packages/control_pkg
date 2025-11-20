@@ -1,1 +1,1 @@
-ackermann_msgs:geometry_msgs:nav_msgs:nlohmann_json:rclcpp
+ackermann_msgs:geometry_msgs:nav_msgs:rclcpp:std_msgs:vehicle_model_msgs
