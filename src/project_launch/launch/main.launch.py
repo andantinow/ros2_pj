@@ -1,72 +1,71 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
-    project_share = get_package_share_directory('project_launch')
-    # try stack_master first (maps installed there), fallback to planning_pkg
-    try:
-        stack_share = get_package_share_directory('stack_master')
-    except Exception:
-        stack_share = get_package_share_directory('planning_pkg')
-
-    default_map = os.path.join(stack_share, 'maps', 'teras', 'teras.yaml')
-    default_raceline = os.path.join(stack_share, 'maps', 'teras', 'raceline.csv')
-
-    raceline_file = LaunchConfiguration('raceline_file', default=default_raceline)
-    map_path = LaunchConfiguration('map_path', default=default_map)
-    frame_id = LaunchConfiguration('frame_id', default='map')
-    control_params = LaunchConfiguration('control_params', default=os.path.join(project_share, 'config', 'control_params.yaml'))
-    localization_params = LaunchConfiguration('localization_params', default=os.path.join(project_share, 'config', 'localization_params.yaml'))
-
-    declare_raceline = DeclareLaunchArgument('raceline_file', default_value=default_raceline)
-    declare_map = DeclareLaunchArgument('map_path', default_value=default_map)
-    declare_frame = DeclareLaunchArgument('frame_id', default_value='map')
-    declare_ctrl = DeclareLaunchArgument('control_params', default_value=os.path.join(project_share, 'config', 'control_params.yaml'))
-    declare_loc = DeclareLaunchArgument('localization_params', default_value=os.path.join(project_share, 'config', 'localization_params.yaml'))
-
-    # include f1tenth simulator if available
-    f1tenth_launch = None
-    try:
-        f1tenth_share = get_package_share_directory('f1tenth_gym_ros')
-        f1tenth_launch = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(f1tenth_share, 'launch', 'gym_bridge_launch.py')),
-            launch_arguments={'map_path': map_path}.items()
-        )
-    except Exception:
-        f1tenth_launch = None
-
+    project_launch_dir = get_package_share_directory('project_launch')
+    
+    raceline_file = LaunchConfiguration('raceline_file')
+    control_params_file = LaunchConfiguration('control_params_file')
+    localization_params_file = LaunchConfiguration('localization_params_file')
+    use_rviz = LaunchConfiguration('use_rviz')
+    
+    declare_raceline_file = DeclareLaunchArgument(
+        'raceline_file',
+        default_value=os.path.join(project_launch_dir, 'config', 'raceline.csv'),
+        description='Path to raceline CSV file')
+    
+    declare_control_params = DeclareLaunchArgument(
+        'control_params_file',
+        default_value=os.path.join(project_launch_dir, 'config', 'control_params.yaml'),
+        description='Path to control parameters YAML')
+    
+    declare_localization_params = DeclareLaunchArgument(
+        'localization_params_file',
+        default_value=os.path.join(project_launch_dir, 'config', 'localization_params.yaml'),
+        description='Path to localization parameters YAML')
+    
+    declare_use_rviz = DeclareLaunchArgument(
+        'use_rviz',
+        default_value='false',
+        description='Launch RViz visualization')
+    
     raceline_node = Node(
         package='planning_pkg',
-        executable='raceline_server',  # confirm executable name
-        name='raceline_server',
-        output='screen',
-        parameters=[{'raceline_file': raceline_file, 'frame_id': frame_id, 'publish_vref': True}]
-    )
-
+        executable='raceline_server_node',
+        name='raceline_server_node',
+        parameters=[{
+            'raceline_file': raceline_file,
+            'frame_id': 'map',
+            'publish_vref': True,
+            'publish_kappa': True
+        }],
+        output='screen')
+    
     estimator_node = Node(
         package='localization_pkg',
         executable='estimator_node',
         name='estimator_node',
-        output='screen',
-        parameters=[localization_params]
-    )
-
+        parameters=[localization_params_file],
+        output='screen')
+    
     nmpc_node = Node(
         package='control_pkg',
         executable='nmpc_engine_node',
         name='nmpc_engine_node',
-        output='screen',
-        parameters=[control_params]
-    )
+        parameters=[control_params_file],
+        output='screen')
+    
+    return LaunchDescription([
+        declare_raceline_file,
+        declare_control_params,
+        declare_localization_params,
+        declare_use_rviz,
+        raceline_node,
+        estimator_node,
+        nmpc_node
+    ])
 
-    nodes = [declare_raceline, declare_map, declare_frame, declare_ctrl, declare_loc]
-    if f1tenth_launch:
-        nodes.append(f1tenth_launch)
-    nodes.extend([raceline_node, estimator_node, nmpc_node])
-
-    return LaunchDescription(nodes)
