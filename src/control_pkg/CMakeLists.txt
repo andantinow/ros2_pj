@@ -26,6 +26,11 @@ ament_target_dependencies(simple_controller_node
   geometry_msgs
 )
 
+# (중요) 링크 에러 방지를 위해 명시적으로 라이브러리 연결
+target_link_libraries(simple_controller_node
+  tf2_geometry_msgs::tf2_geometry_msgs
+)
+
 install(TARGETS simple_controller_node
   DESTINATION lib/\${PROJECT_NAME}
 )

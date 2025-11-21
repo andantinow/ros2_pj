@@ -7,8 +7,8 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <tf2/utils.h>
-#include <string>
 #include <vector>
+#include <string>
 
 class SimpleController : public rclcpp::Node
 {
@@ -36,5 +36,4 @@ private:
   void control_loop();
   int find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path);
 };
-
-#endif // SIMPLE_CONTROLLER_HPP_
+#endif

@@ -40,9 +40,7 @@ void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
 
 int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path)
 {
-    if (path.poses.empty()) {
-        return -1;
-    }
+    if (path.poses.empty()) return -1;
 
     double current_x = odom.pose.pose.position.x;
     double current_y = odom.pose.pose.position.y;
