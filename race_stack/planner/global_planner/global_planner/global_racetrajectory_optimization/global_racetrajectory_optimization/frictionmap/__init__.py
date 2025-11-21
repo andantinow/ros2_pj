@@ -1,1 +1,0 @@
-from global_racetrajectory_optimization.frictionmap import src
