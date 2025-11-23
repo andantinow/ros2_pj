@@ -1,86 +1,80 @@
 import os
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    
-    # --- 1. 패키지 경로 가져오기 ---
+
+    # package share directories
     project_launch_pkg = get_package_share_directory('project_launch')
     planning_pkg_share = get_package_share_directory('planning_pkg')
     stack_master_pkg = get_package_share_directory('stack_master')
     f1tenth_gym_pkg = get_package_share_directory('f1tenth_gym_ros')
     opponent_pkg = get_package_share_directory('opponent_publisher_cpp')
 
-    # --- 2. 기본 파일 경로 및 설정 ---
-    # 맵 이름만 바꾸면 모든 경로가 자동 생성되도록 설계합니다.
-    default_map_name = 'teras'
-    default_raceline_path = os.path.join(planning_pkg_share, 'data', 'raceline.csv')
-    sim_config_path = os.path.join(stack_master_pkg, 'config', 'SIM', 'sim_params.yaml')
-    
-    default_ctrl_params = os.path.join(project_launch_pkg, 'config', 'control_params.yaml')
-    default_loc_params = os.path.join(project_launch_pkg, 'config', 'localization_params.yaml')
-    rviz_config_path = os.path.join(project_launch_pkg, 'config', 'rviz_config.rviz')
-
-    # --- 3. Launch Arguments 선언 ---
-    
-    # [핵심] map_name 하나로 통합 제어
+    # launch arguments
     declare_map_name = DeclareLaunchArgument(
-        'map_name', 
-        default_value=default_map_name, 
-        description='Map name (e.g., teras, silverstone). This sets both sim map and opponent map.'
+        'map_name',
+        default_value='teras',
+        description='Map name (e.g., teras, silverstone).'
     )
 
     declare_raceline = DeclareLaunchArgument(
-        'raceline_file', 
-        default_value=default_raceline_path, 
+        'raceline_file',
+        default_value=os.path.join(planning_pkg_share, 'data', 'raceline.csv'),
         description='Path to raceline csv'
     )
 
-    # --- 4. 변수 설정 (Configuration & Substitution) ---
-    
-    # LaunchConfiguration으로 값을 받아옵니다.
+    # Option to avoid launching RViz here if included launches already start RViz
+    declare_start_rviz = DeclareLaunchArgument(
+        'start_rviz',
+        default_value='true',
+        description='Whether to start rviz from this launch (set false if included launches start rviz).'
+    )
+
+    # LaunchConfiguration shortcuts
     map_name_conf = LaunchConfiguration('map_name')
     raceline_file_conf = LaunchConfiguration('raceline_file')
+    start_rviz_conf = LaunchConfiguration('start_rviz')
 
-    # [자동 경로 생성] map_name에 따라 .yaml 파일 경로를 동적으로 만듭니다.
-    # 구조: stack_master/maps/{map_name}/{map_name}.yaml
+    # Build map yaml path: <stack_master_pkg>/maps/<map_name>/<map_name>.yaml
+    # PythonExpression concatenates the LaunchConfiguration value with '.yaml' at runtime.
     map_yaml_path = PathJoinSubstitution([
         stack_master_pkg,
         'maps',
         map_name_conf,
-        PythonExpression(["'", map_name_conf, "' + '.yaml'"]) # 문자열 결합: name + .yaml
+        PythonExpression(["'", map_name_conf, "' + '.yaml'"])
     ])
 
-    # --- 5. 노드 및 런치 포함 실행 ---
-
-    # A. 시뮬레이터 실행
+    # Include other launches (example: gym bridge)
     f1tenth_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(f1tenth_gym_pkg, 'launch', 'gym_bridge_launch.py')
         ),
         launch_arguments={
-            'map_yaml_path': map_yaml_path, # 위에서 만든 동적 경로 주입
-            'params_file': sim_config_path
+            # many gym bridges expect a map yaml path; pass computed path
+            'map_yaml_path': map_yaml_path,
+            'params_file': os.path.join(stack_master_pkg, 'config', 'SIM', 'sim_params.yaml')
         }.items()
     )
 
-    # B. 상대차(주황색) 실행
     opponent_launch = IncludeLaunchDescription(
         XMLLaunchDescriptionSource(
             os.path.join(opponent_pkg, 'launch', 'opponent_publisher_launch.xml')
         ),
         launch_arguments={
-            'map_name': map_name_conf,  # [수정됨] 하드코딩 대신 변수 사용
+            'map_name': map_name_conf,
             'speed': '0.5'
         }.items()
     )
 
-    # C. 자차(파란색) - 우리 노드들 실행
+    # Nodes defined in this workspace
     raceline_node = Node(
         package='planning_pkg',
         executable='raceline_server',
@@ -92,39 +86,63 @@ def generate_launch_description():
             'publish_vref': True
         }]
     )
-    
+
     estimator_node = Node(
         package='localization_pkg',
         executable='estimator_node',
         name='estimator_node',
         output='screen',
-        parameters=[default_loc_params]
+        parameters=[os.path.join(project_launch_pkg, 'config', 'localization_params.yaml')]
     )
-    
+
     nmpc_node = Node(
         package='control_pkg',
         executable='simple_controller_node',
         name='nmpc_engine_node',
         output='screen',
-        parameters=[default_ctrl_params],
+        parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')],
         remappings=[('/drive', '/sim/drive')]
     )
 
-    # D. RViz 실행
-    rviz_node = Node(
-       package='rviz2',
-       executable='rviz2',
-       name='rviz2',
-       arguments=['-d', rviz_config_path]
+    # Optional: a small static transform to ensure 'map' exists immediately for RViz.
+    # This is useful to avoid race conditions where RViz starts before any TF is published.
+    # If another node already publishes the correct map->base_link transform, you can remove this node.
+    static_map_broadcaster = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_to_base_link_broadcaster',
+        arguments=['0', '0', '0', '0', '0', '0', '1', 'map', 'base_link'],
+        output='screen'
     )
 
-    return LaunchDescription([
-        declare_map_name,
-        declare_raceline,
-        f1tenth_launch,
-        opponent_launch,
-        raceline_node,
-        estimator_node,
-        nmpc_node,
-        rviz_node
-    ])
+    # RViz node: start only if start_rviz == true
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', os.path.join(project_launch_pkg, 'config', 'rviz_config.rviz')],
+        output='screen',
+        condition=IfCondition(start_rviz_conf)
+    )
+
+    ld = LaunchDescription()
+
+    # add declarations
+    ld.add_action(declare_map_name)
+    ld.add_action(declare_raceline)
+    ld.add_action(declare_start_rviz)
+
+    # add included launches and nodes
+    ld.add_action(f1tenth_launch)
+    ld.add_action(opponent_launch)
+    ld.add_action(raceline_node)
+    ld.add_action(estimator_node)
+    ld.add_action(nmpc_node)
+
+    # add static TF broadcaster (optional) before RViz to reduce race-condition errors
+    ld.add_action(static_map_broadcaster)
+
+    # add rviz (conditionally)
+    ld.add_action(rviz_node)
+
+    return ld
