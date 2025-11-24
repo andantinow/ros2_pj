@@ -6,7 +6,7 @@ nmpc_engine_node:
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 6.0
-    lookahead_distance: 1.5
+    lookahead_distance: 0.8
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'

@@ -79,7 +79,9 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
 
     double current_x = odom.pose.pose.position.x;
     double current_y = odom.pose.pose.position.y;
+    double current_yaw = tf2::getYaw(odom.pose.pose.orientation);
 
+    // Find the closest point on the path
     double min_dist_sq = std::numeric_limits<double>::max();
     size_t closest_idx = 0;
     for (size_t i = 0; i < path.poses.size(); ++i) {
@@ -92,17 +94,42 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
         }
     }
 
+    // Find the target point that is ahead of the vehicle
+    // Project the vehicle's heading direction to find points ahead
     double lookahead_sq = lookahead_distance_ * lookahead_distance_;
-    for (size_t i = closest_idx; i < path.poses.size(); ++i) {
+    
+    // Start searching from the closest point, but prefer points ahead
+    size_t start_idx = closest_idx;
+    for (size_t i = start_idx; i < path.poses.size(); ++i) {
         double dx = path.poses[i].pose.position.x - current_x;
         double dy = path.poses[i].pose.position.y - current_y;
-        double dist_sq = dx * dx + dy * dy;
-        if (dist_sq >= lookahead_sq) {
-            return static_cast<int>(i);
+        
+        // Check if this point is ahead of the vehicle (in the direction of travel)
+        double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
+        
+        // Only consider points ahead
+        if (dot_product > 0) {
+            double dist_sq = dx * dx + dy * dy;
+            if (dist_sq >= lookahead_sq) {
+                return static_cast<int>(i);
+            }
         }
     }
 
-    return static_cast<int>(path.poses.size() - 1);
+    // If no point found ahead with lookahead distance, use the last point
+    // But only if it's ahead of the vehicle
+    if (!path.poses.empty()) {
+        size_t last_idx = path.poses.size() - 1;
+        double dx = path.poses[last_idx].pose.position.x - current_x;
+        double dy = path.poses[last_idx].pose.position.y - current_y;
+        double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
+        if (dot_product > 0) {
+            return static_cast<int>(last_idx);
+        }
+    }
+
+    // Fallback: return the closest point if no point ahead is found
+    return static_cast<int>(closest_idx);
 }
 
 void SimpleController::control_loop()
