@@ -400,7 +400,15 @@ class ScanSimulator2D(object):
         self.map_img = np.array(Image.open(map_img_path).transpose(Image.FLIP_TOP_BOTTOM))
         self.map_img = self.map_img.astype(np.float64)
         if self.map_img.ndim == 3:
-            self.map_img = np.dot(self.map_img[..., :3], np.array([0.299, 0.587, 0.114]))
+            # RGB or RGBA: convert to grayscale
+            if self.map_img.shape[2] >= 3:
+                self.map_img = np.dot(self.map_img[..., :3], np.array([0.299, 0.587, 0.114]))
+            else:
+                # 2-channel image: use first channel
+                self.map_img = self.map_img[..., 0]
+        elif self.map_img.ndim == 2:
+            # Already grayscale, keep as is
+            pass
 
         # grayscale -> binary
         self.map_img[self.map_img <= 128.] = 0.
