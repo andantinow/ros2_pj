@@ -1,0 +1,19 @@
+ackermann_mux:
+  ros__parameters:
+    topics:
+      - name: safety
+        topic: /drive_safety
+        timeout: 0.1
+        priority: 100
+      - name: joystick
+        topic: /drive_joy
+        timeout: 0.1
+        priority: 50
+      - name: navigation
+        topic: /drive_nav
+        timeout: 0.1
+        priority: 10
+      - name: keyboard
+        topic: /drive_key
+        timeout: 0.1
+        priority: 20
