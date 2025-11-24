@@ -254,6 +254,7 @@ class GymBridge(Node):
         self._prev_time = self.get_clock().now()
 
         # subscribers
+        self.get_logger().info(f"Subscribing to drive topic: {ego_drive_topic}")
         self.ego_drive_sub = self.create_subscription(
             AckermannDriveStamped,
             ego_drive_topic,
@@ -286,6 +287,8 @@ class GymBridge(Node):
     def drive_callback(self, drive_msg):
         self.ego_requested_speed = drive_msg.drive.speed
         self.ego_steer = drive_msg.drive.steering_angle
+        if not self.ego_drive_published:
+            self.get_logger().info(f"Received first drive command: speed={drive_msg.drive.speed:.2f}, steer={drive_msg.drive.steering_angle:.3f}")
         self.ego_drive_published = True
 
     def opp_drive_callback(self, drive_msg):
@@ -340,18 +343,29 @@ class GymBridge(Node):
         # This ensures odometry is published so controllers can start
         self.ts = self.get_clock().now().to_msg()
         
-        if self.ego_drive_published and not self.has_opp:
-            self.obs, _, self.done, _ = self.env.step(
-                np.array([[self.ego_steer, self.ego_requested_speed]]))
-            self._update_sim_state()
-        elif self.ego_drive_published and self.has_opp and self.opp_drive_published:
-            self.obs, _, self.done, _ = self.env.step(np.array(
-                [[self.ego_steer, self.ego_requested_speed], [self.opp_steer, self.opp_requested_speed]]))
-            self._update_sim_state()
+        if not self.has_opp:
+            # Single agent: only need ego drive command
+            if self.ego_drive_published:
+                self.obs, _, self.done, _ = self.env.step(
+                    np.array([[self.ego_steer, self.ego_requested_speed]]))
+                self._update_sim_state()
+            else:
+                # No drive command yet, but still update state from current observation
+                self._update_sim_state()
         else:
-            # No drive command yet, but still update state from current observation
-            # This allows odometry to be published so controllers can initialize
-            self._update_sim_state()
+            # Two agents: need both ego and opponent drive commands
+            if self.ego_drive_published and self.opp_drive_published:
+                self.obs, _, self.done, _ = self.env.step(np.array(
+                    [[self.ego_steer, self.ego_requested_speed], [self.opp_steer, self.opp_requested_speed]]))
+                self._update_sim_state()
+            elif self.ego_drive_published:
+                # Ego has command but opponent doesn't - step with zero command for opponent
+                self.obs, _, self.done, _ = self.env.step(np.array(
+                    [[self.ego_steer, self.ego_requested_speed], [0.0, 0.0]]))
+                self._update_sim_state()
+            else:
+                # No drive command yet, but still update state from current observation
+                self._update_sim_state()
 
     def timer_callback(self):
         # Update timestamp for all published messages
