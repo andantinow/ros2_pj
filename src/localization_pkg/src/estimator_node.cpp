@@ -4,7 +4,7 @@
 #include <vehicle_model_msgs/msg/adaptive_vehicle_model.hpp>
 #include <deque>
 #include <cmath>
-#include <string>
+#include <cstdint>
 
 class EstimatorNode : public rclcpp::Node {
 public:
@@ -53,7 +53,6 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 
   void odomCb(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    // keep incoming odom in buffer
     odom_buf_.push_back(*msg);
     if (odom_buf_.size() > 50) odom_buf_.pop_front();
   }
@@ -66,9 +65,15 @@ private:
     // publish latest odom as perfect_odom (ensure header.stamp is valid)
     if (!odom_buf_.empty()) {
       auto out = odom_buf_.back();
-      // IMPORTANT: set a valid timestamp here so TF/RViz/tf2 see a valid time
-      out.header.stamp = this->now().to_msg();
-      // Optionally set frame_id and child_frame_id consistently if needed
+
+      // --- FIX: populate header.stamp without using to_msg() ---
+      // rclcpp::Time::nanoseconds() returns int64 nanoseconds since epoch;
+      // convert to sec/nanosec for builtin_interfaces::msg::Time
+      int64_t ns = this->now().nanoseconds();
+      out.header.stamp.sec = static_cast<int32_t>(ns / 1000000000LL);
+      out.header.stamp.nanosec = static_cast<uint32_t>(ns % 1000000000LL);
+      // --------------------------------------------------------
+
       if (out.header.frame_id.empty()) out.header.frame_id = "odom";
       if (out.child_frame_id.empty()) out.child_frame_id = "base_link";
 
