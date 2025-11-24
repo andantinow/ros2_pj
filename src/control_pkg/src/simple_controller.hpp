@@ -36,6 +36,7 @@ private:
   double max_steer_rate_ = 2.0;  // rad/s
   double lateral_error_gain_ = 0.5;  // Lateral error compensation gain
   double heading_error_gain_ = 0.3;  // Heading error compensation gain
+  double curvature_feedforward_gain_ = 1.0;  // Curvature feedforward gain
   double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
   
   // PID control for lateral error
@@ -62,9 +63,11 @@ private:
   double compute_adaptive_lookahead(double speed);
   double compute_lateral_error(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int closest_idx);
   double compute_heading_error(double current_yaw, const nav_msgs::msg::Path& path, int closest_idx);
+  double compute_path_curvature(const nav_msgs::msg::Path& path, int idx);
   geometry_msgs::msg::PoseStamped interpolate_path_point(const nav_msgs::msg::Path& path, int idx, double fraction);
   double compute_pid_control(double error, double dt);
   double limit_steering_rate(double desired_steering, double dt);
   double smooth_steering(double new_steering, double prev_steering);
+  int find_closest_point_along_path(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int start_idx);
 };
 #endif

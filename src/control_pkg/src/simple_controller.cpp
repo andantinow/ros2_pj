@@ -26,6 +26,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("max_steer_rate", max_steer_rate_);
   declare_parameter("lateral_error_gain", lateral_error_gain_);
   declare_parameter("heading_error_gain", heading_error_gain_);
+  declare_parameter("curvature_feedforward_gain", curvature_feedforward_gain_);
   declare_parameter("smoothing_factor", smoothing_factor_);
   declare_parameter("pid_kp", pid_kp_);
   declare_parameter("pid_ki", pid_ki_);
@@ -45,6 +46,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   max_steer_rate_ = get_parameter("max_steer_rate").as_double();
   lateral_error_gain_ = get_parameter("lateral_error_gain").as_double();
   heading_error_gain_ = get_parameter("heading_error_gain").as_double();
+  curvature_feedforward_gain_ = get_parameter("curvature_feedforward_gain").as_double();
   smoothing_factor_ = get_parameter("smoothing_factor").as_double();
   pid_kp_ = get_parameter("pid_kp").as_double();
   pid_ki_ = get_parameter("pid_ki").as_double();
@@ -200,22 +202,15 @@ void SimpleController::control_loop()
   // Adaptive lookahead distance based on speed
   double adaptive_lookahead = compute_adaptive_lookahead(current_speed);
 
-  // Find closest point for lateral error calculation
+  // Find closest point for lateral error calculation (improved: search along path)
   double current_x = current_odom_.pose.pose.position.x;
   double current_y = current_odom_.pose.pose.position.y;
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
-  double min_dist_sq = std::numeric_limits<double>::max();
-  int closest_idx = 0;
-  for (size_t i = 0; i < current_path_.poses.size(); ++i) {
-    double dx = current_x - current_path_.poses[i].pose.position.x;
-    double dy = current_y - current_path_.poses[i].pose.position.y;
-    double dist_sq = dx * dx + dy * dy;
-    if (dist_sq < min_dist_sq) {
-      min_dist_sq = dist_sq;
-      closest_idx = static_cast<int>(i);
-    }
-  }
+  // Use improved closest point finding that considers path direction
+  static int last_closest_idx = 0;
+  int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, current_path_, last_closest_idx);
+  last_closest_idx = closest_idx;
 
   // Compute lateral error
   double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, current_path_, closest_idx);
@@ -290,11 +285,20 @@ void SimpleController::control_loop()
   // PID control for lateral error
   double pid_output = compute_pid_control(lateral_error, dt);
   
+  // Compute path curvature at target point for feedforward control
+  double path_curvature = compute_path_curvature(current_path_, target_idx);
+  double curvature_feedforward = curvature_feedforward_gain_ * std::atan(wheelbase_ * path_curvature);
+  
+  // Add feedforward control (curvature-based)
+  steering_angle += curvature_feedforward;
+  
   // Add lateral error compensation (PID + feedforward)
   steering_angle += pid_output;
   
-  // Add heading error compensation
-  steering_angle += heading_error_gain_ * heading_error;
+  // Add heading error compensation (Stanley-style)
+  double stanley_heading_correction = std::atan2(heading_error_gain_ * heading_error, 
+                                                  std::max(0.1, current_speed));
+  steering_angle += stanley_heading_correction;
 
   // Limit steering angle
   steering_angle = std::max(-max_steer_angle_, std::min(max_steer_angle_, steering_angle));
@@ -446,6 +450,78 @@ double SimpleController::compute_pid_control(double error, double dt)
   prev_lateral_error_ = error;
   
   return p_term + i_term + d_term;
+}
+
+double SimpleController::compute_path_curvature(const nav_msgs::msg::Path& path, int idx)
+{
+  if (idx < 1 || idx >= static_cast<int>(path.poses.size() - 1)) {
+    return 0.0;
+  }
+  
+  const auto& p0 = path.poses[idx - 1].pose.position;
+  const auto& p1 = path.poses[idx].pose.position;
+  const auto& p2 = path.poses[idx + 1].pose.position;
+  
+  // Compute curvature using three points
+  double dx1 = p1.x - p0.x;
+  double dy1 = p1.y - p0.y;
+  double dx2 = p2.x - p1.x;
+  double dy2 = p2.y - p1.y;
+  
+  double cross = dx1 * dy2 - dy1 * dx2;
+  double ds1 = std::hypot(dx1, dy1);
+  double ds2 = std::hypot(dx2, dy2);
+  
+  if (ds1 < 1e-6 || ds2 < 1e-6) {
+    return 0.0;
+  }
+  
+  // Curvature = cross product / (ds1 * ds2 * average_ds)
+  double avg_ds = (ds1 + ds2) / 2.0;
+  if (avg_ds < 1e-6) {
+    return 0.0;
+  }
+  
+  return cross / (ds1 * ds2 * avg_ds);
+}
+
+int SimpleController::find_closest_point_along_path(double current_x, double current_y, double current_yaw, 
+                                                     const nav_msgs::msg::Path& path, int start_idx)
+{
+  if (path.poses.empty()) return 0;
+  
+  // Search forward from last known position (more efficient)
+  int search_range = 20;  // Search 20 points ahead and behind
+  int min_idx = std::max(0, start_idx - search_range);
+  int max_idx = std::min(static_cast<int>(path.poses.size() - 1), start_idx + search_range);
+  
+  double min_dist_sq = std::numeric_limits<double>::max();
+  int closest_idx = start_idx;
+  
+  for (int i = min_idx; i <= max_idx; ++i) {
+    double dx = current_x - path.poses[i].pose.position.x;
+    double dy = current_y - path.poses[i].pose.position.y;
+    double dist_sq = dx * dx + dy * dy;
+    
+    // Prefer points ahead of vehicle
+    double path_yaw = tf2::getYaw(path.poses[i].pose.orientation);
+    double heading_diff = path_yaw - current_yaw;
+    while (heading_diff > M_PI) heading_diff -= 2.0 * M_PI;
+    while (heading_diff < -M_PI) heading_diff += 2.0 * M_PI;
+    
+    // Weight: prefer points ahead and closer
+    double weight = dist_sq;
+    if (heading_diff > -M_PI/2 && heading_diff < M_PI/2) {
+      weight *= 0.8;  // Prefer points ahead
+    }
+    
+    if (weight < min_dist_sq) {
+      min_dist_sq = weight;
+      closest_idx = i;
+    }
+  }
+  
+  return closest_idx;
 }
 
 double SimpleController::smooth_steering(double new_steering, double prev_steering)
