@@ -49,7 +49,11 @@ void SimpleController::odom_callback(const nav_msgs::msg::Odometry::SharedPtr ms
 {
   current_odom_ = *msg;
   if (!odom_received_) {
-    RCLCPP_INFO(this->get_logger(), "Received first odometry message");
+    RCLCPP_INFO(this->get_logger(), "Received first odometry message. Frame: %s, Position: (%.2f, %.2f, %.2f)",
+                msg->header.frame_id.c_str(),
+                msg->pose.pose.position.x,
+                msg->pose.pose.position.y,
+                msg->pose.pose.position.z);
     odom_received_ = true;
   }
 }
@@ -58,7 +62,13 @@ void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
 {
   current_path_ = *msg;
   if (!path_received_) {
-    RCLCPP_INFO(this->get_logger(), "Received first path message with %zu points", msg->poses.size());
+    RCLCPP_INFO(this->get_logger(), "Received first path message with %zu points, frame_id: %s", 
+                msg->poses.size(), msg->header.frame_id.c_str());
+    if (!msg->poses.empty()) {
+      RCLCPP_INFO(this->get_logger(), "First path point: (%.2f, %.2f), Last: (%.2f, %.2f)",
+                  msg->poses[0].pose.position.x, msg->poses[0].pose.position.y,
+                  msg->poses.back().pose.position.x, msg->poses.back().pose.position.y);
+    }
     path_received_ = true;
   }
 }
@@ -127,9 +137,24 @@ void SimpleController::control_loop()
   }
 
   int target_idx = find_target_point_index(current_odom_, current_path_);
-  if (target_idx < 0) return;
+  if (target_idx < 0) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                        "Failed to find target point. Current pos: (%.2f, %.2f), Path size: %zu",
+                        current_odom_.pose.pose.position.x, 
+                        current_odom_.pose.pose.position.y,
+                        current_path_.poses.size());
+    return;
+  }
 
   geometry_msgs::msg::PoseStamped target_pose = current_path_.poses[target_idx];
+  
+  RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                        "Target idx: %d, Current: (%.2f, %.2f), Target: (%.2f, %.2f)",
+                        target_idx,
+                        current_odom_.pose.pose.position.x,
+                        current_odom_.pose.pose.position.y,
+                        target_pose.pose.position.x,
+                        target_pose.pose.position.y);
 
   double current_x = current_odom_.pose.pose.position.x;
   double current_y = current_odom_.pose.pose.position.y;
@@ -156,4 +181,10 @@ void SimpleController::control_loop()
   drive_msg.drive.steering_angle = std::max(-max_steer_angle_, std::min(max_steer_angle_, steering_angle));
 
   drive_pub_->publish(drive_msg);
+  
+  static int publish_count = 0;
+  if (publish_count++ % 50 == 0) {  // Every 1 second at 20ms timer
+    RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f, steer=%.3f, target_idx=%d",
+                drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx);
+  }
 }
