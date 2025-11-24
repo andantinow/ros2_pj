@@ -100,8 +100,7 @@ def generate_launch_description():
         executable='simple_controller_node',
         name='nmpc_engine_node',
         output='screen',
-        parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')],
-        remappings=[('/drive', '/sim/drive')]
+        parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')]
     )
 
     # Optional: a small static transform to ensure 'map' exists immediately for RViz.

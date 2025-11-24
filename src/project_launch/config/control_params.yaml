@@ -8,3 +8,9 @@ nmpc_engine_node:
     speed_limit: 6.0
     lookahead_distance: 1.5
     use_vref: true
+    # Topic remappings
+    odom_topic: '/ego_racecar/odom_GT'
+    path_topic: '/global_raceline'
+    drive_topic: '/drive'
+    target_speed: 1.5
+    max_steer_angle: 0.418
