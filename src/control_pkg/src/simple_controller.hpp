@@ -30,6 +30,9 @@ private:
   double target_speed_ = 1.5;
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.418;
+  std::string odom_topic_{"/odom"};
+  std::string path_topic_{"/global_raceline"};
+  std::string drive_topic_{"/drive"};
 
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void path_callback(const nav_msgs::msg::Path::SharedPtr msg);

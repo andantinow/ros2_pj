@@ -12,15 +12,31 @@ SimpleController::SimpleController() : Node("simple_controller")
 {
   RCLCPP_INFO(this->get_logger(), "[Kang Donghyeon] Simple Pure Pursuit Controller (ROSCPP) initializing...");
 
+  declare_parameter("lookahead_distance", lookahead_distance_);
+  declare_parameter("target_speed", target_speed_);
+  declare_parameter("wheelbase", wheelbase_);
+  declare_parameter("max_steer_angle", max_steer_angle_);
+  declare_parameter<std::string>("odom_topic", odom_topic_);
+  declare_parameter<std::string>("path_topic", path_topic_);
+  declare_parameter<std::string>("drive_topic", drive_topic_);
+
+  lookahead_distance_ = get_parameter("lookahead_distance").as_double();
+  target_speed_ = get_parameter("target_speed").as_double();
+  wheelbase_ = get_parameter("wheelbase").as_double();
+  max_steer_angle_ = get_parameter("max_steer_angle").as_double();
+  odom_topic_ = get_parameter("odom_topic").as_string();
+  path_topic_ = get_parameter("path_topic").as_string();
+  drive_topic_ = get_parameter("drive_topic").as_string();
+
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      "/odom", 10,
+      odom_topic_, 10,
       std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
 
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-      "/path", 10,
+      path_topic_, 10,
       std::bind(&SimpleController::path_callback, this, std::placeholders::_1));
 
-  drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/drive", 10);
+  drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
 
   timer_ = this->create_wall_timer(
       20ms, std::bind(&SimpleController::control_loop, this));

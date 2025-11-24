@@ -41,9 +41,32 @@ from tf2_ros import TransformBroadcaster
 from sensor_msgs.msg import Imu
 
 import gymnasium as gym
+from gymnasium import error as gym_error
 import numpy as np
 from transforms3d import euler
 import os.path
+from pathlib import Path
+import sys
+import importlib
+
+
+def _ensure_f110_gym_registered(logger):
+    try:
+        import f110_gym  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        base_dir = Path(__file__).resolve().parents[2]
+        local_gym = base_dir / 'f1tenth_gym' / 'gym'
+        if local_gym.exists():
+            sys.path.insert(0, str(local_gym))
+            try:
+                importlib.import_module('f110_gym')
+                logger.info(f"Loaded local f110_gym package from {local_gym}")
+                return
+            except ModuleNotFoundError as exc:
+                logger.error(f"Failed to import f110_gym from {local_gym}: {exc}")
+                raise
+        raise
 
 
 class GymBridge(Node):
@@ -128,12 +151,18 @@ class GymBridge(Node):
 
         # env backend
         map_yaml_path = os.path.abspath(self.get_parameter('map_path').value)
-        self.env = gym.make('f110_gym:f110-v1',
-                            map=map_yaml_path.split('.')[0],
-                            map_ext=self.get_parameter('map_img_ext').value,
-                            params=sim_params,
-                            num_agents=num_agents,
-                            disable_env_checker=True)
+        _ensure_f110_gym_registered(self.get_logger())
+        try:
+            self.env = gym.make('f110_gym:f110-v1',
+                                map=map_yaml_path.split('.')[0],
+                                map_ext=self.get_parameter('map_img_ext').value,
+                                params=sim_params,
+                                num_agents=num_agents,
+                                disable_env_checker=True)
+        except gym_error.Error as exc:
+            self.get_logger().error(
+                f"Failed to construct f110_gym environment: {exc}")
+            raise
 
         sx = self.get_parameter('sx').value
         sy = self.get_parameter('sy').value

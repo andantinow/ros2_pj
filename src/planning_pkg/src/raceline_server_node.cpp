@@ -7,16 +7,19 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <filesystem>
+
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 struct RacelinePoint { double s,x,y,psi,kappa,v; };
 
 class RacelineServer : public rclcpp::Node {
  public:
   RacelineServer(): Node("raceline_server") {
-    declare_parameter<std::string>("raceline_file", "data/raceline.csv");
+    declare_parameter<std::string>("raceline_file", "");
     declare_parameter<std::string>("frame_id", "map");
     declare_parameter<bool>("publish_vref", true);
-    file_ = get_parameter("raceline_file").as_string();
+    file_ = resolve_file(get_parameter("raceline_file").as_string());
     frame_id_ = get_parameter("frame_id").as_string();
     publish_vref_ = get_parameter("publish_vref").as_bool();
     qos_.keep_last(1).transient_local().reliable();
@@ -27,7 +30,7 @@ class RacelineServer : public rclcpp::Node {
       bool reload=false;
       for(const auto &p: params) {
         if(p.get_name()=="raceline_file" && p.get_type()==rclcpp::ParameterType::PARAMETER_STRING) {
-          file_=p.as_string();
+          file_=resolve_file(p.as_string());
           reload=true;
         }
         if(p.get_name()=="frame_id" && p.get_type()==rclcpp::ParameterType::PARAMETER_STRING) {
@@ -112,6 +115,20 @@ class RacelineServer : public rclcpp::Node {
     }
     path_pub_->publish(path);
     if(publish_vref_) vref_pub_->publish(vref);
+  }
+
+  std::string resolve_file(const std::string &raw) {
+    namespace fs = std::filesystem;
+    std::string candidate = raw;
+    if(candidate.empty()) {
+      candidate = (fs::path(ament_index_cpp::get_package_share_directory("planning_pkg")) / "data" / "raceline.csv").string();
+    }
+    fs::path p(candidate);
+    if(p.is_relative()) {
+      auto base = fs::path(ament_index_cpp::get_package_share_directory("planning_pkg"));
+      p = base / p;
+    }
+    return p.lexically_normal().string();
   }
 };
 
