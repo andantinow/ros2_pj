@@ -399,6 +399,8 @@ class ScanSimulator2D(object):
         map_img_path = os.path.splitext(map_path)[0] + map_ext
         self.map_img = np.array(Image.open(map_img_path).transpose(Image.FLIP_TOP_BOTTOM))
         self.map_img = self.map_img.astype(np.float64)
+        if self.map_img.ndim == 3:
+            self.map_img = np.dot(self.map_img[..., :3], np.array([0.299, 0.587, 0.114]))
 
         # grayscale -> binary
         self.map_img[self.map_img <= 128.] = 0.
