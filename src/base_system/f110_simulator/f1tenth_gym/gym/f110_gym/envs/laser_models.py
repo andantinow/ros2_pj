@@ -126,29 +126,18 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
     c = cosines[theta_index_]
 
     # distance to nearest initialization
-    dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
-    if hasattr(dist_to_nearest, "item"):
-        dist_to_nearest = dist_to_nearest.item()
+    dist_to_nearest = float(distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt))
     total_dist = dist_to_nearest
 
     # ray tracing iterations
     while dist_to_nearest > eps and total_dist <= max_range:
         # move in the direction of the ray by dist_to_nearest
-        # make sure numpy scalars stay scalar for numba
-        step_c = dist_to_nearest * c
-        step_s = dist_to_nearest * s
-        if hasattr(step_c, "item"):
-            step_c = step_c.item()
-        if hasattr(step_s, "item"):
-            step_s = step_s.item()
-        x += step_c
-        y += step_s
+        x += dist_to_nearest * c
+        y += dist_to_nearest * s
 
         # update dist_to_nearest for current point on ray
         # also keeps track of total ray length
-        dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
-        if hasattr(dist_to_nearest, "item"):
-            dist_to_nearest = dist_to_nearest.item()
+        dist_to_nearest = float(distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt))
         total_dist += dist_to_nearest
 
     if total_dist > max_range:
