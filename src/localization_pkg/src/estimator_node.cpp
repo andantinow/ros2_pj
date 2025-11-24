@@ -2,9 +2,11 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <vehicle_model_msgs/msg/adaptive_vehicle_model.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
 #include <deque>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 
 class EstimatorNode : public rclcpp::Node {
 public:
@@ -66,13 +68,10 @@ private:
     if (!odom_buf_.empty()) {
       auto out = odom_buf_.back();
 
-      // --- FIX: populate header.stamp without using to_msg() ---
-      // rclcpp::Time::nanoseconds() returns int64 nanoseconds since epoch;
-      // convert to sec/nanosec for builtin_interfaces::msg::Time
+      // Populate header.stamp without using to_msg() (portable across rclcpp versions)
       int64_t ns = this->now().nanoseconds();
       out.header.stamp.sec = static_cast<int32_t>(ns / 1000000000LL);
       out.header.stamp.nanosec = static_cast<uint32_t>(ns % 1000000000LL);
-      // --------------------------------------------------------
 
       if (out.header.frame_id.empty()) out.header.frame_id = "odom";
       if (out.child_frame_id.empty()) out.child_frame_id = "base_link";
@@ -92,3 +91,13 @@ private:
     return std::atan2(siny_cosp, cosy_cosp);
   }
 };
+
+// Add main so the target links correctly
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<EstimatorNode>();
+  rclcpp::spin(node);
+  rclcpp::shutdown();
+  return 0;
+}
