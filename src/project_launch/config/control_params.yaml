@@ -26,4 +26,4 @@ nmpc_engine_node:
     pid_ki: 0.05
     pid_kd: 0.3
     use_path_interpolation: true
-    steering_sign: 1.0  # Flip to -1.0 if vehicle goes wrong direction (left/right issue)
+    steering_sign: -1.0  # Flip to -1.0 if vehicle goes wrong direction (left/right issue)

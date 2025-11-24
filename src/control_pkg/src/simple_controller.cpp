@@ -306,7 +306,9 @@ void SimpleController::control_loop()
 
   // Transform target to vehicle frame
   // Vehicle frame: x forward, y left, z up
-  // Rotation matrix: [cos(θ) sin(θ); -sin(θ) cos(θ)] for rotation by -θ
+  // Global to vehicle: rotate by -current_yaw
+  // [x_veh]   [cos(θ)  sin(θ)] [x_global - x_curr]
+  // [y_veh] = [-sin(θ) cos(θ)] [y_global - y_curr]
   double dx_global = target_x_global - current_x;
   double dy_global = target_y_global - current_y;
   double cos_yaw = std::cos(current_yaw);
@@ -314,6 +316,14 @@ void SimpleController::control_loop()
   
   double target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
   double target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
+  
+  // Debug: log coordinate transformation
+  static int coord_debug_count = 0;
+  if (coord_debug_count++ % 50 == 0) {
+    RCLCPP_INFO(this->get_logger(), 
+                "Coord: global_dx=%.3f, global_dy=%.3f, veh_x=%.3f, veh_y=%.3f, yaw=%.3f",
+                dx_global, dy_global, target_x_vehicle, target_y_vehicle, current_yaw);
+  }
 
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
   double steering_angle = 0.0;
