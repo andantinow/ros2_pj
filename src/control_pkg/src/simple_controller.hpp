@@ -38,6 +38,7 @@ private:
   double heading_error_gain_ = 0.3;  // Heading error compensation gain
   double curvature_feedforward_gain_ = 1.0;  // Curvature feedforward gain
   double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
+  double steering_sign_ = 1.0;  // Steering angle sign (1.0 or -1.0, for coordinate system correction)
   
   // PID control for lateral error
   double pid_kp_ = 0.8;
