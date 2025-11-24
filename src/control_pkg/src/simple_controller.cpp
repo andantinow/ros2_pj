@@ -33,10 +33,13 @@ SimpleController::SimpleController() : Node("simple_controller")
       std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
 
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-      path_topic_, 10,
+      path_topic_, rclcpp::QoS(10).transient_local(),
       std::bind(&SimpleController::path_callback, this, std::placeholders::_1));
 
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
+  
+  RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, publishing to drive: %s", 
+              odom_topic_.c_str(), path_topic_.c_str(), drive_topic_.c_str());
 
   timer_ = this->create_wall_timer(
       20ms, std::bind(&SimpleController::control_loop, this));
@@ -45,13 +48,19 @@ SimpleController::SimpleController() : Node("simple_controller")
 void SimpleController::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   current_odom_ = *msg;
-  odom_received_ = true;
+  if (!odom_received_) {
+    RCLCPP_INFO(this->get_logger(), "Received first odometry message");
+    odom_received_ = true;
+  }
 }
 
 void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
 {
   current_path_ = *msg;
-  path_received_ = true;
+  if (!path_received_) {
+    RCLCPP_INFO(this->get_logger(), "Received first path message with %zu points", msg->poses.size());
+    path_received_ = true;
+  }
 }
 
 int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path)
@@ -88,7 +97,32 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
 
 void SimpleController::control_loop()
 {
-  if (!odom_received_ || !path_received_ || current_path_.poses.empty()) {
+  static bool warned_odom = false;
+  static bool warned_path = false;
+  static bool warned_empty = false;
+  
+  if (!odom_received_) {
+    if (!warned_odom) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                          "Waiting for odometry on topic: %s", odom_topic_.c_str());
+      warned_odom = true;
+    }
+    return;
+  }
+  if (!path_received_) {
+    if (!warned_path) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                          "Waiting for path on topic: %s", path_topic_.c_str());
+      warned_path = true;
+    }
+    return;
+  }
+  if (current_path_.poses.empty()) {
+    if (!warned_empty) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                          "Path received but empty");
+      warned_empty = true;
+    }
     return;
   }
 
