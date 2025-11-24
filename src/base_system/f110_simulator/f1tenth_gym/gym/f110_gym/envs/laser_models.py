@@ -127,6 +127,8 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
 
     # distance to nearest initialization
     dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
+    if hasattr(dist_to_nearest, "item"):
+        dist_to_nearest = dist_to_nearest.item()
     total_dist = dist_to_nearest
 
     # ray tracing iterations
@@ -145,6 +147,8 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
         # update dist_to_nearest for current point on ray
         # also keeps track of total ray length
         dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
+        if hasattr(dist_to_nearest, "item"):
+            dist_to_nearest = dist_to_nearest.item()
         total_dist += dist_to_nearest
 
     if total_dist > max_range:
