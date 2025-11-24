@@ -336,16 +336,27 @@ class GymBridge(Node):
             self.ego_steer = 0.0
 
     def drive_timer_callback(self):
+        # Always update timestamp and state, even without drive commands
+        # This ensures odometry is published so controllers can start
+        self.ts = self.get_clock().now().to_msg()
+        
         if self.ego_drive_published and not self.has_opp:
             self.obs, _, self.done, _ = self.env.step(
                 np.array([[self.ego_steer, self.ego_requested_speed]]))
+            self._update_sim_state()
         elif self.ego_drive_published and self.has_opp and self.opp_drive_published:
             self.obs, _, self.done, _ = self.env.step(np.array(
                 [[self.ego_steer, self.ego_requested_speed], [self.opp_steer, self.opp_requested_speed]]))
-        self.ts = self.get_clock().now().to_msg()
-        self._update_sim_state()
+            self._update_sim_state()
+        else:
+            # No drive command yet, but still update state from current observation
+            # This allows odometry to be published so controllers can initialize
+            self._update_sim_state()
 
     def timer_callback(self):
+        # Update timestamp for all published messages
+        self.ts = self.get_clock().now().to_msg()
+        
         # pub scans
         scan = LaserScan()
         scan.header.stamp = self.ts
