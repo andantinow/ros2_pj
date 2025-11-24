@@ -9,7 +9,7 @@ nmpc_engine_node:
     lookahead_distance: 1.5
     use_vref: true
     # Topic remappings
-    odom_topic: '/ego_racecar/odom_GT'
+    odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     target_speed: 1.5
