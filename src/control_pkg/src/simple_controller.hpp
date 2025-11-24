@@ -35,7 +35,19 @@ private:
   double max_steer_angle_ = 0.418;
   double max_steer_rate_ = 2.0;  // rad/s
   double lateral_error_gain_ = 0.5;  // Lateral error compensation gain
+  double heading_error_gain_ = 0.3;  // Heading error compensation gain
   double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
+  
+  // PID control for lateral error
+  double pid_kp_ = 0.8;
+  double pid_ki_ = 0.0;
+  double pid_kd_ = 0.2;
+  double lateral_error_integral_ = 0.0;
+  double prev_lateral_error_ = 0.0;
+  
+  // Path interpolation
+  bool use_path_interpolation_ = true;
+  
   std::string odom_topic_{"/odom"};
   std::string path_topic_{"/global_raceline"};
   std::string drive_topic_{"/drive"};
@@ -49,6 +61,9 @@ private:
   int find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead);
   double compute_adaptive_lookahead(double speed);
   double compute_lateral_error(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int closest_idx);
+  double compute_heading_error(double current_yaw, const nav_msgs::msg::Path& path, int closest_idx);
+  geometry_msgs::msg::PoseStamped interpolate_path_point(const nav_msgs::msg::Path& path, int idx, double fraction);
+  double compute_pid_control(double error, double dt);
   double limit_steering_rate(double desired_steering, double dt);
   double smooth_steering(double new_steering, double prev_steering);
 };

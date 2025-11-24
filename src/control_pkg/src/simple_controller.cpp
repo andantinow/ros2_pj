@@ -6,6 +6,10 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 using namespace std::chrono_literals;
 
 SimpleController::SimpleController() : Node("simple_controller")
@@ -21,7 +25,12 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("max_steer_angle", max_steer_angle_);
   declare_parameter("max_steer_rate", max_steer_rate_);
   declare_parameter("lateral_error_gain", lateral_error_gain_);
+  declare_parameter("heading_error_gain", heading_error_gain_);
   declare_parameter("smoothing_factor", smoothing_factor_);
+  declare_parameter("pid_kp", pid_kp_);
+  declare_parameter("pid_ki", pid_ki_);
+  declare_parameter("pid_kd", pid_kd_);
+  declare_parameter("use_path_interpolation", use_path_interpolation_);
   declare_parameter<std::string>("odom_topic", odom_topic_);
   declare_parameter<std::string>("path_topic", path_topic_);
   declare_parameter<std::string>("drive_topic", drive_topic_);
@@ -35,7 +44,12 @@ SimpleController::SimpleController() : Node("simple_controller")
   max_steer_angle_ = get_parameter("max_steer_angle").as_double();
   max_steer_rate_ = get_parameter("max_steer_rate").as_double();
   lateral_error_gain_ = get_parameter("lateral_error_gain").as_double();
+  heading_error_gain_ = get_parameter("heading_error_gain").as_double();
   smoothing_factor_ = get_parameter("smoothing_factor").as_double();
+  pid_kp_ = get_parameter("pid_kp").as_double();
+  pid_ki_ = get_parameter("pid_ki").as_double();
+  pid_kd_ = get_parameter("pid_kd").as_double();
+  use_path_interpolation_ = get_parameter("use_path_interpolation").as_bool();
   odom_topic_ = get_parameter("odom_topic").as_string();
   path_topic_ = get_parameter("path_topic").as_string();
   drive_topic_ = get_parameter("drive_topic").as_string();
@@ -205,6 +219,7 @@ void SimpleController::control_loop()
 
   // Compute lateral error
   double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, current_path_, closest_idx);
+  double heading_error = compute_heading_error(current_yaw, current_path_, closest_idx);
 
   // Find target point with adaptive lookahead
   int target_idx = find_target_point_index(current_odom_, current_path_, adaptive_lookahead);
@@ -217,7 +232,29 @@ void SimpleController::control_loop()
     return;
   }
 
-  geometry_msgs::msg::PoseStamped target_pose = current_path_.poses[target_idx];
+  // Path interpolation for smoother following
+  geometry_msgs::msg::PoseStamped target_pose;
+  if (use_path_interpolation_ && target_idx < static_cast<int>(current_path_.poses.size() - 1)) {
+    // Interpolate between current and next point based on lookahead distance
+    double dist_to_target = std::hypot(
+      current_path_.poses[target_idx].pose.position.x - current_x,
+      current_path_.poses[target_idx].pose.position.y - current_y
+    );
+    double dist_to_next = std::hypot(
+      current_path_.poses[target_idx + 1].pose.position.x - current_path_.poses[target_idx].pose.position.x,
+      current_path_.poses[target_idx + 1].pose.position.y - current_path_.poses[target_idx].pose.position.y
+    );
+    
+    if (dist_to_next > 1e-6 && dist_to_target < adaptive_lookahead) {
+      double fraction = (adaptive_lookahead - dist_to_target) / dist_to_next;
+      fraction = std::max(0.0, std::min(1.0, fraction));
+      target_pose = interpolate_path_point(current_path_, target_idx, fraction);
+    } else {
+      target_pose = current_path_.poses[target_idx];
+    }
+  } else {
+    target_pose = current_path_.poses[target_idx];
+  }
   
   RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                         "Target idx: %d, Current: (%.2f, %.2f), Target: (%.2f, %.2f), Lookahead: %.2f",
@@ -244,16 +281,24 @@ void SimpleController::control_loop()
     steering_angle = std::atan2(2.0 * wheelbase_ * sin_alpha_clipped, adaptive_lookahead);
   }
 
-  // Add lateral error compensation
-  steering_angle += lateral_error_gain_ * lateral_error;
-
-  // Limit steering angle
-  steering_angle = std::max(-max_steer_angle_, std::min(max_steer_angle_, steering_angle));
-
-  // Compute time delta for rate limiting
+  // Compute time delta for PID control
   rclcpp::Time current_time = this->get_clock()->now();
   double dt = (current_time - prev_time_).seconds();
   if (dt > 0.1) dt = 0.1;  // Cap dt to prevent large jumps
+  if (dt <= 0.0) dt = 0.02;  // Default to 20ms if invalid
+  
+  // PID control for lateral error
+  double pid_output = compute_pid_control(lateral_error, dt);
+  
+  // Add lateral error compensation (PID + feedforward)
+  steering_angle += pid_output;
+  
+  // Add heading error compensation
+  steering_angle += heading_error_gain_ * heading_error;
+
+  // Limit steering angle
+  steering_angle = std::max(-max_steer_angle_, std::min(max_steer_angle_, steering_angle));
+  
   prev_time_ = current_time;
 
   // Apply steering rate limiting
@@ -329,6 +374,78 @@ double SimpleController::limit_steering_rate(double desired_steering, double dt)
   }
   
   return desired_steering;
+}
+
+double SimpleController::compute_heading_error(double current_yaw, const nav_msgs::msg::Path& path, int closest_idx)
+{
+  if (closest_idx < 0 || closest_idx >= static_cast<int>(path.poses.size())) {
+    return 0.0;
+  }
+  
+  double path_yaw = tf2::getYaw(path.poses[closest_idx].pose.orientation);
+  double error = path_yaw - current_yaw;
+  
+  // Normalize to [-pi, pi]
+  while (error > M_PI) error -= 2.0 * M_PI;
+  while (error < -M_PI) error += 2.0 * M_PI;
+  
+  return error;
+}
+
+geometry_msgs::msg::PoseStamped SimpleController::interpolate_path_point(const nav_msgs::msg::Path& path, int idx, double fraction)
+{
+  geometry_msgs::msg::PoseStamped result;
+  result.header = path.header;
+  
+  if (idx < 0 || idx >= static_cast<int>(path.poses.size() - 1)) {
+    if (idx >= 0 && idx < static_cast<int>(path.poses.size())) {
+      return path.poses[idx];
+    }
+    return result;
+  }
+  
+  const auto& p1 = path.poses[idx].pose.position;
+  const auto& p2 = path.poses[idx + 1].pose.position;
+  
+  result.pose.position.x = p1.x + fraction * (p2.x - p1.x);
+  result.pose.position.y = p1.y + fraction * (p2.y - p1.y);
+  result.pose.position.z = p1.z + fraction * (p2.z - p1.z);
+  
+  // Interpolate orientation (simple linear interpolation of yaw)
+  double yaw1 = tf2::getYaw(path.poses[idx].pose.orientation);
+  double yaw2 = tf2::getYaw(path.poses[idx + 1].pose.orientation);
+  
+  // Handle wrap-around
+  double yaw_diff = yaw2 - yaw1;
+  while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
+  while (yaw_diff < -M_PI) yaw_diff += 2.0 * M_PI;
+  
+  double yaw_interp = yaw1 + fraction * yaw_diff;
+  result.pose.orientation.z = std::sin(yaw_interp / 2.0);
+  result.pose.orientation.w = std::cos(yaw_interp / 2.0);
+  
+  return result;
+}
+
+double SimpleController::compute_pid_control(double error, double dt)
+{
+  if (dt <= 0.0) return 0.0;
+  
+  // Proportional term
+  double p_term = pid_kp_ * error;
+  
+  // Integral term
+  lateral_error_integral_ += error * dt;
+  // Anti-windup: limit integral
+  double max_integral = 1.0 / std::max(pid_ki_, 1e-6);
+  lateral_error_integral_ = std::max(-max_integral, std::min(max_integral, lateral_error_integral_));
+  double i_term = pid_ki_ * lateral_error_integral_;
+  
+  // Derivative term
+  double d_term = pid_kd_ * (error - prev_lateral_error_) / dt;
+  prev_lateral_error_ = error;
+  
+  return p_term + i_term + d_term;
 }
 
 double SimpleController::smooth_steering(double new_steering, double prev_steering)
