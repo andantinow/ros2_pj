@@ -12,5 +12,5 @@ nmpc_engine_node:
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5
+    target_speed: 0.8
     max_steer_angle: 0.418
