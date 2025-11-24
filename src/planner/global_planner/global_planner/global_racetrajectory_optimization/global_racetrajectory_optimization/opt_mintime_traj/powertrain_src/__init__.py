@@ -1,1 +1,0 @@
-from global_racetrajectory_optimization.opt_mintime_traj.powertrain_src import src
