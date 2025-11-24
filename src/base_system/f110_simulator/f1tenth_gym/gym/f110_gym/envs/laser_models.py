@@ -100,8 +100,9 @@ def distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, reso
             distance (float): corresponding shortest distance to obstacle in meters
     """
     r, c = xy_2_rc(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution)
-    distance = dt[r, c]
-    return distance
+    if r < 0 or c < 0 or r >= height or c >= width:
+        return 0.0
+    return np.float64(dt[r, c])
 
 @njit(cache=True)
 def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt, max_range):
@@ -126,7 +127,7 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
     c = cosines[theta_index_]
 
     # distance to nearest initialization
-    dist_to_nearest = float(distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt))
+    dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
     total_dist = dist_to_nearest
 
     # ray tracing iterations
@@ -137,7 +138,7 @@ def trace_ray(x, y, theta_index, sines, cosines, eps, orig_x, orig_y, orig_c, or
 
         # update dist_to_nearest for current point on ray
         # also keeps track of total ray length
-        dist_to_nearest = float(distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt))
+        dist_to_nearest = distance_transform(x, y, orig_x, orig_y, orig_c, orig_s, height, width, resolution, dt)
         total_dist += dist_to_nearest
 
     if total_dist > max_range:
