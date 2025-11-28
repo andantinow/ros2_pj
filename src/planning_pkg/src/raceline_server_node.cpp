@@ -10,6 +10,7 @@
 #include <filesystem>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include "planning_pkg/path_utils.hpp"
 
 struct RacelinePoint { double s,x,y,psi,kappa,v; };
 
@@ -19,9 +20,15 @@ class RacelineServer : public rclcpp::Node {
     declare_parameter<std::string>("raceline_file", "");
     declare_parameter<std::string>("frame_id", "map");
     declare_parameter<bool>("publish_vref", true);
+    declare_parameter<bool>("enable_smoothing", false);
+    declare_parameter<int>("smoothing_window", 5);
+    declare_parameter<double>("resample_spacing", 0.0);  // 0.0 = no resampling
     file_ = resolve_file(get_parameter("raceline_file").as_string());
     frame_id_ = get_parameter("frame_id").as_string();
     publish_vref_ = get_parameter("publish_vref").as_bool();
+    enable_smoothing_ = get_parameter("enable_smoothing").as_bool();
+    smoothing_window_ = get_parameter("smoothing_window").as_int();
+    resample_spacing_ = get_parameter("resample_spacing").as_double();
     qos_.keep_last(1).transient_local().reliable();
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/global_raceline", qos_);
     if (publish_vref_) vref_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>("/global_vref", qos_);
@@ -40,6 +47,18 @@ class RacelineServer : public rclcpp::Node {
           publish_vref_=p.as_bool();
           if(publish_vref_ && !vref_pub_) vref_pub_=create_publisher<std_msgs::msg::Float32MultiArray>("/global_vref", qos_);
         }
+        if(p.get_name()=="enable_smoothing" && p.get_type()==rclcpp::ParameterType::PARAMETER_BOOL) {
+          enable_smoothing_=p.as_bool();
+          reload=true;
+        }
+        if(p.get_name()=="smoothing_window" && p.get_type()==rclcpp::ParameterType::PARAMETER_INTEGER) {
+          smoothing_window_=p.as_int();
+          reload=true;
+        }
+        if(p.get_name()=="resample_spacing" && p.get_type()==rclcpp::ParameterType::PARAMETER_DOUBLE) {
+          resample_spacing_=p.as_double();
+          reload=true;
+        }
       }
       if(reload) publish_once();
       rcl_interfaces::msg::SetParametersResult r;
@@ -53,6 +72,9 @@ class RacelineServer : public rclcpp::Node {
  private:
   std::string file_, frame_id_;
   bool publish_vref_{true};
+  bool enable_smoothing_{false};
+  int smoothing_window_{5};
+  double resample_spacing_{0.0};
   rclcpp::QoS qos_{1};
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr vref_pub_;
@@ -113,6 +135,27 @@ class RacelineServer : public rclcpp::Node {
       path.poses.push_back(ps);
       if(publish_vref_) vref.data.push_back((float)p.v);
     }
+    
+    // Apply smoothing if enabled
+    if(enable_smoothing_ && path.poses.size() >= 3) {
+      planning_pkg::smooth_path(path, smoothing_window_);
+      RCLCPP_INFO(get_logger(), "Applied smoothing with window size: %d", smoothing_window_);
+    }
+    
+    // Resample if spacing is specified
+    if(resample_spacing_ > 0.0) {
+      path = planning_pkg::resample_path(path, resample_spacing_);
+      RCLCPP_INFO(get_logger(), "Resampled path with spacing: %.3f m", resample_spacing_);
+    }
+    
+    // Validate path before publishing
+    if(!planning_pkg::validate_path(path)) {
+      RCLCPP_ERROR(get_logger(), "Path validation failed, not publishing");
+      return;
+    }
+    
+    RCLCPP_INFO(get_logger(), "Publishing path with %zu points, length: %.2f m",
+                path.poses.size(), planning_pkg::path_length(path));
     path_pub_->publish(path);
     if(publish_vref_) vref_pub_->publish(vref);
   }
