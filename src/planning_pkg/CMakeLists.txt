@@ -21,6 +21,9 @@ target_include_directories(path_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 
+# G-G Diagram library (header-only, but we can add it to path_utils or create separate)
+# For now, it's header-only so no library needed
+
 # Existing example planner (if present)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/simple_path_planner.cpp")
   add_executable(simple_path_planner src/simple_path_planner.cpp)
@@ -44,6 +47,10 @@ install(TARGETS raceline_server DESTINATION lib/${PROJECT_NAME})
 # CLI to generate raceline.csv from centerline.csv
 add_executable(generate_raceline src/generate_raceline.cpp)
 ament_target_dependencies(generate_raceline rclcpp)
+target_link_libraries(generate_raceline path_utils)
+target_include_directories(generate_raceline PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
 
 # Install resources only if they exist
