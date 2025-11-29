@@ -1,4 +1,3 @@
-#include <rclcpp/rclcpp.hpp>
 #include <fstream>
 #include <sstream>
 #include <vector>
