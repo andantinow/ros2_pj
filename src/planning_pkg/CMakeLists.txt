@@ -18,6 +18,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 # Path utilities library
 add_library(path_utils src/path_utils.cpp)
 ament_target_dependencies(path_utils rclcpp nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs)
+target_link_libraries(path_utils tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(path_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -29,7 +30,7 @@ target_include_directories(path_utils PUBLIC
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/simple_path_planner.cpp")
   add_executable(simple_path_planner src/simple_path_planner.cpp)
   ament_target_dependencies(simple_path_planner rclcpp nav_msgs geometry_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs)
-  target_link_libraries(simple_path_planner path_utils)
+  target_link_libraries(simple_path_planner path_utils tf2_geometry_msgs::tf2_geometry_msgs)
   target_include_directories(simple_path_planner PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
@@ -39,7 +40,7 @@ endif()
 # Raceline server (publishes Path (+v_ref) once with latched QoS)
 add_executable(raceline_server src/raceline_server_node.cpp)
 ament_target_dependencies(raceline_server rclcpp nav_msgs geometry_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs)
-target_link_libraries(raceline_server path_utils)
+target_link_libraries(raceline_server path_utils tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(raceline_server PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
