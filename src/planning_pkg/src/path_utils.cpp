@@ -1,5 +1,4 @@
 #include "planning_pkg/path_utils.hpp"
-#include <tf2/utils.h>
 #include <limits>
 #include <algorithm>
 #include <cmath>
@@ -48,6 +47,18 @@ int find_closest_point(
   return closest_idx;
 }
 
+namespace
+{
+
+double yaw_from_quaternion(const geometry_msgs::msg::Quaternion & q)
+{
+  double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
+  double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
+  return std::atan2(siny_cosp, cosy_cosp);
+}
+
+}
+
 geometry_msgs::msg::PoseStamped interpolate_path(
   const nav_msgs::msg::Path & path,
   double distance)
@@ -80,8 +91,8 @@ geometry_msgs::msg::PoseStamped interpolate_path(
         t * path.poses[i].pose.position.z;
 
       // Interpolate orientation (yaw)
-      double yaw1 = tf2::getYaw(path.poses[i - 1].pose.orientation);
-      double yaw2 = tf2::getYaw(path.poses[i].pose.orientation);
+      double yaw1 = yaw_from_quaternion(path.poses[i - 1].pose.orientation);
+      double yaw2 = yaw_from_quaternion(path.poses[i].pose.orientation);
       double yaw_diff = yaw2 - yaw1;
       // Normalize to [-pi, pi]
       while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
