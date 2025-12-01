@@ -7,7 +7,7 @@ nmpc_engine_node:
     decel_limit: -6.0
     speed_limit: 6.0
     max_speed: 2.0
-    lookahead_distance: 0.8  # Reduced for faster corner response
+    lookahead_distance: 1.5  # Increased to prevent pre-mature steering in straight sections
     min_lookahead: 0.4
     max_lookahead: 1.5
     lookahead_speed_gain: 0.4  # Reduced speed dependency
@@ -21,12 +21,12 @@ nmpc_engine_node:
     max_steer_angle: 0.52  # Unlocked for tight cornering (~30 degrees)
     max_steer_rate: 1.0
     lateral_error_gain: 1.5  # Increased for more sensitive lateral correction
-    heading_error_gain: 0.3  # Grandma Mode: Less sensitive to heading errors
-    curvature_feedforward_gain: 1.2
+    heading_error_gain: 0.5  # Moderate sensitivity to heading errors
+    curvature_feedforward_gain: 0.5  # Reduced to prevent pre-mature corner steering
     smoothing_factor: 0.3  # Reduced for faster response
     direct_correction_gain: 1.2  # Increased for aggressive correction when far off
     direct_correction_limit: 1.0  # Increased limit for larger corrections
-    pid_kp: 0.8  # Increased for stronger error correction
+    pid_kp: 0.5  # Moderate error correction to prevent over-reaction
     pid_ki: 0.05
     pid_kd: 0.8  # Grandma Mode: Strong damping to suppress oscillation
     use_path_interpolation: true
