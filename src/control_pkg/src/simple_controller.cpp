@@ -22,6 +22,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("lookahead_speed_gain", lookahead_speed_gain_);
   declare_parameter("lookahead_error_gain", lookahead_error_gain_);
   declare_parameter("target_speed", target_speed_);
+  declare_parameter("max_speed", max_speed_);
   declare_parameter("wheelbase", wheelbase_);
   declare_parameter("max_steer_angle", max_steer_angle_);
   declare_parameter("max_steer_rate", max_steer_rate_);
@@ -49,6 +50,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   target_speed_ = get_parameter("target_speed").as_double();
   wheelbase_ = get_parameter("wheelbase").as_double();
   max_steer_angle_ = get_parameter("max_steer_angle").as_double();
+  max_speed_ = get_parameter("max_speed").as_double();
   max_steer_rate_ = get_parameter("max_steer_rate").as_double();
   lateral_error_gain_ = get_parameter("lateral_error_gain").as_double();
   heading_error_gain_ = get_parameter("heading_error_gain").as_double();
@@ -394,10 +396,11 @@ void SimpleController::control_loop()
   
   prev_steering_angle_ = steering_angle;
 
-  // Speed control based on curvature (simplified)
+  // Speed control based on curvature (simplified) with max speed clamp
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
   double adjusted_speed = target_speed_ * speed_factor;
+  adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
   ackermann_msgs::msg::AckermannDriveStamped drive_msg;
   drive_msg.header.stamp = current_time;

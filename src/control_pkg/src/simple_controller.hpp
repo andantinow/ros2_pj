@@ -26,27 +26,28 @@ private:
   bool odom_received_ = false;
   bool path_received_ = false;
 
-  double lookahead_distance_ = 1.0;
+  double lookahead_distance_ = 0.8;
   double min_lookahead_ = 0.5;
-  double max_lookahead_ = 2.0;
+  double max_lookahead_ = 1.5;
   double lookahead_speed_gain_ = 0.5;
   double lookahead_error_gain_ = 0.0;
   double target_speed_ = 1.5;
+  double max_speed_ = 2.0;
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.34;  // Physical steering limit [rad], e.g. ±0.34
   double max_steer_rate_ = 2.0;  // rad/s
   double lateral_error_gain_ = 0.5;  // Lateral error compensation gain
-  double heading_error_gain_ = 0.3;  // Heading error compensation gain
-  double curvature_feedforward_gain_ = 1.0;  // Curvature feedforward gain
+  double heading_error_gain_ = 1.0;  // Heading error compensation gain (Stanley term)
+  double curvature_feedforward_gain_ = 1.2;  // Curvature feedforward gain
   double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
   double steering_sign_ = 1.0;  // Steering angle sign (1.0 or -1.0, for coordinate system correction)
   double direct_correction_gain_ = 0.0;
   double direct_correction_limit_ = 0.0;
   
   // PID control for lateral error
-  double pid_kp_ = 0.8;
-  double pid_ki_ = 0.0;
-  double pid_kd_ = 0.2;
+  double pid_kp_ = 1.5;
+  double pid_ki_ = 0.05;
+  double pid_kd_ = 0.5;
   double pid_integral_limit_ = 0.0;
   double lateral_error_integral_ = 0.0;
   double prev_lateral_error_ = 0.0;
