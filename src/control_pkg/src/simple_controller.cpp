@@ -15,6 +15,10 @@ using namespace std::chrono_literals;
 SimpleController::SimpleController() : Node("simple_controller")
 {
   RCLCPP_INFO(this->get_logger(), "[Kang Donghyeon] Simple Pure Pursuit Controller (ROSCPP) initializing...");
+  
+  // Initialize TF2 buffer and listener for coordinate transformation
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   declare_parameter("lookahead_distance", lookahead_distance_);
   declare_parameter("min_lookahead", min_lookahead_);
@@ -100,14 +104,23 @@ void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
 {
   current_path_ = *msg;
   if (!path_received_) {
-    RCLCPP_INFO(this->get_logger(), "Received first path message with %zu points, frame_id: %s", 
+    RCLCPP_WARN(this->get_logger(), "=== PATH RECEIVED ===");
+    RCLCPP_WARN(this->get_logger(), "Received first path message with %zu points, frame_id: %s", 
                 msg->poses.size(), msg->header.frame_id.c_str());
     if (!msg->poses.empty()) {
-      RCLCPP_INFO(this->get_logger(), "First path point: (%.2f, %.2f), Last: (%.2f, %.2f)",
+      RCLCPP_WARN(this->get_logger(), "First path point: (%.2f, %.2f), Last: (%.2f, %.2f)",
                   msg->poses[0].pose.position.x, msg->poses[0].pose.position.y,
                   msg->poses.back().pose.position.x, msg->poses.back().pose.position.y);
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "PATH IS EMPTY!");
     }
     path_received_ = true;
+  } else {
+    // Log path updates periodically
+    static int path_update_count = 0;
+    if (path_update_count++ % 100 == 0) {
+      RCLCPP_INFO(this->get_logger(), "Path updated: %zu points", msg->poses.size());
+    }
   }
 }
 
@@ -270,12 +283,13 @@ void SimpleController::control_loop()
 
   // Find target point with adaptive lookahead
   int target_idx = find_target_point_index(current_odom_, current_path_, adaptive_lookahead);
-  if (target_idx < 0) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
-                        "Failed to find target point. Current pos: (%.2f, %.2f), Path size: %zu",
+  if (target_idx < 0 || target_idx >= static_cast<int>(current_path_.poses.size())) {
+    RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
+                        "!!! FAILED TO FIND TARGET POINT !!! Current pos: (%.2f, %.2f), Path size: %zu, target_idx=%d",
                         current_odom_.pose.pose.position.x, 
                         current_odom_.pose.pose.position.y,
-                        current_path_.poses.size());
+                        current_path_.poses.size(),
+                        target_idx);
     return;
   }
 
@@ -315,25 +329,51 @@ void SimpleController::control_loop()
   double target_x_global = target_pose.pose.position.x;
   double target_y_global = target_pose.pose.position.y;
 
-  // Transform target to vehicle frame
-  // Vehicle frame: x forward, y left, z up
-  // Global to vehicle: rotate by -current_yaw
-  // [x_veh]   [cos(θ)  sin(θ)] [x_global - x_curr]
-  // [y_veh] = [-sin(θ) cos(θ)] [y_global - y_curr]
-  double dx_global = target_x_global - current_x;
-  double dy_global = target_y_global - current_y;
-  double cos_yaw = std::cos(current_yaw);
-  double sin_yaw = std::sin(current_yaw);
+  // Transform target point from map frame to base_link frame using TF2
+  // This is more reliable than manual coordinate transformation
+  geometry_msgs::msg::PointStamped target_point_map, target_point_base;
+  target_point_map.header.frame_id = current_path_.header.frame_id;
+  target_point_map.header.stamp = rclcpp::Time(0);  // Use latest available transform
+  target_point_map.point.x = target_x_global;
+  target_point_map.point.y = target_y_global;
+  target_point_map.point.z = 0.0;
   
-  double target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
-  double target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
+  double target_x_vehicle, target_y_vehicle;
+  bool tf_success = false;
+  
+  try {
+    // Lookup transform from map to base_link
+    geometry_msgs::msg::TransformStamped transform;
+    transform = tf_buffer_->lookupTransform("base_link", current_path_.header.frame_id, 
+                                            rclcpp::Time(0), rclcpp::Duration::from_seconds(0.1));
+    
+    // Transform the point
+    tf2::doTransform(target_point_map, target_point_base, transform);
+    target_x_vehicle = target_point_base.point.x;
+    target_y_vehicle = target_point_base.point.y;
+    tf_success = true;
+    
+  } catch (const tf2::TransformException &ex) {
+    // Fallback to manual transformation if TF fails
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                        "TF transform failed: %s. Using manual transformation.", ex.what());
+    
+    // Manual coordinate transformation (fallback)
+    double dx_global = target_x_global - current_x;
+    double dy_global = target_y_global - current_y;
+    double cos_yaw = std::cos(current_yaw);
+    double sin_yaw = std::sin(current_yaw);
+    
+    target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
+    target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
+  }
   
   // Debug: log coordinate transformation
   static int coord_debug_count = 0;
   if (coord_debug_count++ % 50 == 0) {
     RCLCPP_INFO(this->get_logger(), 
-                "Coord: global_dx=%.3f, global_dy=%.3f, veh_x=%.3f, veh_y=%.3f, yaw=%.3f",
-                dx_global, dy_global, target_x_vehicle, target_y_vehicle, current_yaw);
+                "Coord: global=(%.3f,%.3f), veh=(%.3f,%.3f), yaw=%.3f, tf_ok=%d",
+                target_x_global, target_y_global, target_x_vehicle, target_y_vehicle, current_yaw, tf_success);
   }
 
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
@@ -396,12 +436,12 @@ void SimpleController::control_loop()
     steering_angle += direct_correction;
   }
   
-  // Debug logging
+  // Debug logging - more frequent for troubleshooting
   static int debug_count = 0;
-  if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
+  if (debug_count++ % 10 == 0) {  // Every 0.2 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer=%.3f, target_y_veh=%.3f, target_idx=%d",
-                lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx);
+                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer=%.3f, target_y_veh=%.3f, target_idx=%d, path_size=%zu",
+                lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx, current_path_.poses.size());
   }
 
   // Limit steering angle

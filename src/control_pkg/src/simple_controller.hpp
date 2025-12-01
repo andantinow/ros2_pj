@@ -7,6 +7,9 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <tf2/utils.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <vector>
 #include <string>
 
@@ -20,6 +23,10 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  
+  // TF2 for coordinate transformation
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
   nav_msgs::msg::Odometry current_odom_;
   nav_msgs::msg::Path current_path_;

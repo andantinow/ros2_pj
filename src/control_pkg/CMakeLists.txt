@@ -6,6 +6,7 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
@@ -24,6 +25,7 @@ ament_target_dependencies(simple_controller_node
   nav_msgs
   ackermann_msgs
   tf2
+  tf2_ros
   geometry_msgs
   tf2_geometry_msgs
 )

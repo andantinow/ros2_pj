@@ -116,7 +116,8 @@ class RacelineServer : public rclcpp::Node {
       return;
     }
     RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points", pts.size());
-    auto stamp=now();
+    // Use zero timestamp for static data (RViz will always display it)
+    auto stamp=rclcpp::Time(0);
     nav_msgs::msg::Path path;
     path.header.stamp=stamp;
     path.header.frame_id=frame_id_;
@@ -125,7 +126,7 @@ class RacelineServer : public rclcpp::Node {
     if(publish_vref_) vref.data.reserve(pts.size());
     for(const auto &p: pts) {
       geometry_msgs::msg::PoseStamped ps;
-      ps.header.stamp=stamp;
+      ps.header.stamp=stamp;  // Zero timestamp for static data
       ps.header.frame_id=frame_id_;
       ps.pose.position.x=p.x;
       ps.pose.position.y=p.y;
