@@ -27,6 +27,8 @@ int main(int argc,char** argv){
   std::string out_csv="data/raceline.csv";
   double ds=0.5, mu=1.0, v_max=20.0, ax_max=4.0, ax_min=-6.0;
   double offset=0.0;  // Offset distance to move raceline outward (positive = left/outside)
+  double start_x=0.0, start_y=0.0, start_psi=0.0;  // Vehicle start pose (0,0,0 = use first centerline point)
+  bool use_start_pose=false;  // Whether to use start pose
 
   for(int i=1;i<argc;++i){
     std::string a=argv[i];
@@ -40,6 +42,9 @@ int main(int argc,char** argv){
     else if(a=="--ax_max") nextd(ax_max);
     else if(a=="--ax_min") nextd(ax_min);
     else if(a=="--offset") nextd(offset);  // Offset to move raceline outward
+    else if(a=="--start_x") { nextd(start_x); use_start_pose=true; }
+    else if(a=="--start_y") { nextd(start_y); use_start_pose=true; }
+    else if(a=="--start_psi") { nextd(start_psi); use_start_pose=true; }
   }
 
   std::ifstream in(in_csv);
@@ -202,6 +207,37 @@ int main(int argc,char** argv){
     // Calculate new speed
     double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
     vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+  }
+
+  // Step 4: Set first point to vehicle start pose if specified
+  if(use_start_pose && pts.size() > 0){
+    pts[0].x = start_x;
+    pts[0].y = start_y;
+    psi[0] = start_psi;
+    // Recalculate derivatives for first point after changing position
+    if(pts.size() > 1){
+      double dx = pts[1].x - pts[0].x;
+      double dy = pts[1].y - pts[0].y;
+      double dist = std::hypot(dx, dy);
+      if(dist > 1e-6){
+        // Update psi to point towards next point
+        psi[0] = std::atan2(dy, dx);
+        // Normalize psi
+        while(psi[0] > M_PI) psi[0] -= 2*M_PI;
+        while(psi[0] < -M_PI) psi[0] += 2*M_PI;
+      }
+    }
+    // Recalculate kappa for first point (will be updated in gradient calculation)
+    // Recompute gradients after position change
+    for(size_t i=0;i<pts.size();++i){ px[i]=pts[i].x; py[i]=pts[i].y; }
+    auto d1x_new=gradient(px,ds); auto d1y_new=gradient(py,ds);
+    auto d2x_new=gradient(d1x_new,ds); auto d2y_new=gradient(d1y_new,ds);
+    // Update kappa for first few points
+    for(size_t i=0;i<std::min<size_t>(3, kappa.size());++i){
+      double num=d1x_new[i]*d2y_new[i] - d1y_new[i]*d2x_new[i];
+      double den=std::pow(d1x_new[i]*d1x_new[i]+d1y_new[i]*d1y_new[i],1.5)+1e-12;
+      kappa[i]=num/den;
+    }
   }
 
   std::ofstream out(out_csv);
