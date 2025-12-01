@@ -29,4 +29,4 @@ nmpc_engine_node:
     pid_ki: 0.1  # Increased integral gain
     pid_kd: 0.5  # Increased derivative gain
     use_path_interpolation: true
-    steering_sign: -1.0  # Flip to -1.0 if vehicle goes wrong direction (left/right issue)
+    steering_sign: 1.0  # Positive = standard, -1.0 = flip if vehicle goes wrong direction
