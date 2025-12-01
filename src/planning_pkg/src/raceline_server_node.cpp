@@ -66,7 +66,15 @@ class RacelineServer : public rclcpp::Node {
       return r;
     };
     param_cb_ = add_on_set_parameters_callback(cb);
+    
+    // Publish immediately on startup
     publish_once();
+    
+    // Also publish periodically (1 Hz) to ensure RViz receives it even if it starts late
+    publish_timer_ = create_wall_timer(
+      std::chrono::seconds(1),
+      [this]() { publish_once(); }
+    );
   }
 
  private:
@@ -78,6 +86,7 @@ class RacelineServer : public rclcpp::Node {
   rclcpp::QoS qos_{1};
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr vref_pub_;
+  rclcpp::TimerBase::SharedPtr publish_timer_;
   OnSetParametersCallbackHandle::SharedPtr param_cb_;
 
   static bool parse_row(const std::string &line, RacelinePoint &p) {
@@ -155,10 +164,17 @@ class RacelineServer : public rclcpp::Node {
       return;
     }
     
-    RCLCPP_INFO(get_logger(), "Publishing path with %zu points, length: %.2f m",
-                path.poses.size(), planning_pkg::path_length(path));
+    double path_len = planning_pkg::path_length(path);
+    RCLCPP_WARN(get_logger(), "=== PUBLISHING RACELINE === Points: %zu, Length: %.2f m, Frame: %s",
+                path.poses.size(), path_len, frame_id_.c_str());
+    if (!path.poses.empty()) {
+      RCLCPP_WARN(get_logger(), "First point: (%.3f, %.3f), Last: (%.3f, %.3f)",
+                  path.poses[0].pose.position.x, path.poses[0].pose.position.y,
+                  path.poses.back().pose.position.x, path.poses.back().pose.position.y);
+    }
     path_pub_->publish(path);
     if(publish_vref_) vref_pub_->publish(vref);
+    RCLCPP_WARN(get_logger(), "Path published to /global_raceline");
   }
 
   std::string resolve_file(const std::string &raw) {
