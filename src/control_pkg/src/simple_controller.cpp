@@ -20,6 +20,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("min_lookahead", min_lookahead_);
   declare_parameter("max_lookahead", max_lookahead_);
   declare_parameter("lookahead_speed_gain", lookahead_speed_gain_);
+  declare_parameter("lookahead_error_gain", lookahead_error_gain_);
   declare_parameter("target_speed", target_speed_);
   declare_parameter("wheelbase", wheelbase_);
   declare_parameter("max_steer_angle", max_steer_angle_);
@@ -29,6 +30,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("curvature_feedforward_gain", curvature_feedforward_gain_);
   declare_parameter("smoothing_factor", smoothing_factor_);
   declare_parameter("steering_sign", steering_sign_);
+  declare_parameter("direct_correction_gain", direct_correction_gain_);
+  declare_parameter("direct_correction_limit", direct_correction_limit_);
   declare_parameter("pid_kp", pid_kp_);
   declare_parameter("pid_ki", pid_ki_);
   declare_parameter("pid_kd", pid_kd_);
@@ -41,6 +44,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   min_lookahead_ = get_parameter("min_lookahead").as_double();
   max_lookahead_ = get_parameter("max_lookahead").as_double();
   lookahead_speed_gain_ = get_parameter("lookahead_speed_gain").as_double();
+  lookahead_error_gain_ = get_parameter("lookahead_error_gain").as_double();
   target_speed_ = get_parameter("target_speed").as_double();
   wheelbase_ = get_parameter("wheelbase").as_double();
   max_steer_angle_ = get_parameter("max_steer_angle").as_double();
@@ -50,6 +54,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   curvature_feedforward_gain_ = get_parameter("curvature_feedforward_gain").as_double();
   smoothing_factor_ = get_parameter("smoothing_factor").as_double();
   steering_sign_ = get_parameter("steering_sign").as_double();
+  direct_correction_gain_ = get_parameter("direct_correction_gain").as_double();
+  direct_correction_limit_ = get_parameter("direct_correction_limit").as_double();
   pid_kp_ = get_parameter("pid_kp").as_double();
   pid_ki_ = get_parameter("pid_ki").as_double();
   pid_kd_ = get_parameter("pid_kd").as_double();
@@ -240,9 +246,6 @@ void SimpleController::control_loop()
     current_odom_.twist.twist.linear.y * current_odom_.twist.twist.linear.y
   );
 
-  // Adaptive lookahead distance based on speed
-  double adaptive_lookahead = compute_adaptive_lookahead(current_speed);
-
   // Find closest point for lateral error calculation (improved: search along path)
   double current_x = current_odom_.pose.pose.position.x;
   double current_y = current_odom_.pose.pose.position.y;
@@ -256,6 +259,14 @@ void SimpleController::control_loop()
   // Compute lateral error
   double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, current_path_, closest_idx);
   double heading_error = compute_heading_error(current_yaw, current_path_, closest_idx);
+
+  // Adaptive lookahead distance based on speed and lateral error
+  double adaptive_lookahead = compute_adaptive_lookahead(current_speed);
+  if (lookahead_error_gain_ > 0.0) {
+    adaptive_lookahead = std::max(
+        min_lookahead_,
+        adaptive_lookahead - lookahead_error_gain_ * std::abs(lateral_error));
+  }
 
   // Find target point with adaptive lookahead
   int target_idx = find_target_point_index(current_odom_, current_path_, adaptive_lookahead);
@@ -373,9 +384,14 @@ void SimpleController::control_loop()
   steering_angle += stanley_heading_correction;
   
   // If lateral error is very large, add direct correction
-  if (abs_lateral_error > 1.0) {
+  if (abs_lateral_error > 1.0 && direct_correction_gain_ > 0.0) {
     // Direct proportional correction for large errors
-    double direct_correction = std::max(-0.3, std::min(0.3, lateral_error * 0.3));
+    double direct_correction = direct_correction_gain_ * lateral_error;
+    if (direct_correction_limit_ > 0.0) {
+      direct_correction = std::clamp(direct_correction,
+                                     -direct_correction_limit_,
+                                     direct_correction_limit_);
+    }
     steering_angle += direct_correction;
   }
   

@@ -24,6 +24,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import Command, LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
@@ -35,6 +36,11 @@ def generate_launch_description():
     map_yaml_path = LaunchConfiguration('map_yaml_path')
     map_yaml_path_arg = DeclareLaunchArgument(
         'map_yaml_path', description="Path to map YAML file. Passed in via top-level launchfile.")
+    start_rviz = LaunchConfiguration('start_rviz')
+    start_rviz_arg = DeclareLaunchArgument(
+        'start_rviz',
+        default_value='false',
+        description='Whether to launch RViz along with the gym bridge')
 
     sim_setup_params = os.path.join(
         get_package_share_directory('stack_master'),
@@ -59,7 +65,8 @@ def generate_launch_description():
         name='rviz',
         arguments=[
             # '-d', os.path.join(get_package_share_directory('stack_master'), 'config', 'SIM', 'sim.rviz')]
-            '-d', "/home/misys/forza_ws/race_stack/forza_rviz.rviz"]
+            '-d', "/home/misys/forza_ws/race_stack/forza_rviz.rviz"],
+        condition=IfCondition(start_rviz)
     )
     map_server_node = Node(
         package='nav2_map_server',
@@ -99,6 +106,7 @@ def generate_launch_description():
 
     # finalize
     ld.add_action(map_yaml_path_arg)
+    ld.add_action(start_rviz_arg)
     ld.add_action(rviz_node)
     ld.add_action(bridge_node)
     ld.add_action(nav_lifecycle_node)

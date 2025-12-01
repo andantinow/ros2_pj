@@ -2,7 +2,7 @@ nmpc_engine_node:
   ros__parameters:
     wheelbase: 0.33
     steer_limit: 0.41
-    steer_rate_limit: 2.0
+    steer_rate_limit: 4.0
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 6.0
@@ -10,6 +10,7 @@ nmpc_engine_node:
     min_lookahead: 0.6
     max_lookahead: 2.5
     lookahead_speed_gain: 0.8
+    lookahead_error_gain: 0.6
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
@@ -17,11 +18,13 @@ nmpc_engine_node:
     drive_topic: '/drive'
     target_speed: 1.5
     max_steer_angle: 0.418
-    max_steer_rate: 2.0
+    max_steer_rate: 4.0
     lateral_error_gain: 0.8
     heading_error_gain: 0.5
     curvature_feedforward_gain: 1.0
     smoothing_factor: 0.3
+    direct_correction_gain: 0.45
+    direct_correction_limit: 0.6
     pid_kp: 1.2
     pid_ki: 0.05
     pid_kd: 0.3
