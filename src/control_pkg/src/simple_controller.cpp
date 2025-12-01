@@ -71,7 +71,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   prev_time_ = this->get_clock()->now();
 
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      odom_topic_, 10,
+      odom_topic_, rclcpp::SensorDataQoS(),
       std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
 
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
