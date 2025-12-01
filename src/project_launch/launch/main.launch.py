@@ -39,7 +39,7 @@ def generate_launch_description():
     )
     declare_bridge_start_rviz = DeclareLaunchArgument(
         'bridge_start_rviz',
-        default_value='false',
+        default_value='true',
         description='Whether to also start RViz inside the f1tenth_gym bridge launch.'
     )
 
