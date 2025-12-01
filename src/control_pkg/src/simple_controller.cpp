@@ -341,31 +341,44 @@ void SimpleController::control_loop()
   double target_x_vehicle, target_y_vehicle;
   bool tf_success = false;
   
-  try {
-    // Lookup transform from map to base_link
-    geometry_msgs::msg::TransformStamped transform;
-    transform = tf_buffer_->lookupTransform("base_link", current_path_.header.frame_id, 
-                                            rclcpp::Time(0), rclcpp::Duration::from_seconds(0.1));
-    
-    // Transform the point
-    tf2::doTransform(target_point_map, target_point_base, transform);
-    target_x_vehicle = target_point_base.point.x;
-    target_y_vehicle = target_point_base.point.y;
-    tf_success = true;
-    
-  } catch (const tf2::TransformException &ex) {
-    // Fallback to manual transformation if TF fails
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
-                        "TF transform failed: %s. Using manual transformation.", ex.what());
-    
-    // Manual coordinate transformation (fallback)
+  // Try TF transform first, but prefer manual transformation for reliability
+  // Manual transformation is more reliable when odometry is in map frame
+  bool use_tf = false;  // Set to true to use TF, false to use manual transform
+  
+  if (use_tf) {
+    try {
+      // Lookup transform from map to base_link (or odom frame)
+      std::string target_frame = current_odom_.child_frame_id;  // Usually "base_link"
+      geometry_msgs::msg::TransformStamped transform;
+      transform = tf_buffer_->lookupTransform(target_frame, current_path_.header.frame_id, 
+                                              rclcpp::Time(0), rclcpp::Duration::from_seconds(0.1));
+      
+      // Transform the point
+      tf2::doTransform(target_point_map, target_point_base, transform);
+      target_x_vehicle = target_point_base.point.x;
+      target_y_vehicle = target_point_base.point.y;
+      tf_success = true;
+      
+    } catch (const tf2::TransformException &ex) {
+      // Fallback to manual transformation if TF fails
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                          "TF transform failed: %s. Using manual transformation.", ex.what());
+      use_tf = false;
+    }
+  }
+  
+  if (!use_tf) {
+    // Manual coordinate transformation (preferred method)
+    // This works when odometry is published in map frame
     double dx_global = target_x_global - current_x;
     double dy_global = target_y_global - current_y;
     double cos_yaw = std::cos(current_yaw);
     double sin_yaw = std::sin(current_yaw);
     
+    // Transform to vehicle frame: x forward, y left
     target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
     target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
+    tf_success = false;  // Using manual transform
   }
   
   // Debug: log coordinate transformation

@@ -59,15 +59,15 @@ def generate_launch_description():
                     {'map_path': map_yaml_path},
                     {'sim_params': os.path.join(get_package_share_directory('stack_master'), 'config', 'SIM', 'sim_params.yaml')}]
     )
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz',
-        arguments=[
-            # '-d', os.path.join(get_package_share_directory('stack_master'), 'config', 'SIM', 'sim.rviz')]
-            '-d', "/home/misys/forza_ws/race_stack/forza_rviz.rviz"],
-        condition=IfCondition(start_rviz)
-    )
+    # RViz disabled - use main launch's RViz instead
+    # rviz_node = Node(
+    #     package='rviz2',
+    #     executable='rviz2',
+    #     name='rviz',
+    #     arguments=[
+    #         '-d', "/home/misys/forza_ws/race_stack/forza_rviz.rviz"],
+    #     condition=IfCondition(start_rviz)
+    # )
     map_server_node = Node(
         package='nav2_map_server',
         executable='map_server',
@@ -107,7 +107,7 @@ def generate_launch_description():
     # finalize
     ld.add_action(map_yaml_path_arg)
     ld.add_action(start_rviz_arg)
-    ld.add_action(rviz_node)
+    # ld.add_action(rviz_node)  # Disabled - use main launch's RViz
     ld.add_action(bridge_node)
     ld.add_action(nav_lifecycle_node)
     ld.add_action(map_server_node)

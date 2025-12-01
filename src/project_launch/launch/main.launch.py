@@ -37,11 +37,17 @@ def generate_launch_description():
         default_value='true',
         description='Whether to start rviz from this launch (set false if included launches start rviz).'
     )
+    declare_bridge_start_rviz = DeclareLaunchArgument(
+        'bridge_start_rviz',
+        default_value='false',
+        description='Whether to also start RViz inside the f1tenth_gym bridge launch.'
+    )
 
     # LaunchConfiguration shortcuts
     map_name_conf = LaunchConfiguration('map_name')
     raceline_file_conf = LaunchConfiguration('raceline_file')
     start_rviz_conf = LaunchConfiguration('start_rviz')
+    bridge_start_rviz_conf = LaunchConfiguration('bridge_start_rviz')
 
     # Build map yaml path: <stack_master_pkg>/maps/<map_name>/<map_name>.yaml
     # PythonExpression concatenates the LaunchConfiguration value with '.yaml' at runtime.
@@ -60,7 +66,8 @@ def generate_launch_description():
         launch_arguments={
             # many gym bridges expect a map yaml path; pass computed path
             'map_yaml_path': map_yaml_path,
-            'params_file': os.path.join(stack_master_pkg, 'config', 'SIM', 'sim_params.yaml')
+            'params_file': os.path.join(stack_master_pkg, 'config', 'SIM', 'sim_params.yaml'),
+            'start_rviz': bridge_start_rviz_conf
         }.items()
     )
 
@@ -103,16 +110,14 @@ def generate_launch_description():
         parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')]
     )
 
-    # Optional: a small static transform to ensure 'map' exists immediately for RViz.
-    # This is useful to avoid race conditions where RViz starts before any TF is published.
-    # If another node already publishes the correct map->base_link transform, you can remove this node.
-    static_map_broadcaster = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='map_to_base_link_broadcaster',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'map', 'base_link'],
-        output='screen'
-    )
+    # Remove static transform - let odometry/gym_bridge publish the actual transform
+    # static_map_broadcaster = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='map_to_base_link_broadcaster',
+    #     arguments=['0', '0', '0', '0', '0', '0', '1', 'map', 'base_link'],
+    #     output='screen'
+    # )
 
     # RViz node: start only if start_rviz == true
     rviz_node = Node(
@@ -130,6 +135,7 @@ def generate_launch_description():
     ld.add_action(declare_map_name)
     ld.add_action(declare_raceline)
     ld.add_action(declare_start_rviz)
+    ld.add_action(declare_bridge_start_rviz)
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)
@@ -138,8 +144,8 @@ def generate_launch_description():
     ld.add_action(estimator_node)
     ld.add_action(nmpc_node)
 
-    # add static TF broadcaster (optional) before RViz to reduce race-condition errors
-    ld.add_action(static_map_broadcaster)
+    # Static TF broadcaster removed - use actual odometry transform
+    # ld.add_action(static_map_broadcaster)
 
     # add rviz (conditionally)
     ld.add_action(rviz_node)
