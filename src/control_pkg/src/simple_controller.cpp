@@ -451,9 +451,10 @@ void SimpleController::control_loop()
   
   // Debug logging - more frequent for troubleshooting
   static int debug_count = 0;
+  double steering_before_limit = steering_angle;
   if (debug_count++ % 10 == 0) {  // Every 0.2 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer=%.3f, target_y_veh=%.3f, target_idx=%d, path_size=%zu",
+                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer_raw=%.3f, target_y_veh=%.3f, target_idx=%d, path_size=%zu",
                 lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx, current_path_.poses.size());
   }
 
@@ -463,13 +464,22 @@ void SimpleController::control_loop()
   prev_time_ = current_time;
 
   // Apply steering rate limiting
+  double steering_before_smooth = steering_angle;
   steering_angle = limit_steering_rate(steering_angle, dt);
 
   // Apply smoothing filter
   steering_angle = smooth_steering(steering_angle, prev_steering_angle_);
   
   // Apply steering sign correction (for coordinate system mismatch)
+  double steering_before_sign = steering_angle;
   steering_angle *= steering_sign_;
+  
+  // Enhanced debug logging
+  if (debug_count % 50 == 0) {
+    RCLCPP_WARN(this->get_logger(), 
+                "Steering: raw=%.3f, after_limit=%.3f, after_smooth=%.3f, after_sign=%.3f, sign=%.1f",
+                steering_before_limit, steering_before_smooth, steering_before_sign, steering_angle, steering_sign_);
+  }
   
   prev_steering_angle_ = steering_angle;
 
