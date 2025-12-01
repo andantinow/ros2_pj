@@ -414,10 +414,12 @@ void SimpleController::control_loop()
   // Scale PID gain based on lateral error magnitude (more aggressive when far off)
   double abs_lateral_error = std::abs(lateral_error);
   double pid_scale = 1.0;
-  if (abs_lateral_error > 0.5) {
-    pid_scale = 1.5;  // More aggressive when far off path
-  } else if (abs_lateral_error > 0.2) {
-    pid_scale = 1.2;
+  if (abs_lateral_error > 0.3) {
+    pid_scale = 2.0;  // Much more aggressive when far off path
+  } else if (abs_lateral_error > 0.15) {
+    pid_scale = 1.5;  // Increased scale
+  } else if (abs_lateral_error > 0.05) {
+    pid_scale = 1.2;  // Even small errors get amplified
   }
   
   double pid_output = compute_pid_control(lateral_error, dt) * pid_scale;
@@ -441,8 +443,8 @@ void SimpleController::control_loop()
                                                   std::max(0.1, current_speed));
   steering_angle += stanley_heading_correction;
   
-  // If lateral error is large, add direct correction
-  if (direct_correction_gain_ > 0.0 && abs_lateral_error > 0.3) {
+  // If lateral error is large, add direct correction (more aggressive)
+  if (direct_correction_gain_ > 0.0 && abs_lateral_error > 0.2) {  // Lower threshold for earlier correction
     // Direct proportional correction for large errors
     double direct_correction = direct_correction_gain_ * lateral_error;
     if (direct_correction_limit_ > 0.0) {
