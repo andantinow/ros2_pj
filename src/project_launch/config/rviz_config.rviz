@@ -8,7 +8,6 @@ Panels:
         - /Status1
         - /TF1
         - /Odometry1
-        - /Path1
       Splitter Ratio: 0.5
     Tree Height: 555
   - Class: rviz_common/Selection
@@ -28,7 +27,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: LaserScan
 Visualization Manager:
   Class: ""
   Displays:
@@ -66,7 +65,6 @@ Visualization Manager:
       Update Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /map_updates
@@ -77,13 +75,73 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
+        car_state/back_left_wheel:
+          Value: true
+        car_state/back_right_wheel:
+          Value: true
+        car_state/base_link:
+          Value: true
+        car_state/front_left_hinge:
+          Value: true
+        car_state/front_left_wheel:
+          Value: true
+        car_state/front_right_hinge:
+          Value: true
+        car_state/front_right_wheel:
+          Value: true
+        car_state/laser:
+          Value: true
+        map:
+          Value: true
+        opp_racecar/back_left_wheel:
+          Value: true
+        opp_racecar/back_right_wheel:
+          Value: true
+        opp_racecar/base_link:
+          Value: true
+        opp_racecar/front_left_hinge:
+          Value: true
+        opp_racecar/front_left_wheel:
+          Value: true
+        opp_racecar/front_right_hinge:
+          Value: true
+        opp_racecar/front_right_wheel:
+          Value: true
+        opp_racecar/laser:
+          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: false
       Tree:
-        {}
+        map:
+          car_state/base_link:
+            car_state/back_left_wheel:
+              {}
+            car_state/back_right_wheel:
+              {}
+            car_state/front_left_hinge:
+              car_state/front_left_wheel:
+                {}
+            car_state/front_right_hinge:
+              car_state/front_right_wheel:
+                {}
+            car_state/laser:
+              {}
+          opp_racecar/base_link:
+            opp_racecar/back_left_wheel:
+              {}
+            opp_racecar/back_right_wheel:
+              {}
+            opp_racecar/front_left_hinge:
+              opp_racecar/front_left_wheel:
+                {}
+            opp_racecar/front_right_hinge:
+              opp_racecar/front_right_wheel:
+                {}
+            opp_racecar/laser:
+              {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -94,7 +152,6 @@ Visualization Manager:
       Description Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /ego_robot_description
@@ -105,10 +162,52 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
+        car_state/back_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        car_state/back_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        car_state/base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        car_state/front_left_hinge:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        car_state/front_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        car_state/front_right_hinge:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        car_state/front_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        car_state/laser:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
       Name: Ego Robot
       TF Prefix: ""
       Update Interval: 0
       Value: true
+      Visual Enabled: true
     - Alpha: 1
       Class: rviz_default_plugins/RobotModel
       Collision Enabled: false
@@ -117,7 +216,6 @@ Visualization Manager:
       Description Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /opp_robot_description
@@ -128,10 +226,52 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
+        opp_racecar/back_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        opp_racecar/back_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        opp_racecar/base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        opp_racecar/front_left_hinge:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        opp_racecar/front_left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        opp_racecar/front_right_hinge:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        opp_racecar/front_right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        opp_racecar/laser:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
       Name: Opponent Robot
       TF Prefix: ""
       Update Interval: 0
       Value: true
+      Visual Enabled: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -279,7 +419,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 12.776019096374512
+      Distance: 11.448782920837402
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -294,10 +434,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.2903984785079956
+      Pitch: 0.7947970628738403
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 0.0053981589153409
+      Yaw: 4.483586311340332
     Saved: ~
 Window Geometry:
   Displays:
