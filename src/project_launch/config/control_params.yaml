@@ -22,7 +22,7 @@ nmpc_engine_node:
     lateral_error_gain: 1.0
     heading_error_gain: 0.5
     curvature_feedforward_gain: 1.0
-    smoothing_factor: 0.3
+    smoothing_factor: 0.5  # Reduced smoothing for faster response
     direct_correction_gain: 0.8
     direct_correction_limit: 0.9
     pid_kp: 1.2

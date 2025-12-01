@@ -49,10 +49,10 @@ bridge:
     # opponent parameters
     num_agent: 2
 
-    # ego starting pose on map
-    sx: 1.07
-    sy: -0.411
-    stheta: 0.00264
+    # ego starting pose on map - match first raceline point
+    sx: 2.09726
+    sy: -0.977045
+    stheta: -0.0705616
 
     # opp starting pose on map
     sx1: 2.0

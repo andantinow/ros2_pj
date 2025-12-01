@@ -393,11 +393,15 @@ void SimpleController::control_loop()
   double steering_angle = 0.0;
 
   // Pure pursuit steering calculation
+  // Use direct formula: delta = atan(2*L*sin(alpha) / Ld)
   // Positive alpha (target to left) -> positive steering (turn left)
   // Negative alpha (target to right) -> negative steering (turn right)
-  if (adaptive_lookahead > 1e-6) {
-    double sin_alpha_clipped = std::max(-1.0, std::min(1.0, std::sin(alpha)));
-    steering_angle = std::atan2(2.0 * wheelbase_ * sin_alpha_clipped, adaptive_lookahead);
+  if (adaptive_lookahead > 1e-6 && std::abs(target_x_vehicle) > 0.01) {
+    // More direct calculation using target_y_vehicle and lookahead
+    steering_angle = std::atan2(2.0 * wheelbase_ * target_y_vehicle, adaptive_lookahead * adaptive_lookahead);
+  } else {
+    // Fallback: use alpha directly
+    steering_angle = alpha;
   }
 
   // Compute time delta for PID control
@@ -720,6 +724,20 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
 
 double SimpleController::smooth_steering(double new_steering, double prev_steering)
 {
-  // Exponential moving average filter
-  return smoothing_factor_ * new_steering + (1.0 - smoothing_factor_) * prev_steering;
+  // Exponential moving average filter with direction preservation
+  // If steering direction changes significantly, reduce smoothing to allow faster response
+  double steering_diff = std::abs(new_steering - prev_steering);
+  double effective_smoothing = smoothing_factor_;
+  
+  // If direction change is large (more than 0.1 rad), reduce smoothing
+  if (steering_diff > 0.1) {
+    effective_smoothing = std::max(0.1, smoothing_factor_ * 0.5);  // More responsive
+  }
+  
+  // If signs are different and change is significant, use new value more
+  if ((new_steering * prev_steering < 0) && steering_diff > 0.05) {
+    effective_smoothing = 0.7;  // Favor new direction
+  }
+  
+  return effective_smoothing * new_steering + (1.0 - effective_smoothing) * prev_steering;
 }
