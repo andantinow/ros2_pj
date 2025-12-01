@@ -7,9 +7,6 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <tf2/utils.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <vector>
 #include <string>
 
@@ -23,10 +20,6 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
-  
-  // TF2 for coordinate transformation
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
   nav_msgs::msg::Odometry current_odom_;
   nav_msgs::msg::Path current_path_;
@@ -40,7 +33,7 @@ private:
   double lookahead_error_gain_ = 0.0;
   double target_speed_ = 1.5;
   double wheelbase_ = 0.33;
-  double max_steer_angle_ = 0.418;
+  double max_steer_angle_ = 0.34;  // Physical steering limit [rad], e.g. ±0.34
   double max_steer_rate_ = 2.0;  // rad/s
   double lateral_error_gain_ = 0.5;  // Lateral error compensation gain
   double heading_error_gain_ = 0.3;  // Heading error compensation gain

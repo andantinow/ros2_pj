@@ -15,10 +15,6 @@ using namespace std::chrono_literals;
 SimpleController::SimpleController() : Node("simple_controller")
 {
   RCLCPP_INFO(this->get_logger(), "[Kang Donghyeon] Simple Pure Pursuit Controller (ROSCPP) initializing...");
-  
-  // Initialize TF2 buffer and listener for coordinate transformation
-  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   declare_parameter("lookahead_distance", lookahead_distance_);
   declare_parameter("min_lookahead", min_lookahead_);
@@ -39,6 +35,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("pid_kp", pid_kp_);
   declare_parameter("pid_ki", pid_ki_);
   declare_parameter("pid_kd", pid_kd_);
+  declare_parameter("pid_integral_limit", 0.0);  // 0.0 means auto-limit based on Ki
   declare_parameter("use_path_interpolation", use_path_interpolation_);
   declare_parameter<std::string>("odom_topic", odom_topic_);
   declare_parameter<std::string>("path_topic", path_topic_);
@@ -63,6 +60,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   pid_kp_ = get_parameter("pid_kp").as_double();
   pid_ki_ = get_parameter("pid_ki").as_double();
   pid_kd_ = get_parameter("pid_kd").as_double();
+  pid_integral_limit_ = get_parameter("pid_integral_limit").as_double();
   use_path_interpolation_ = get_parameter("use_path_interpolation").as_bool();
   odom_topic_ = get_parameter("odom_topic").as_string();
   path_topic_ = get_parameter("path_topic").as_string();
@@ -104,23 +102,14 @@ void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
 {
   current_path_ = *msg;
   if (!path_received_) {
-    RCLCPP_WARN(this->get_logger(), "=== PATH RECEIVED ===");
-    RCLCPP_WARN(this->get_logger(), "Received first path message with %zu points, frame_id: %s", 
+    RCLCPP_INFO(this->get_logger(), "Received first path message with %zu points, frame_id: %s", 
                 msg->poses.size(), msg->header.frame_id.c_str());
     if (!msg->poses.empty()) {
-      RCLCPP_WARN(this->get_logger(), "First path point: (%.2f, %.2f), Last: (%.2f, %.2f)",
+      RCLCPP_INFO(this->get_logger(), "First path point: (%.2f, %.2f), Last: (%.2f, %.2f)",
                   msg->poses[0].pose.position.x, msg->poses[0].pose.position.y,
                   msg->poses.back().pose.position.x, msg->poses.back().pose.position.y);
-    } else {
-      RCLCPP_ERROR(this->get_logger(), "PATH IS EMPTY!");
     }
     path_received_ = true;
-  } else {
-    // Log path updates periodically
-    static int path_update_count = 0;
-    if (path_update_count++ % 100 == 0) {
-      RCLCPP_INFO(this->get_logger(), "Path updated: %zu points", msg->poses.size());
-    }
   }
 }
 
@@ -283,13 +272,12 @@ void SimpleController::control_loop()
 
   // Find target point with adaptive lookahead
   int target_idx = find_target_point_index(current_odom_, current_path_, adaptive_lookahead);
-  if (target_idx < 0 || target_idx >= static_cast<int>(current_path_.poses.size())) {
-    RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                        "!!! FAILED TO FIND TARGET POINT !!! Current pos: (%.2f, %.2f), Path size: %zu, target_idx=%d",
+  if (target_idx < 0) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                        "Failed to find target point. Current pos: (%.2f, %.2f), Path size: %zu",
                         current_odom_.pose.pose.position.x, 
                         current_odom_.pose.pose.position.y,
-                        current_path_.poses.size(),
-                        target_idx);
+                        current_path_.poses.size());
     return;
   }
 
@@ -329,83 +317,28 @@ void SimpleController::control_loop()
   double target_x_global = target_pose.pose.position.x;
   double target_y_global = target_pose.pose.position.y;
 
-  // Transform target point from map frame to base_link frame using TF2
-  // This is more reliable than manual coordinate transformation
-  geometry_msgs::msg::PointStamped target_point_map, target_point_base;
-  target_point_map.header.frame_id = current_path_.header.frame_id;
-  target_point_map.header.stamp = rclcpp::Time(0);  // Use latest available transform
-  target_point_map.point.x = target_x_global;
-  target_point_map.point.y = target_y_global;
-  target_point_map.point.z = 0.0;
+  // Transform target to vehicle frame
+  // Vehicle frame: x forward, y left, z up
+  // Global to vehicle: rotate by -current_yaw
+  // [x_veh]   [cos(θ)  sin(θ)] [x_global - x_curr]
+  // [y_veh] = [-sin(θ) cos(θ)] [y_global - y_curr]
+  double dx_global = target_x_global - current_x;
+  double dy_global = target_y_global - current_y;
+  double cos_yaw = std::cos(current_yaw);
+  double sin_yaw = std::sin(current_yaw);
   
-  double target_x_vehicle, target_y_vehicle;
-  bool tf_success = false;
-  
-  // Try TF transform first, but prefer manual transformation for reliability
-  // Manual transformation is more reliable when odometry is in map frame
-  bool use_tf = false;  // Set to true to use TF, false to use manual transform
-  
-  if (use_tf) {
-    try {
-      // Lookup transform from map to base_link (or odom frame)
-      std::string target_frame = current_odom_.child_frame_id;  // Usually "base_link"
-      geometry_msgs::msg::TransformStamped transform;
-      transform = tf_buffer_->lookupTransform(target_frame, current_path_.header.frame_id, 
-                                              rclcpp::Time(0), rclcpp::Duration::from_seconds(0.1));
-      
-      // Transform the point
-      tf2::doTransform(target_point_map, target_point_base, transform);
-      target_x_vehicle = target_point_base.point.x;
-      target_y_vehicle = target_point_base.point.y;
-      tf_success = true;
-      
-    } catch (const tf2::TransformException &ex) {
-      // Fallback to manual transformation if TF fails
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
-                          "TF transform failed: %s. Using manual transformation.", ex.what());
-      use_tf = false;
-    }
-  }
-  
-  if (!use_tf) {
-    // Manual coordinate transformation (preferred method)
-    // This works when odometry is published in map frame
-    double dx_global = target_x_global - current_x;
-    double dy_global = target_y_global - current_y;
-    double cos_yaw = std::cos(current_yaw);
-    double sin_yaw = std::sin(current_yaw);
-    
-    // Transform to vehicle frame: x forward, y left
-    target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
-    target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
-    tf_success = false;  // Using manual transform
-  }
+  double target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
+  double target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
   
   // Debug: log coordinate transformation
   static int coord_debug_count = 0;
   if (coord_debug_count++ % 50 == 0) {
     RCLCPP_INFO(this->get_logger(), 
-                "Coord: global=(%.3f,%.3f), veh=(%.3f,%.3f), yaw=%.3f, tf_ok=%d",
-                target_x_global, target_y_global, target_x_vehicle, target_y_vehicle, current_yaw, tf_success);
+                "Coord: global_dx=%.3f, global_dy=%.3f, veh_x=%.3f, veh_y=%.3f, yaw=%.3f",
+                dx_global, dy_global, target_x_vehicle, target_y_vehicle, current_yaw);
   }
 
-  // Pure pursuit steering calculation - STANDARD FORMULA
-  // delta = atan2(2 * L * sin(alpha), Ld)
-  // where alpha = atan2(target_y, target_x), Ld = actual distance to target
-  double Ld = std::hypot(target_x_vehicle, target_y_vehicle);  // Actual distance to target point
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
-  double steering_angle = 0.0;
-  
-  // Standard Pure Pursuit formula
-  if (Ld > 1e-6) {
-    steering_angle = std::atan2(2.0 * wheelbase_ * std::sin(alpha), Ld);
-  } else {
-    // If target is too close, use alpha directly
-    steering_angle = alpha;
-  }
-  
-  // Positive steering = turn left, Negative steering = turn right
-  // Positive target_y_vehicle (target to left) -> positive steering (turn left) ✓
 
   // Compute time delta for PID control
   rclcpp::Time current_time = this->get_clock()->now();
@@ -413,83 +346,51 @@ void SimpleController::control_loop()
   if (dt > 0.1) dt = 0.1;  // Cap dt to prevent large jumps
   if (dt <= 0.0) dt = 0.02;  // Default to 20ms if invalid
   
-  // PID control for lateral error
-  // Scale PID gain based on lateral error magnitude (more aggressive when far off)
-  double abs_lateral_error = std::abs(lateral_error);
-  double pid_scale = 1.0;
-  if (abs_lateral_error > 0.3) {
-    pid_scale = 2.0;  // Much more aggressive when far off path
-  } else if (abs_lateral_error > 0.15) {
-    pid_scale = 1.5;  // Increased scale
-  } else if (abs_lateral_error > 0.05) {
-    pid_scale = 1.2;  // Even small errors get amplified
-  }
-  
-  double pid_output = compute_pid_control(lateral_error, dt) * pid_scale;
-  
-  // Compute path curvature at target point for feedforward control
-  double path_curvature = compute_path_curvature(current_path_, target_idx);
-  double curvature_feedforward = curvature_feedforward_gain_ * std::atan(wheelbase_ * path_curvature);
-  
-  // Add feedforward control (curvature-based)
-  steering_angle += curvature_feedforward;
-  
-  // Add lateral error compensation (PID + feedforward)
-  // Positive lateral_error = path to left = need left turn = positive steering
-  // So we add pid_output directly (pid_output should be positive when error is positive)
-  steering_angle += pid_output;
-  steering_angle += lateral_error_gain_ * lateral_error;
-  
-  // Add heading error compensation (Stanley-style)
-  // Positive heading_error = path heading more left = need left turn = positive steering
-  double stanley_heading_correction = std::atan2(heading_error_gain_ * heading_error, 
-                                                  std::max(0.1, current_speed));
-  steering_angle += stanley_heading_correction;
-  
-  // If lateral error is large, add direct correction (more aggressive)
-  if (direct_correction_gain_ > 0.0 && abs_lateral_error > 0.2) {  // Lower threshold for earlier correction
-    // Direct proportional correction for large errors
-    double direct_correction = direct_correction_gain_ * lateral_error;
-    if (direct_correction_limit_ > 0.0) {
-      direct_correction = std::clamp(direct_correction,
-                                     -direct_correction_limit_,
-                                     direct_correction_limit_);
-    }
-    steering_angle += direct_correction;
-  }
-  
-  // Debug logging - more frequent for troubleshooting
-  static int debug_count = 0;
-  double steering_before_limit = steering_angle;
-  if (debug_count++ % 10 == 0) {  // Every 0.2 seconds
-    RCLCPP_INFO(this->get_logger(), 
-                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer_raw=%.3f, target_y_veh=%.3f, target_idx=%d, path_size=%zu",
-                lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx, current_path_.poses.size());
+  // --- Hybrid Steering Law Components ---
+  // 1) Pure Pursuit: delta_pp = atan(2 * L * sin(alpha) / l_d)
+  double delta_pp = 0.0;
+  if (adaptive_lookahead > 1e-6) {
+    double sin_alpha_clipped = std::max(-1.0, std::min(1.0, std::sin(alpha)));
+    delta_pp = std::atan2(2.0 * wheelbase_ * sin_alpha_clipped, adaptive_lookahead);
   }
 
-  // Limit steering angle
-  steering_angle = std::max(-max_steer_angle_, std::min(max_steer_angle_, steering_angle));
-  
+  // 2) PID for lateral (cross-track) error: delta_pid
+  double delta_pid = compute_pid_control(lateral_error, dt);
+
+  // 3) Curvature feedforward: delta_ff = K_ff * atan(L * kappa)
+  double path_curvature = compute_path_curvature(current_path_, target_idx);
+  double delta_ff = curvature_feedforward_gain_ * std::atan(wheelbase_ * path_curvature);
+
+  // 4) Stanley-style heading correction (modified):
+  //    delta_stanley = atan(K_h * e_heading / (v + 1.0))
+  double stanley_den = current_speed + 1.0;  // Singularity protection
+  double delta_stanley = std::atan(heading_error_gain_ * heading_error / stanley_den);
+
+  // 5) Raw sum before filtering
+  double delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley;
+
+  // --- Temporal shaping & limits ---
+  // Apply steering rate limiting on raw command
+  double delta_rate_limited = limit_steering_rate(delta_raw, dt);
+
+  // Low-pass filter (LPF): delta_final = alpha * delta + (1 - alpha) * delta_prev
+  double delta_filtered = smooth_steering(delta_rate_limited, prev_steering_angle_);
+
+  // Clamp to physical steering limits [-max_steer_angle_, max_steer_angle_]
+  double steering_angle = std::clamp(delta_filtered, -max_steer_angle_, max_steer_angle_);
+
+  // Debug logging
+  static int debug_count = 0;
+  if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
+    RCLCPP_INFO(this->get_logger(), 
+                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer=%.3f, target_y_veh=%.3f, target_idx=%d",
+                lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx);
+  }
+
   prev_time_ = current_time;
 
-  // Apply steering sign correction FIRST (before rate limiting and smoothing)
-  // This ensures the sign is correct for all subsequent operations
-  double steering_before_sign = steering_angle;
+  // Apply steering sign correction (for coordinate system mismatch)
   steering_angle *= steering_sign_;
-  
-  // Apply steering rate limiting (after sign correction)
-  double steering_before_smooth = steering_angle;
-  steering_angle = limit_steering_rate(steering_angle, dt);
-
-  // Apply smoothing filter (after rate limiting)
-  steering_angle = smooth_steering(steering_angle, prev_steering_angle_);
-  
-  // Enhanced debug logging
-  if (debug_count % 50 == 0) {
-    RCLCPP_WARN(this->get_logger(), 
-                "Steering: raw=%.3f, after_sign=%.3f, after_limit=%.3f, after_smooth=%.3f, final=%.3f, sign=%.1f, Ld=%.3f, alpha=%.3f",
-                steering_before_limit, steering_before_sign, steering_before_smooth, steering_angle, steering_angle, steering_sign_, Ld, alpha);
-  }
   
   prev_steering_angle_ = steering_angle;
 
@@ -629,8 +530,14 @@ double SimpleController::compute_pid_control(double error, double dt)
   
   // Integral term
   lateral_error_integral_ += error * dt;
-  // Anti-windup: limit integral
-  double max_integral = 1.0 / std::max(pid_ki_, 1e-6);
+  // Anti-windup: limit integral with configurable bound
+  double max_integral;
+  if (pid_integral_limit_ > 0.0) {
+    max_integral = pid_integral_limit_;
+  } else {
+    // Fallback: auto-limit based on Ki (keeps I-term roughly bounded)
+    max_integral = 1.0 / std::max(pid_ki_, 1e-6);
+  }
   lateral_error_integral_ = std::max(-max_integral, std::min(max_integral, lateral_error_integral_));
   double i_term = pid_ki_ * lateral_error_integral_;
   
@@ -730,27 +637,6 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
 
 double SimpleController::smooth_steering(double new_steering, double prev_steering)
 {
-  // Exponential moving average filter with direction preservation
-  // CRITICAL: If prev_steering is zero or very small, don't smooth (first iteration or reset)
-  if (std::abs(prev_steering) < 0.01) {
-    return new_steering;  // No smoothing on first iteration
-  }
-  
-  // If steering direction changes significantly, reduce smoothing to allow faster response
-  double steering_diff = std::abs(new_steering - prev_steering);
-  double effective_smoothing = smoothing_factor_;
-  
-  // If direction change is large (more than 0.2 rad), use new value more
-  if (steering_diff > 0.2) {
-    effective_smoothing = 0.8;  // Favor new direction strongly
-  } else if (steering_diff > 0.1) {
-    effective_smoothing = std::max(0.3, smoothing_factor_ * 1.5);  // More responsive
-  }
-  
-  // If signs are different (direction reversal), use new value almost completely
-  if (new_steering * prev_steering < 0 && steering_diff > 0.05) {
-    effective_smoothing = 0.9;  // Strongly favor new direction
-  }
-  
-  return effective_smoothing * new_steering + (1.0 - effective_smoothing) * prev_steering;
+  // Exponential moving average filter
+  return smoothing_factor_ * new_steering + (1.0 - smoothing_factor_) * prev_steering;
 }
