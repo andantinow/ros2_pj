@@ -47,6 +47,7 @@ private:
   double pid_kp_ = 0.8;
   double pid_ki_ = 0.0;
   double pid_kd_ = 0.2;
+  double pid_integral_limit_ = 0.0;
   double lateral_error_integral_ = 0.0;
   double prev_lateral_error_ = 0.0;
   
