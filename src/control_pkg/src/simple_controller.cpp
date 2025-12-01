@@ -472,16 +472,17 @@ void SimpleController::control_loop()
   
   prev_time_ = current_time;
 
-  // Apply steering rate limiting
+  // Apply steering sign correction FIRST (before rate limiting and smoothing)
+  // This ensures the sign is correct for all subsequent operations
+  double steering_before_sign = steering_angle;
+  steering_angle *= steering_sign_;
+  
+  // Apply steering rate limiting (after sign correction)
   double steering_before_smooth = steering_angle;
   steering_angle = limit_steering_rate(steering_angle, dt);
 
-  // Apply smoothing filter
+  // Apply smoothing filter (after rate limiting)
   steering_angle = smooth_steering(steering_angle, prev_steering_angle_);
-  
-  // Apply steering sign correction (for coordinate system mismatch)
-  double steering_before_sign = steering_angle;
-  steering_angle *= steering_sign_;
   
   // Enhanced debug logging
   if (debug_count % 50 == 0) {
