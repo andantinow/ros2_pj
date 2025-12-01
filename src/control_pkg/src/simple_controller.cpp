@@ -376,6 +376,7 @@ void SimpleController::control_loop()
   // Positive lateral_error = path to left = need left turn = positive steering
   // So we add pid_output directly (pid_output should be positive when error is positive)
   steering_angle += pid_output;
+  steering_angle += lateral_error_gain_ * lateral_error;
   
   // Add heading error compensation (Stanley-style)
   // Positive heading_error = path heading more left = need left turn = positive steering
@@ -383,8 +384,8 @@ void SimpleController::control_loop()
                                                   std::max(0.1, current_speed));
   steering_angle += stanley_heading_correction;
   
-  // If lateral error is very large, add direct correction
-  if (abs_lateral_error > 1.0 && direct_correction_gain_ > 0.0) {
+  // If lateral error is large, add direct correction
+  if (direct_correction_gain_ > 0.0 && abs_lateral_error > 0.3) {
     // Direct proportional correction for large errors
     double direct_correction = direct_correction_gain_ * lateral_error;
     if (direct_correction_limit_ > 0.0) {

@@ -31,6 +31,8 @@ private:
   double max_lookahead_ = 2.0;
   double lookahead_speed_gain_ = 0.5;
   double lookahead_error_gain_ = 0.0;
+  double lookahead_error_gain_ = 0.0;
+  double lookahead_error_gain_ = 0.0;
   double target_speed_ = 1.5;
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.418;
@@ -40,6 +42,10 @@ private:
   double curvature_feedforward_gain_ = 1.0;  // Curvature feedforward gain
   double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
   double steering_sign_ = 1.0;  // Steering angle sign (1.0 or -1.0, for coordinate system correction)
+  double direct_correction_gain_ = 0.0;
+  double direct_correction_limit_ = 0.0;
+  double direct_correction_gain_ = 0.3;
+  double direct_correction_limit_ = 0.3;
   double direct_correction_gain_ = 0.3;
   double direct_correction_limit_ = 0.3;
   
