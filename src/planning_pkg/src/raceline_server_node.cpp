@@ -144,16 +144,62 @@ class RacelineServer : public rclcpp::Node {
     
     RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points (filtered from %zu)", valid_pts.size(), pts.size());
     
+    // Enforce continuity to avoid large jumps (> 2m) between points
+    auto enforce_continuity = [](const std::vector<RacelinePoint> & input) {
+      std::vector<RacelinePoint> output;
+      if (input.empty()) {
+        return output;
+      }
+      constexpr double kMaxGap = 2.0;  // meters
+      output.push_back(input.front());
+      for (size_t i = 1; i < input.size(); ++i) {
+        const auto & prev = output.back();
+        const auto & curr = input[i];
+        double dx = curr.x - prev.x;
+        double dy = curr.y - prev.y;
+        double gap = std::hypot(dx, dy);
+        if (gap > kMaxGap) {
+          int segments = static_cast<int>(std::floor(gap / kMaxGap));
+          double step = 1.0 / (segments + 1);
+          for (int s = 1; s <= segments; ++s) {
+            double frac = step * s;
+            RacelinePoint interp;
+            interp.s = prev.s + frac * (curr.s - prev.s);
+            interp.x = prev.x + frac * dx;
+            interp.y = prev.y + frac * dy;
+            double yaw_diff = curr.psi - prev.psi;
+            while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
+            while (yaw_diff < -M_PI) yaw_diff += 2.0 * M_PI;
+            interp.psi = prev.psi + frac * yaw_diff;
+            interp.kappa = prev.kappa + frac * (curr.kappa - prev.kappa);
+            interp.v = prev.v + frac * (curr.v - prev.v);
+            output.push_back(interp);
+          }
+        }
+        output.push_back(curr);
+      }
+      return output;
+    };
+    
+    auto continuous_pts = enforce_continuity(valid_pts);
+    if (continuous_pts.empty()) {
+      RCLCPP_ERROR(get_logger(), "Continuity enforcement produced no points");
+      return;
+    }
+    
+    RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points (filtered from %zu, continuity corrected)",
+                continuous_pts.size(), pts.size());
+    
     // Use zero timestamp for static data (RViz will always display it)
     auto stamp=rclcpp::Time(0);
     nav_msgs::msg::Path path;
     path.header.stamp=stamp;
     path.header.frame_id="map";  // Force frame_id to "map" for coordinate consistency
-    path.poses.reserve(valid_pts.size());
+    path.poses.reserve(continuous_pts.size());
     std_msgs::msg::Float32MultiArray vref;
-    if(publish_vref_) vref.data.reserve(valid_pts.size());
+    if(publish_vref_) vref.data.reserve(continuous_pts.size());
     
-    for(const auto &p: valid_pts) {
+    for(const auto &p: continuous_pts) {
       geometry_msgs::msg::PoseStamped ps;
       ps.header.stamp=stamp;  // Zero timestamp for static data
       ps.header.frame_id="map";  // Force frame_id to "map"

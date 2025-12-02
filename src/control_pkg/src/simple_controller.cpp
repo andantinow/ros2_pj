@@ -348,11 +348,11 @@ void SimpleController::control_loop()
   // [y_veh] = [-sin(θ) cos(θ)] [y_global - y_curr]
   double dx_global = target_x_global - current_x;
   double dy_global = target_y_global - current_y;
-  double cos_yaw = std::cos(current_yaw);
-  double sin_yaw = std::sin(current_yaw);
+  double cos_neg_yaw = std::cos(-current_yaw);
+  double sin_neg_yaw = std::sin(-current_yaw);
   
-  double target_x_vehicle = dx_global * cos_yaw + dy_global * sin_yaw;
-  double target_y_vehicle = -dx_global * sin_yaw + dy_global * cos_yaw;
+  double target_x_vehicle = dx_global * cos_neg_yaw - dy_global * sin_neg_yaw;
+  double target_y_vehicle = dx_global * sin_neg_yaw + dy_global * cos_neg_yaw;
   
   // Debug: log coordinate transformation
   static int coord_debug_count = 0;
