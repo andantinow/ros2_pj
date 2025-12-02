@@ -129,18 +129,15 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
 {
     if (path.poses.empty()) return -1;
 
-    static int last_target_idx = 0;  // Track last target for continuity
+    static int last_target_idx = 0;
     
     double current_x = odom.pose.pose.position.x;
     double current_y = odom.pose.pose.position.y;
     double current_yaw = tf2::getYaw(odom.pose.pose.orientation);
 
-    // Restricted search: Only search within 3.0m radius to prevent following wrong waypoints
     const double search_radius = 3.0;
     const double search_radius_sq = search_radius * search_radius;
     
-    // Find closest point along path (restricted search for stability)
-    // Only search forward from last known position to prevent wrong direction
     int search_start = std::max(0, last_target_idx - 5);
     int search_end = std::min(static_cast<int>(path.poses.size()), last_target_idx + 30);
     
@@ -148,91 +145,67 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
     int closest_idx = last_target_idx;
     
     for (int i = search_start; i < search_end; ++i) {
-        double dx = current_x - path.poses[i].pose.position.x;
-        double dy = current_y - path.poses[i].pose.position.y;
+        double dx = path.poses[i].pose.position.x - current_x;
+        double dy = path.poses[i].pose.position.y - current_y;
         double dist_sq = dx * dx + dy * dy;
         
-        // Only consider points within search radius (3.0m)
         if (dist_sq > search_radius_sq) continue;
         
-        // Check if point is ahead of vehicle (strong preference)
         double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
+        if (dot_product <= 0.0) continue;
         
-        // Strongly prefer points ahead, heavily penalize points behind
-        double weight = dist_sq;
-        if (dot_product > 0.1) {  // Point is clearly ahead
-            weight *= 0.3;  // Strong preference for points ahead
-        } else if (dot_product < -0.1) {  // Point is behind
-            weight *= 10.0;  // Heavy penalty for points behind
-        }
-        
-        if (weight < min_dist_sq) {
-            min_dist_sq = weight;
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq = dist_sq;
             closest_idx = i;
         }
     }
     
-    // Only do global search if no reasonable point found in restricted range (within 3.0m)
-    if (min_dist_sq > search_radius_sq) {
-        closest_idx = last_target_idx;
-        min_dist_sq = std::numeric_limits<double>::max();
-        // Still restrict to forward direction and within search radius
-        int global_end = std::min(static_cast<int>(path.poses.size() - 1), last_target_idx + 50);
-        for (int i = last_target_idx; i <= global_end; ++i) {
-            double dx = current_x - path.poses[i].pose.position.x;
-            double dy = current_y - path.poses[i].pose.position.y;
-            double dist_sq = dx * dx + dy * dy;
-            if (dist_sq < min_dist_sq && dist_sq <= search_radius_sq) {
-                min_dist_sq = dist_sq;
-                closest_idx = i;
-            }
-        }
+    if (min_dist_sq == std::numeric_limits<double>::max()) {
+        return last_target_idx;
     }
 
-    // Find target point ahead with lookahead distance (Pure Pursuit core)
     int target_idx = closest_idx;
     double accum_dist = 0.0;
-    double min_lookahead_dist = adaptive_lookahead * 0.8;  // Minimum acceptable distance
-    double max_lookahead_dist = adaptive_lookahead * 1.2;  // Maximum acceptable distance
+    double min_lookahead_dist = adaptive_lookahead * 0.8;
+    double max_lookahead_dist = adaptive_lookahead * 1.2;
     
-    // Search forward from closest point to find point at lookahead distance
     for (int i = closest_idx; i < static_cast<int>(path.poses.size() - 1); ++i) {
         double dx = path.poses[i + 1].pose.position.x - path.poses[i].pose.position.x;
         double dy = path.poses[i + 1].pose.position.y - path.poses[i].pose.position.y;
         double seg_dist = std::hypot(dx, dy);
         accum_dist += seg_dist;
         
-        // Check if we've reached the lookahead distance
         if (accum_dist >= min_lookahead_dist) {
             target_idx = i + 1;
-            // Prefer point closest to exact lookahead distance
             if (accum_dist > max_lookahead_dist) {
-                break;  // Too far, use previous point
+                break;
             }
         }
     }
     
-    // Ensure target is ahead of vehicle (critical for Pure Pursuit)
     double dx = path.poses[target_idx].pose.position.x - current_x;
     double dy = path.poses[target_idx].pose.position.y - current_y;
     double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
     
-    // If target is behind, find next point ahead
-    if (dot_product < 0.1 && target_idx < static_cast<int>(path.poses.size() - 1)) {
+    if (dot_product <= 0.0 && target_idx < static_cast<int>(path.poses.size() - 1)) {
         for (int i = target_idx + 1; i < static_cast<int>(path.poses.size()); ++i) {
             dx = path.poses[i].pose.position.x - current_x;
             dy = path.poses[i].pose.position.y - current_y;
             dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
-            if (dot_product > 0.1) {  // Point is clearly ahead
+            if (dot_product > 0.0) {
                 target_idx = i;
                 break;
             }
         }
     }
     
-    // Clamp to valid range
     target_idx = std::max(0, std::min(target_idx, static_cast<int>(path.poses.size() - 1)));
-    last_target_idx = target_idx;
+    
+    if (std::abs(target_idx - last_target_idx) > 50) {
+        target_idx = last_target_idx;
+    } else {
+        last_target_idx = target_idx;
+    }
     
     return target_idx;
 }
