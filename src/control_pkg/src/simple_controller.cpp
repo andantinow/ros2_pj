@@ -395,8 +395,8 @@ void SimpleController::control_loop()
   
   static int publish_count = 0;
   if (publish_count++ % 50 == 0) {  // Every 1 second at 20ms timer
-    RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f, steer=%.3f, target_idx=%d, lateral_err=%.3f",
-                drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx, lateral_error);
+    RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f, steer=%.3f, target_idx=%d, lookahead=%.2f",
+                drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx, adaptive_lookahead);
   }
 }
 
