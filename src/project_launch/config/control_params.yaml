@@ -7,10 +7,10 @@ nmpc_engine_node:
     decel_limit: -6.0
     speed_limit: 6.0
     max_speed: 2.0
-    lookahead_distance: 0.0  # Disabled: use adaptive lookahead only
-    min_lookahead: 0.8  # Low speed: close lookahead to prevent corner cutting
-    max_lookahead: 2.0  # High speed: far lookahead for stability
-    lookahead_speed_gain: 0.8  # Speed-dependent lookahead: distance = min + speed * 0.8
+    lookahead_distance: 1.5  # Base lookahead distance (used for default PP)
+    min_lookahead: 0.8
+    max_lookahead: 2.0
+    lookahead_speed_gain: 0.8
     lookahead_error_gain: 1.2  # Increased - reduce lookahead more when error is large
     use_vref: true
     # Topic remappings
@@ -21,13 +21,13 @@ nmpc_engine_node:
     max_steer_angle: 0.52  # 30 degrees physical limit
     max_steer_rate: 1.0
     lateral_error_gain: 1.5  # Lateral error compensation
-    heading_error_gain: 0.5  # Stanley heading correction gain
-    curvature_feedforward_gain: 1.2  # Curvature feedforward for prediction
+    heading_error_gain: 0.3
+    curvature_feedforward_gain: 0.5
     smoothing_factor: 0.3  # Low-pass filter smoothing
     direct_correction_gain: 0.0  # Disabled in Hybrid Controller
     direct_correction_limit: 0.0
-    pid_kp: 0.5  # Proportional gain for cross-track error
-    pid_ki: 0.05  # Integral gain (with anti-windup)
-    pid_kd: 0.5  # Derivative gain for damping
+    pid_kp: 0.2
+    pid_ki: 0.0
+    pid_kd: 0.8
     use_path_interpolation: true
     steering_sign: 1.0

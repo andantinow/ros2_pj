@@ -6,6 +6,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 #include <rclcpp/qos.hpp>
+#include <rclcpp/qos.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -71,19 +72,20 @@ SimpleController::SimpleController() : Node("simple_controller")
   
   prev_time_ = this->get_clock()->now();
 
-  // 1. Path Subscription (Reliable mode with queue depth 10)
+  // Path Subscription (Reliable mode with queue depth 10)
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
       path_topic_,
       10,
       std::bind(&SimpleController::path_callback, this, std::placeholders::_1));
 
-  // 2. Odom Subscription (Best Effort mode for simulator compatibility)
+  // Odom Subscription (Best Effort mode for simulator compatibility)
+  rclcpp::QoS odom_qos(rclcpp::QoS(10).best_effort());
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       odom_topic_,
-      rclcpp::SensorDataQoS(),
+      odom_qos,
       std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
 
-  // 3. Drive Publisher
+  // Drive Publisher
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_,
       10);
@@ -277,13 +279,15 @@ void SimpleController::control_loop()
   double current_y = current_odom_.pose.pose.position.y;
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
-  // Find closest point for error calculations (restricted search within 3.0m radius)
+  // Find closest point for error calculations (restricted forward window)
   static int last_closest_idx = 0;
-  int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, current_path_, last_closest_idx);
+  int closest_idx = find_closest_point_along_path(
+      current_x, current_y, current_yaw, current_path_, last_closest_idx);
   last_closest_idx = closest_idx;
   
   // Compute errors for Hybrid Controller
-  double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, current_path_, closest_idx);
+  double lateral_error = compute_lateral_error(
+      current_x, current_y, current_yaw, current_path_, closest_idx);
   double heading_error = compute_heading_error(current_yaw, current_path_, closest_idx);
   
   // Adaptive lookahead distance based on speed
@@ -364,6 +368,9 @@ void SimpleController::control_loop()
   if (dt > 0.1) dt = 0.1;
   if (dt <= 0.0) dt = 0.02;
   
+  // Soft start: if lateral error is large (>1.0m), reduce PID & Stanley influence
+  double gain_scale = (std::abs(lateral_error) >= 1.0) ? 0.2 : 1.0;
+  
   // 1) Pure Pursuit: delta_pp = atan(2 * L * sin(alpha) / l_d)
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
   double delta_pp = 0.0;
@@ -373,7 +380,7 @@ void SimpleController::control_loop()
   }
 
   // 2) PID for lateral (cross-track) error: delta_pid = Kp*e + Ki*∫e + Kd*de/dt
-  double delta_pid = compute_pid_control(lateral_error, dt);
+  double delta_pid = compute_pid_control(lateral_error, dt) * gain_scale;
 
   // 3) Curvature feedforward: delta_ff = K_ff * atan(L * kappa)
   double path_curvature = compute_path_curvature(current_path_, target_idx);
@@ -381,7 +388,7 @@ void SimpleController::control_loop()
 
   // 4) Stanley-style heading correction: delta_stanley = atan(K_h * e_heading / (v + 1.0))
   double stanley_den = current_speed + 1.0;  // Singularity protection
-  double delta_stanley = std::atan(heading_error_gain_ * heading_error / stanley_den);
+  double delta_stanley = std::atan((heading_error_gain_ * gain_scale) * heading_error / stanley_den);
 
   // 5) Raw sum: delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley
   double delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley;
@@ -632,12 +639,9 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
 {
   if (path.poses.empty()) return 0;
   
-  // Restricted search: only look within 3.0m radius to prevent wrong waypoint selection
-  const double search_radius = 3.0;
-  const double search_radius_sq = search_radius * search_radius;
-  
-  int search_range_forward = 20;  // Only search 20 points ahead
-  int search_range_backward = 5;  // Minimal backward search for safety
+  // Restricted search window: limit to previous few points and next 20 points
+  int search_range_forward = 20;
+  int search_range_backward = 5;
   int min_idx = std::max(0, start_idx - search_range_backward);
   int max_idx = std::min(static_cast<int>(path.poses.size() - 1), start_idx + search_range_forward);
   
@@ -648,9 +652,6 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
     double dx = current_x - path.poses[i].pose.position.x;
     double dy = current_y - path.poses[i].pose.position.y;
     double dist_sq = dx * dx + dy * dy;
-    
-    // Only consider points within search radius (3.0m)
-    if (dist_sq > search_radius_sq) continue;
     
     // Check if point is ahead of vehicle
     double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
@@ -666,23 +667,6 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
     if (weight < min_dist_sq) {
       min_dist_sq = weight;
       closest_idx = i;
-    }
-  }
-  
-  // Only do global search if no reasonable point found in restricted range (within 3.0m)
-  if (min_dist_sq > search_radius_sq) {
-    // Still restrict global search to forward direction only and within radius
-    closest_idx = start_idx;
-    min_dist_sq = std::numeric_limits<double>::max();
-    int global_search_end = std::min(static_cast<int>(path.poses.size() - 1), start_idx + 50);
-    for (int i = start_idx; i <= global_search_end; ++i) {
-      double dx = current_x - path.poses[i].pose.position.x;
-      double dy = current_y - path.poses[i].pose.position.y;
-      double dist_sq = dx * dx + dy * dy;
-      if (dist_sq < min_dist_sq && dist_sq <= search_radius_sq) {
-        min_dist_sq = dist_sq;
-        closest_idx = i;
-      }
     }
   }
   
