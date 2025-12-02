@@ -7,7 +7,7 @@ nmpc_engine_node:
     decel_limit: -6.0
     speed_limit: 6.0
     max_speed: 2.0
-    lookahead_distance: 1.5  # Base lookahead distance (used for default PP)
+    lookahead_distance: 0.0  # Use adaptive lookahead only
     min_lookahead: 0.8
     max_lookahead: 2.0
     lookahead_speed_gain: 0.8
@@ -17,17 +17,17 @@ nmpc_engine_node:
     odom_topic: '/car_state/odom_GT'  # Simulator odom (QoS compatible)
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5  # Safe speed for stable operation
+    target_speed: 2.0  # Performance mode speed
     max_steer_angle: 0.52  # 30 degrees physical limit
     max_steer_rate: 1.0
     lateral_error_gain: 1.5  # Lateral error compensation
-    heading_error_gain: 0.3
-    curvature_feedforward_gain: 0.5
+    heading_error_gain: 1.0
+    curvature_feedforward_gain: 1.0
     smoothing_factor: 0.3  # Low-pass filter smoothing
     direct_correction_gain: 0.0  # Disabled in Hybrid Controller
     direct_correction_limit: 0.0
-    pid_kp: 0.2
+    pid_kp: 0.5
     pid_ki: 0.0
-    pid_kd: 0.8
+    pid_kd: 0.3
     use_path_interpolation: true
     steering_sign: 1.0

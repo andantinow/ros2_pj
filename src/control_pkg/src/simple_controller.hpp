@@ -26,12 +26,12 @@ private:
   bool odom_received_ = false;
   bool path_received_ = false;
 
-  double lookahead_distance_ = 1.5;
+  double lookahead_distance_ = 0.0;
   double min_lookahead_ = 0.8;
   double max_lookahead_ = 2.0;
   double lookahead_speed_gain_ = 0.8;
   double lookahead_error_gain_ = 0.0;
-  double target_speed_ = 1.5;
+  double target_speed_ = 2.0;
   double max_speed_ = 2.0;
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.52;  // Physical steering limit [rad]

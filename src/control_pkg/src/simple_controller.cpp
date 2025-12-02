@@ -368,9 +368,6 @@ void SimpleController::control_loop()
   if (dt > 0.1) dt = 0.1;
   if (dt <= 0.0) dt = 0.02;
   
-  // Soft start: if lateral error is large (>1.0m), reduce PID & Stanley influence
-  double gain_scale = (std::abs(lateral_error) >= 1.0) ? 0.2 : 1.0;
-  
   // 1) Pure Pursuit: delta_pp = atan(2 * L * sin(alpha) / l_d)
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
   double delta_pp = 0.0;
@@ -380,7 +377,7 @@ void SimpleController::control_loop()
   }
 
   // 2) PID for lateral (cross-track) error: delta_pid = Kp*e + Ki*∫e + Kd*de/dt
-  double delta_pid = compute_pid_control(lateral_error, dt) * gain_scale;
+  double delta_pid = compute_pid_control(lateral_error, dt);
 
   // 3) Curvature feedforward: delta_ff = K_ff * atan(L * kappa)
   double path_curvature = compute_path_curvature(current_path_, target_idx);
@@ -388,32 +385,11 @@ void SimpleController::control_loop()
 
   // 4) Stanley-style heading correction: delta_stanley = atan(K_h * e_heading / (v + 1.0))
   double stanley_den = current_speed + 1.0;  // Singularity protection
-  double delta_stanley = std::atan((heading_error_gain_ * gain_scale) * heading_error / stanley_den);
+  double delta_stanley = std::atan(heading_error_gain_ * heading_error / stanley_den);
 
-  // 5) Raw sum: delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley
-  double delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley;
+  // 5) Raw sum: delta_raw = delta_pp + delta_pid + delta_stanley + delta_ff
+  double steering_angle = delta_pp + delta_pid + delta_stanley + delta_ff;
 
-  // === Safety Guard: Prevent dangerous maneuvers ===
-  double steering_angle = delta_raw;
-  bool safety_triggered = false;
-  
-  // Check for sudden steering change (> 0.5 rad)
-  double steering_change = std::abs(steering_angle - prev_steering_angle_);
-  if (steering_change > 0.5) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                        "Safety: Sudden steering change detected (%.3f rad), limiting", steering_change);
-    steering_angle = prev_steering_angle_ + std::copysign(0.3, steering_angle - prev_steering_angle_);
-    safety_triggered = true;
-  }
-  
-  // Check for excessive heading error (> 90 degrees)
-  if (std::abs(heading_error) > M_PI / 2.0) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                        "Safety: Excessive heading error (%.3f rad), forcing straight", heading_error);
-    steering_angle = 0.0;
-    safety_triggered = true;
-  }
-  
   // Clamp to physical steering limits
   steering_angle = std::clamp(steering_angle, -max_steer_angle_, max_steer_angle_);
 
@@ -433,19 +409,14 @@ void SimpleController::control_loop()
   static int debug_count = 0;
   if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Hybrid: PP=%.3f, PID=%.3f, FF=%.3f, Stanley=%.3f, Final=%.3f, Safety=%d",
-                delta_pp, delta_pid, delta_ff, delta_stanley, steering_angle, safety_triggered ? 1 : 0);
+                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, steer=%.3f",
+                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, steering_angle);
   }
 
-  // Speed control: Reduce speed if safety triggered or high curvature
+  // Speed control: Reduce speed based on curvature
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
   double adjusted_speed = target_speed_ * speed_factor;
-  
-  // Safety: Reduce speed if safety guard triggered
-  if (safety_triggered) {
-    adjusted_speed *= 0.5;  // Reduce speed by 50%
-  }
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
