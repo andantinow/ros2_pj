@@ -17,17 +17,17 @@ nmpc_engine_node:
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5  # Increased for better steering response
+    target_speed: 1.0  # Very slow startup to prevent sudden steering
     max_steer_angle: 0.52  # Unlocked for tight cornering (~30 degrees)
     max_steer_rate: 1.0
     lateral_error_gain: 1.5  # Increased for more sensitive lateral correction
-    heading_error_gain: 0.5  # Moderate sensitivity to heading errors
+    heading_error_gain: 0.2  # Low sensitivity to prevent sudden heading corrections
     curvature_feedforward_gain: 0.5  # Reduced to prevent pre-mature corner steering
     smoothing_factor: 0.3  # Reduced for faster response
     direct_correction_gain: 1.2  # Increased for aggressive correction when far off
     direct_correction_limit: 1.0  # Increased limit for larger corrections
-    pid_kp: 0.5  # Moderate error correction to prevent over-reaction
+    pid_kp: 0.3  # Low gain to prevent sudden steering at startup
     pid_ki: 0.05
-    pid_kd: 0.8  # Grandma Mode: Strong damping to suppress oscillation
+    pid_kd: 1.0  # Maximum damping to suppress oscillation
     use_path_interpolation: true
     steering_sign: 1.0

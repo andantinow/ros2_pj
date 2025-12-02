@@ -589,11 +589,12 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
 {
   if (path.poses.empty()) return 0;
   
-  // Search forward from last known position (more efficient)
-  // Increase search range if vehicle is far off path
-  int search_range = 30;  // Search 30 points ahead and behind
-  int min_idx = std::max(0, start_idx - search_range);
-  int max_idx = std::min(static_cast<int>(path.poses.size() - 1), start_idx + search_range);
+  // Restricted search: only look forward from current position to prevent wrong direction
+  // This prevents the vehicle from jumping to waypoints behind or far away at startup
+  int search_range_forward = 20;  // Only search 20 points ahead
+  int search_range_backward = 5;  // Minimal backward search for safety
+  int min_idx = std::max(0, start_idx - search_range_backward);
+  int max_idx = std::min(static_cast<int>(path.poses.size() - 1), start_idx + search_range_forward);
   
   double min_dist_sq = std::numeric_limits<double>::max();
   int closest_idx = start_idx;
@@ -606,12 +607,12 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
     // Check if point is ahead of vehicle
     double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
     
-    // Weight: prefer points ahead and closer
+    // Weight: strongly prefer points ahead and closer
     double weight = dist_sq;
     if (dot_product > 0) {
-      weight *= 0.5;  // Strongly prefer points ahead
-    } else if (dot_product < -0.3) {
-      weight *= 3.0;  // Penalize points far behind
+      weight *= 0.3;  // Even stronger preference for points ahead
+    } else if (dot_product < -0.1) {
+      weight *= 10.0;  // Heavily penalize points behind
     }
     
     if (weight < min_dist_sq) {
@@ -620,17 +621,20 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
     }
   }
   
-  // If closest point is very far, do global search
-  if (min_dist_sq > 10.0) {  // 3.16m threshold
-    closest_idx = 0;
+  // Only do global search if no reasonable point found in restricted range
+  // This prevents jumping to wrong waypoints at startup
+  if (min_dist_sq > 25.0) {  // 5m threshold (increased from 3.16m)
+    // Still restrict global search to forward direction only
+    closest_idx = start_idx;
     min_dist_sq = std::numeric_limits<double>::max();
-    for (size_t i = 0; i < path.poses.size(); ++i) {
+    int global_search_end = std::min(static_cast<int>(path.poses.size() - 1), start_idx + 50);
+    for (int i = start_idx; i <= global_search_end; ++i) {
       double dx = current_x - path.poses[i].pose.position.x;
       double dy = current_y - path.poses[i].pose.position.y;
       double dist_sq = dx * dx + dy * dy;
       if (dist_sq < min_dist_sq) {
         min_dist_sq = dist_sq;
-        closest_idx = static_cast<int>(i);
+        closest_idx = i;
       }
     }
   }
