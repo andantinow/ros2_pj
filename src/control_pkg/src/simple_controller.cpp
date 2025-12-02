@@ -133,10 +133,10 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
     double current_y = odom.pose.pose.position.y;
     double current_yaw = tf2::getYaw(odom.pose.pose.orientation);
 
-    // Find closest point along path (considering path progression)
-    // Start search from last target index for continuity
-    int search_start = std::max(0, last_target_idx - 10);
-    int search_end = std::min(static_cast<int>(path.poses.size()), last_target_idx + 50);
+    // Find closest point along path (restricted search for stability)
+    // Only search forward from last known position to prevent wrong direction
+    int search_start = std::max(0, last_target_idx - 5);
+    int search_end = std::min(static_cast<int>(path.poses.size()), last_target_idx + 30);
     
     double min_dist_sq = std::numeric_limits<double>::max();
     int closest_idx = last_target_idx;
@@ -146,15 +146,15 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
         double dy = current_y - path.poses[i].pose.position.y;
         double dist_sq = dx * dx + dy * dy;
         
-        // Check if point is ahead of vehicle
+        // Check if point is ahead of vehicle (strong preference)
         double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
         
-        // Prefer points ahead, but allow some behind if vehicle is off path
+        // Strongly prefer points ahead, heavily penalize points behind
         double weight = dist_sq;
-        if (dot_product > 0) {
-            weight *= 0.5;  // Prefer points ahead
-        } else if (dot_product < -0.5) {
-            weight *= 2.0;  // Penalize points far behind
+        if (dot_product > 0.1) {  // Point is clearly ahead
+            weight *= 0.3;  // Strong preference for points ahead
+        } else if (dot_product < -0.1) {  // Point is behind
+            weight *= 10.0;  // Heavy penalty for points behind
         }
         
         if (weight < min_dist_sq) {
@@ -163,51 +163,58 @@ int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odo
         }
     }
     
-    // If closest point is too far, do global search
+    // Only do global search if no reasonable point found in restricted range
     if (min_dist_sq > 25.0) {  // 5m threshold
-        closest_idx = 0;
+        closest_idx = last_target_idx;
         min_dist_sq = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < path.poses.size(); ++i) {
+        // Still restrict to forward direction
+        int global_end = std::min(static_cast<int>(path.poses.size() - 1), last_target_idx + 50);
+        for (int i = last_target_idx; i <= global_end; ++i) {
             double dx = current_x - path.poses[i].pose.position.x;
             double dy = current_y - path.poses[i].pose.position.y;
             double dist_sq = dx * dx + dy * dy;
             if (dist_sq < min_dist_sq) {
                 min_dist_sq = dist_sq;
-                closest_idx = static_cast<int>(i);
+                closest_idx = i;
             }
         }
     }
 
-    // Find target point ahead with lookahead distance
-    double lookahead_sq = adaptive_lookahead * adaptive_lookahead;
+    // Find target point ahead with lookahead distance (Pure Pursuit core)
     int target_idx = closest_idx;
-    
-    // Search forward from closest point
     double accum_dist = 0.0;
+    double min_lookahead_dist = adaptive_lookahead * 0.8;  // Minimum acceptable distance
+    double max_lookahead_dist = adaptive_lookahead * 1.2;  // Maximum acceptable distance
+    
+    // Search forward from closest point to find point at lookahead distance
     for (int i = closest_idx; i < static_cast<int>(path.poses.size() - 1); ++i) {
         double dx = path.poses[i + 1].pose.position.x - path.poses[i].pose.position.x;
         double dy = path.poses[i + 1].pose.position.y - path.poses[i].pose.position.y;
         double seg_dist = std::hypot(dx, dy);
         accum_dist += seg_dist;
         
-        if (accum_dist >= adaptive_lookahead) {
+        // Check if we've reached the lookahead distance
+        if (accum_dist >= min_lookahead_dist) {
             target_idx = i + 1;
-            break;
+            // Prefer point closest to exact lookahead distance
+            if (accum_dist > max_lookahead_dist) {
+                break;  // Too far, use previous point
+            }
         }
     }
     
-    // Ensure target is ahead of vehicle
+    // Ensure target is ahead of vehicle (critical for Pure Pursuit)
     double dx = path.poses[target_idx].pose.position.x - current_x;
     double dy = path.poses[target_idx].pose.position.y - current_y;
     double dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
     
     // If target is behind, find next point ahead
-    if (dot_product < 0 && target_idx < static_cast<int>(path.poses.size() - 1)) {
+    if (dot_product < 0.1 && target_idx < static_cast<int>(path.poses.size() - 1)) {
         for (int i = target_idx + 1; i < static_cast<int>(path.poses.size()); ++i) {
             dx = path.poses[i].pose.position.x - current_x;
             dy = path.poses[i].pose.position.y - current_y;
             dot_product = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
-            if (dot_product > 0) {
+            if (dot_product > 0.1) {  // Point is clearly ahead
                 target_idx = i;
                 break;
             }
@@ -258,27 +265,14 @@ void SimpleController::control_loop()
     current_odom_.twist.twist.linear.y * current_odom_.twist.twist.linear.y
   );
 
-  // Find closest point for lateral error calculation (improved: search along path)
+  // Get current vehicle state
   double current_x = current_odom_.pose.pose.position.x;
   double current_y = current_odom_.pose.pose.position.y;
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
-  // Use improved closest point finding that considers path direction
-  static int last_closest_idx = 0;
-  int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, current_path_, last_closest_idx);
-  last_closest_idx = closest_idx;
-
-  // Compute lateral error
-  double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, current_path_, closest_idx);
-  double heading_error = compute_heading_error(current_yaw, current_path_, closest_idx);
-
-  // Adaptive lookahead distance based on speed and lateral error
+  // Adaptive lookahead distance based on speed (Pure Pursuit only)
+  // Range: 0.8 (low speed) ~ 2.0 (high speed)
   double adaptive_lookahead = compute_adaptive_lookahead(current_speed);
-  if (lookahead_error_gain_ > 0.0) {
-    adaptive_lookahead = std::max(
-        min_lookahead_,
-        adaptive_lookahead - lookahead_error_gain_ * std::abs(lateral_error));
-  }
 
   // Find target point with adaptive lookahead
   int target_idx = find_target_point_index(current_odom_, current_path_, adaptive_lookahead);
@@ -348,61 +342,42 @@ void SimpleController::control_loop()
                 dx_global, dy_global, target_x_vehicle, target_y_vehicle, current_yaw);
   }
 
+  // Pure Pursuit: Calculate steering angle
+  // Formula: steering = atan2(2.0 * wheelbase * sin(alpha), lookahead_distance)
   double alpha = std::atan2(target_y_vehicle, target_x_vehicle);
-
-  // Compute time delta for PID control
-  rclcpp::Time current_time = this->get_clock()->now();
-  double dt = (current_time - prev_time_).seconds();
-  if (dt > 0.1) dt = 0.1;  // Cap dt to prevent large jumps
-  if (dt <= 0.0) dt = 0.02;  // Default to 20ms if invalid
+  double steering_angle = 0.0;
   
-  // --- Hybrid Steering Law Components ---
-  // 1) Pure Pursuit: delta_pp = atan(2 * L * sin(alpha) / l_d)
-  double delta_pp = 0.0;
   if (adaptive_lookahead > 1e-6) {
     double sin_alpha_clipped = std::max(-1.0, std::min(1.0, std::sin(alpha)));
-    delta_pp = std::atan2(2.0 * wheelbase_ * sin_alpha_clipped, adaptive_lookahead);
+    steering_angle = std::atan2(2.0 * wheelbase_ * sin_alpha_clipped, adaptive_lookahead);
   }
 
-  // 2) PID for lateral (cross-track) error: delta_pid
-  double delta_pid = compute_pid_control(lateral_error, dt);
-
-  // 3) Curvature feedforward: delta_ff = K_ff * atan(L * kappa)
-  double path_curvature = compute_path_curvature(current_path_, target_idx);
-  double delta_ff = curvature_feedforward_gain_ * std::atan(wheelbase_ * path_curvature);
-
-  // 4) Stanley-style heading correction (modified):
-  //    delta_stanley = atan(K_h * e_heading / (v + 1.0))
-  double stanley_den = current_speed + 1.0;  // Singularity protection
-  double delta_stanley = std::atan(heading_error_gain_ * heading_error / stanley_den);
-
-  // 5) Raw sum before filtering
-  double delta_raw = delta_pp + delta_ff + delta_pid + delta_stanley;
-
-  // --- Temporal shaping & limits ---
-  // Apply steering rate limiting on raw command
-  double delta_rate_limited = limit_steering_rate(delta_raw, dt);
-
-  // Low-pass filter (LPF): delta_final = alpha * delta + (1 - alpha) * delta_prev
-  double delta_filtered = smooth_steering(delta_rate_limited, prev_steering_angle_);
-
   // Clamp to physical steering limits [-max_steer_angle_, max_steer_angle_]
-  double steering_angle = std::clamp(delta_filtered, -max_steer_angle_, max_steer_angle_);
+  steering_angle = std::clamp(steering_angle, -max_steer_angle_, max_steer_angle_);
+
+  // Apply steering sign correction (for coordinate system mismatch)
+  steering_angle *= steering_sign_;
+  
+  // Apply steering rate limiting for smooth control
+  rclcpp::Time current_time = this->get_clock()->now();
+  double dt = (current_time - prev_time_).seconds();
+  if (dt > 0.1) dt = 0.1;
+  if (dt <= 0.0) dt = 0.02;
+  steering_angle = limit_steering_rate(steering_angle, dt);
+  
+  // Low-pass filter for smooth steering
+  steering_angle = smooth_steering(steering_angle, prev_steering_angle_);
+  
+  prev_steering_angle_ = steering_angle;
+  prev_time_ = current_time;
 
   // Debug logging
   static int debug_count = 0;
   if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Control: lat_err=%.3f, hdg_err=%.3f, alpha=%.3f, steer=%.3f, target_y_veh=%.3f, target_idx=%d",
-                lateral_error, heading_error, alpha, steering_angle, target_y_vehicle, target_idx);
+                "Pure Pursuit: alpha=%.3f, lookahead=%.2f, steer=%.3f, target_idx=%d",
+                alpha, adaptive_lookahead, steering_angle, target_idx);
   }
-
-  prev_time_ = current_time;
-
-  // Apply steering sign correction (for coordinate system mismatch)
-  steering_angle *= steering_sign_;
-  
-  prev_steering_angle_ = steering_angle;
 
   // Speed control based on curvature (simplified) with max speed clamp
   double curvature = std::abs(steering_angle) / wheelbase_;
@@ -427,10 +402,11 @@ void SimpleController::control_loop()
 
 double SimpleController::compute_adaptive_lookahead(double speed)
 {
-  // Adaptive lookahead: increases with speed to prevent corner cutting at low speed
+  // Adaptive lookahead: increases with speed (Pure Pursuit optimization)
   // Formula: L = clamp(L_min + speed_gain * v, L_min, L_max)
-  // - Low speed: close lookahead (min_lookahead) for precise cornering
-  // - High speed: far lookahead (max_lookahead) for smooth stability
+  // Range: 0.8m (low speed) ~ 2.0m (high speed)
+  // - Low speed: close lookahead for precise cornering, prevents cutting corners
+  // - High speed: far lookahead for smooth stability
   double adaptive = min_lookahead_ + lookahead_speed_gain_ * speed;
   return std::max(min_lookahead_, std::min(max_lookahead_, adaptive));
 }
