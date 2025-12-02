@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
+#include <rclcpp/qos.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -14,7 +15,7 @@ using namespace std::chrono_literals;
 
 SimpleController::SimpleController() : Node("simple_controller")
 {
-  RCLCPP_INFO(this->get_logger(), "[Kang Donghyeon] Simple Pure Pursuit Controller (ROSCPP) initializing...");
+  RCLCPP_INFO(this->get_logger(), "Simple Controller Initialized");
 
   declare_parameter("lookahead_distance", lookahead_distance_);
   declare_parameter("min_lookahead", min_lookahead_);
@@ -70,15 +71,22 @@ SimpleController::SimpleController() : Node("simple_controller")
   
   prev_time_ = this->get_clock()->now();
 
-  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      odom_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
-
+  // 1. Path Subscription (Reliable mode with queue depth 10)
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-      path_topic_, rclcpp::QoS(10).transient_local(),
+      path_topic_,
+      10,
       std::bind(&SimpleController::path_callback, this, std::placeholders::_1));
 
-  drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 10);
+  // 2. Odom Subscription (Best Effort mode for simulator compatibility)
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      odom_topic_,
+      rclcpp::SensorDataQoS(),
+      std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
+
+  // 3. Drive Publisher
+  drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
+      drive_topic_,
+      10);
   
   RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, publishing to drive: %s", 
               odom_topic_.c_str(), path_topic_.c_str(), drive_topic_.c_str());
