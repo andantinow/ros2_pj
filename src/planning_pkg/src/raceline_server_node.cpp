@@ -124,24 +124,47 @@ class RacelineServer : public rclcpp::Node {
       RCLCPP_ERROR(get_logger(), "Failed to load raceline: %s", file_.c_str());
       return;
     }
-    RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points", pts.size());
+    
+    // Validate and filter NaN/Inf values
+    std::vector<RacelinePoint> valid_pts;
+    valid_pts.reserve(pts.size());
+    for(const auto &p: pts) {
+      if(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.psi) && 
+         std::isfinite(p.kappa) && std::isfinite(p.v) && std::isfinite(p.s)) {
+        valid_pts.push_back(p);
+      } else {
+        RCLCPP_WARN(get_logger(), "Filtered invalid point: x=%.3f, y=%.3f", p.x, p.y);
+      }
+    }
+    
+    if(valid_pts.empty()) {
+      RCLCPP_ERROR(get_logger(), "No valid points after filtering NaN/Inf values");
+      return;
+    }
+    
+    RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points (filtered from %zu)", valid_pts.size(), pts.size());
+    
     // Use zero timestamp for static data (RViz will always display it)
     auto stamp=rclcpp::Time(0);
     nav_msgs::msg::Path path;
     path.header.stamp=stamp;
-    path.header.frame_id=frame_id_;
-    path.poses.reserve(pts.size());
+    path.header.frame_id="map";  // Force frame_id to "map" for coordinate consistency
+    path.poses.reserve(valid_pts.size());
     std_msgs::msg::Float32MultiArray vref;
-    if(publish_vref_) vref.data.reserve(pts.size());
-    for(const auto &p: pts) {
+    if(publish_vref_) vref.data.reserve(valid_pts.size());
+    
+    for(const auto &p: valid_pts) {
       geometry_msgs::msg::PoseStamped ps;
       ps.header.stamp=stamp;  // Zero timestamp for static data
-      ps.header.frame_id=frame_id_;
+      ps.header.frame_id="map";  // Force frame_id to "map"
       ps.pose.position.x=p.x;
       ps.pose.position.y=p.y;
+      ps.pose.position.z=0.0;  // Ensure z is set
       double half=0.5*p.psi;
       ps.pose.orientation.z=std::sin(half);
       ps.pose.orientation.w=std::cos(half);
+      ps.pose.orientation.x=0.0;
+      ps.pose.orientation.y=0.0;
       path.poses.push_back(ps);
       if(publish_vref_) vref.data.push_back((float)p.v);
     }

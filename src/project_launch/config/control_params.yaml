@@ -14,20 +14,20 @@ nmpc_engine_node:
     lookahead_error_gain: 1.2  # Increased - reduce lookahead more when error is large
     use_vref: true
     # Topic remappings
-    odom_topic: '/car_state/odom_GT'
+    odom_topic: '/car_state/odom_GT'  # Simulator odom (QoS compatible)
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5  # Maintain speed for smooth operation
-    max_steer_angle: 0.52  # Unlocked for tight cornering (~30 degrees)
+    target_speed: 1.5  # Safe speed for stable operation
+    max_steer_angle: 0.52  # 30 degrees physical limit
     max_steer_rate: 1.0
-    lateral_error_gain: 1.5  # Increased for more sensitive lateral correction
-    heading_error_gain: 0.5  # Moderate heading correction for better direction control
-    curvature_feedforward_gain: 0.0  # Disable curvature prediction at startup
-    smoothing_factor: 0.3  # Reduced for faster response
-    direct_correction_gain: 1.2  # Increased for aggressive correction when far off
-    direct_correction_limit: 1.0  # Increased limit for larger corrections
-    pid_kp: 0.2  # Low gain for smooth error correction
-    pid_ki: 0.05
-    pid_kd: 1.0  # Maximum damping to suppress oscillation
+    lateral_error_gain: 1.5  # Lateral error compensation
+    heading_error_gain: 0.5  # Stanley heading correction gain
+    curvature_feedforward_gain: 1.2  # Curvature feedforward for prediction
+    smoothing_factor: 0.3  # Low-pass filter smoothing
+    direct_correction_gain: 0.0  # Disabled in Hybrid Controller
+    direct_correction_limit: 0.0
+    pid_kp: 0.5  # Proportional gain for cross-track error
+    pid_ki: 0.05  # Integral gain (with anti-windup)
+    pid_kd: 0.5  # Derivative gain for damping
     use_path_interpolation: true
     steering_sign: 1.0
