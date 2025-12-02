@@ -427,8 +427,10 @@ void SimpleController::control_loop()
 
 double SimpleController::compute_adaptive_lookahead(double speed)
 {
-  // Adaptive lookahead: increases with speed
-  // L = L_min + k * v
+  // Adaptive lookahead: increases with speed to prevent corner cutting at low speed
+  // Formula: L = clamp(L_min + speed_gain * v, L_min, L_max)
+  // - Low speed: close lookahead (min_lookahead) for precise cornering
+  // - High speed: far lookahead (max_lookahead) for smooth stability
   double adaptive = min_lookahead_ + lookahead_speed_gain_ * speed;
   return std::max(min_lookahead_, std::min(max_lookahead_, adaptive));
 }
