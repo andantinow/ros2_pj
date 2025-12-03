@@ -26,6 +26,9 @@ int main(int argc,char** argv){
   std::string in_csv="tracks/centerline.csv";
   std::string out_csv="data/raceline.csv";
   double ds=0.5, mu=1.0, v_max=20.0, ax_max=4.0, ax_min=-6.0;
+  double offset=0.0;  // Offset distance to move raceline outward (positive = left/outside)
+  double start_x=0.0, start_y=0.0, start_psi=0.0;  // Vehicle start pose (0,0,0 = use first centerline point)
+  bool use_start_pose=false;  // Whether to use start pose
 
   for(int i=1;i<argc;++i){
     std::string a=argv[i];
@@ -38,6 +41,10 @@ int main(int argc,char** argv){
     else if(a=="--v_max") nextd(v_max);
     else if(a=="--ax_max") nextd(ax_max);
     else if(a=="--ax_min") nextd(ax_min);
+    else if(a=="--offset") nextd(offset);  // Offset to move raceline outward
+    else if(a=="--start_x") { nextd(start_x); use_start_pose=true; }
+    else if(a=="--start_y") { nextd(start_y); use_start_pose=true; }
+    else if(a=="--start_psi") { nextd(start_psi); use_start_pose=true; }
   }
 
   std::ifstream in(in_csv);
@@ -111,6 +118,37 @@ int main(int argc,char** argv){
   smooth_vec(psi,7);
   smooth_vec(kappa,7);
 
+  // Apply offset to move raceline outward (left side of path)
+  // Positive offset moves path to the left (outside of turns)
+  if(std::abs(offset) > 1e-6){
+    for(size_t i=0;i<pts.size();++i){
+      // Left normal vector: rotate tangent by +90 degrees
+      double nx = -std::sin(psi[i]);  // Left normal x
+      double ny = std::cos(psi[i]);   // Left normal y
+      pts[i].x += offset * nx;
+      pts[i].y += offset * ny;
+    }
+    // Recalculate derivatives after offset
+    for(size_t i=0;i<pts.size();++i){ px[i]=pts[i].x; py[i]=pts[i].y; }
+    d1x=gradient(px,ds); d1y=gradient(py,ds);
+    d2x=gradient(d1x,ds); d2y=gradient(d1y,ds);
+    // Recalculate psi and kappa after offset
+    for(size_t i=0;i<psi.size();++i)
+      psi[i]=std::atan2(d1y[i], d1x[i]+1e-12);
+    for(size_t i=1;i<psi.size();++i){
+      double d=psi[i]-psi[i-1];
+      while(d> M_PI){ psi[i]-=2*M_PI; d-=2*M_PI; }
+      while(d<-M_PI){ psi[i]+=2*M_PI; d+=2*M_PI; }
+    }
+    for(size_t i=0;i<kappa.size();++i){
+      double num=d1x[i]*d2y[i] - d1y[i]*d2x[i];
+      double den=std::pow(d1x[i]*d1x[i]+d1y[i]*d1y[i],1.5)+1e-12;
+      kappa[i]=num/den;
+    }
+    smooth_vec(psi,7);
+    smooth_vec(kappa,7);
+  }
+
   // Initialize G-G Diagram constraint
   planning_pkg::GGDiagram gg_diagram(mu, G);
   
@@ -169,6 +207,37 @@ int main(int argc,char** argv){
     // Calculate new speed
     double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
     vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+  }
+
+  // Step 4: Set first point to vehicle start pose if specified
+  if(use_start_pose && pts.size() > 0){
+    pts[0].x = start_x;
+    pts[0].y = start_y;
+    psi[0] = start_psi;
+    // Recalculate derivatives for first point after changing position
+    if(pts.size() > 1){
+      double dx = pts[1].x - pts[0].x;
+      double dy = pts[1].y - pts[0].y;
+      double dist = std::hypot(dx, dy);
+      if(dist > 1e-6){
+        // Update psi to point towards next point
+        psi[0] = std::atan2(dy, dx);
+        // Normalize psi
+        while(psi[0] > M_PI) psi[0] -= 2*M_PI;
+        while(psi[0] < -M_PI) psi[0] += 2*M_PI;
+      }
+    }
+    // Recalculate kappa for first point (will be updated in gradient calculation)
+    // Recompute gradients after position change
+    for(size_t i=0;i<pts.size();++i){ px[i]=pts[i].x; py[i]=pts[i].y; }
+    auto d1x_new=gradient(px,ds); auto d1y_new=gradient(py,ds);
+    auto d2x_new=gradient(d1x_new,ds); auto d2y_new=gradient(d1y_new,ds);
+    // Update kappa for first few points
+    for(size_t i=0;i<std::min<size_t>(3, kappa.size());++i){
+      double num=d1x_new[i]*d2y_new[i] - d1y_new[i]*d2x_new[i];
+      double den=std::pow(d1x_new[i]*d1x_new[i]+d1y_new[i]*d1y_new[i],1.5)+1e-12;
+      kappa[i]=num/den;
+    }
   }
 
   std::ofstream out(out_csv);

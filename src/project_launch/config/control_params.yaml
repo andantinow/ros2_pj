@@ -6,28 +6,27 @@ nmpc_engine_node:
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 6.0
-    max_speed: 2.0
-    lookahead_distance: 0.0  # Use adaptive lookahead only
-    min_lookahead: 0.8
-    max_lookahead: 2.0
-    lookahead_speed_gain: 0.8
-    lookahead_error_gain: 1.2  # Increased - reduce lookahead more when error is large
+    lookahead_distance: 1.2  # Increased for less sensitive, smoother tracking
+    min_lookahead: 0.6  # Increased minimum for smoother control
+    max_lookahead: 2.0  # Increased maximum for less aggressive control
+    lookahead_speed_gain: 0.4  # Speed dependency
+    lookahead_error_gain: 0.8  # Reduced - less aggressive lookahead reduction
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'  # Simulator odom (QoS compatible)
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 2.0  # Performance mode speed
-    max_steer_angle: 0.52  # 30 degrees physical limit
-    max_steer_rate: 1.0
-    lateral_error_gain: 1.5  # Lateral error compensation
-    heading_error_gain: 1.0
-    curvature_feedforward_gain: 1.0
-    smoothing_factor: 0.3  # Low-pass filter smoothing
-    direct_correction_gain: 0.0  # Disabled in Hybrid Controller
-    direct_correction_limit: 0.0
-    pid_kp: 0.5
-    pid_ki: 0.0
-    pid_kd: 0.3
+    target_speed: 1.0  # Reduced speed for smoother driving
+    max_steer_angle: 0.55
+    max_steer_rate: 5.0
+    lateral_error_gain: 1.0  # Reduced for less sensitive lateral correction
+    heading_error_gain: 0.5  # Reduced for smoother heading correction
+    curvature_feedforward_gain: 0.8  # Reduced for smoother curve anticipation
+    smoothing_factor: 0.5  # Increased for smoother response
+    direct_correction_gain: 0.8  # Reduced for less aggressive correction
+    direct_correction_limit: 0.8  # Reduced limit for smaller corrections
+    pid_kp: 1.2  # Reduced proportional gain
+    pid_ki: 0.05  # Reduced integral gain
+    pid_kd: 0.3  # Reduced derivative gain
     use_path_interpolation: true
-    steering_sign: 1.0
+    steering_sign: 1.0  # Positive = standard, -1.0 = flip if vehicle goes wrong direction

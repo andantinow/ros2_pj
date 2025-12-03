@@ -354,7 +354,7 @@ Visualization Manager:
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Lines
-      Line Width: 0.10000000149011612
+      Line Width: 0.20000000298023224
       Name: Global Raceline
       Offset:
         X: 0
@@ -419,7 +419,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.0101706981658936
+      Distance: 11.448782920837402
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -434,10 +434,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.7123966813087463
+      Pitch: 0.7947970628738403
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.930352210998535
+      Yaw: 4.483586311340332
     Saved: ~
 Window Geometry:
   Displays:
