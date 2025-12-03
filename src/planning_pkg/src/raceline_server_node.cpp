@@ -88,7 +88,8 @@ class RacelineServer : public rclcpp::Node {
 
  private:
   std::string file_, frame_id_;
-  std::string path_topic_, vref_topic_;
+  std::string path_topic_{"/global_raceline"};  // Default path topic
+  std::string vref_topic_{"/global_vref"};      // Default velocity reference topic
   bool publish_vref_{true};
   bool enable_smoothing_{false};
   int smoothing_window_{5};

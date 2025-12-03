@@ -62,10 +62,11 @@ private:
         RCLCPP_INFO_ONCE(this->get_logger(), "Lidar data received successfully. Ready for EKF/MHE integration.");
     }
 
-    std::string output_frame_;
+    // Member variables
+    std::string output_frame_{"map"};  // Default output frame for pose messages
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
-    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
     size_t count_;
 };
 
