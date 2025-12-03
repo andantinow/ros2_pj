@@ -16,6 +16,7 @@ simple_controller:
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
+    scan_topic: '/scan'        # LiDAR scan topic for collision detection
     target_speed: 0.8          # Reduced from 1.5 for slower, safer driving
     max_steer_angle: 0.55
     max_steer_rate: 4.0        # Increased from 3.0 for faster steering response to side obstacles
@@ -30,3 +31,8 @@ simple_controller:
     pid_kd: 0.2                # Increased from 0.1 for faster lateral damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
+    # Collision avoidance and reverse parameters (후진 기능)
+    collision_threshold: 0.4   # Front collision detection distance (meters) - 전방 충돌 감지 거리
+    side_collision_threshold: 0.3  # Side collision detection distance (meters) - 측면 충돌 감지 거리
+    reverse_speed: 0.3         # Gentle reverse speed (m/s) - 부드러운 후진 속도
+    reverse_duration: 0.8      # How long to reverse (seconds) - 후진 지속 시간

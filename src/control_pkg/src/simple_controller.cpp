@@ -43,6 +43,12 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter<std::string>("odom_topic", odom_topic_);
   declare_parameter<std::string>("path_topic", path_topic_);
   declare_parameter<std::string>("drive_topic", drive_topic_);
+  declare_parameter<std::string>("scan_topic", scan_topic_);
+  // Collision avoidance parameters
+  declare_parameter("collision_threshold", collision_threshold_);
+  declare_parameter("reverse_speed", reverse_speed_);
+  declare_parameter("reverse_duration", reverse_duration_);
+  declare_parameter("side_collision_threshold", side_collision_threshold_);
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
   min_lookahead_ = get_parameter("min_lookahead").as_double();
@@ -69,8 +75,14 @@ SimpleController::SimpleController() : Node("simple_controller")
   odom_topic_ = get_parameter("odom_topic").as_string();
   path_topic_ = get_parameter("path_topic").as_string();
   drive_topic_ = get_parameter("drive_topic").as_string();
+  scan_topic_ = get_parameter("scan_topic").as_string();
+  collision_threshold_ = get_parameter("collision_threshold").as_double();
+  reverse_speed_ = get_parameter("reverse_speed").as_double();
+  reverse_duration_ = get_parameter("reverse_duration").as_double();
+  side_collision_threshold_ = get_parameter("side_collision_threshold").as_double();
   
   prev_time_ = this->get_clock()->now();
+  reverse_start_time_ = this->get_clock()->now();
 
   // Path Subscription - Use transient_local QoS to receive latched path from raceline_server
   rclcpp::QoS path_qos(rclcpp::QoS(10).transient_local().reliable());
@@ -86,13 +98,21 @@ SimpleController::SimpleController() : Node("simple_controller")
       odom_qos,
       std::bind(&SimpleController::odom_callback, this, std::placeholders::_1));
 
+  // Scan Subscription for collision detection
+  scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+      scan_topic_,
+      rclcpp::SensorDataQoS(),
+      std::bind(&SimpleController::scan_callback, this, std::placeholders::_1));
+
   // Drive Publisher
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_,
       10);
   
-  RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, publishing to drive: %s", 
-              odom_topic_.c_str(), path_topic_.c_str(), drive_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, publishing to drive: %s", 
+              odom_topic_.c_str(), path_topic_.c_str(), scan_topic_.c_str(), drive_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(), "Collision avoidance: threshold=%.2fm, reverse_speed=%.2fm/s, duration=%.2fs",
+              collision_threshold_, reverse_speed_, reverse_duration_);
 
   timer_ = this->create_wall_timer(
       20ms, std::bind(&SimpleController::control_loop, this));
@@ -124,6 +144,103 @@ void SimpleController::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
     }
     path_received_ = true;
   }
+}
+
+void SimpleController::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+{
+  current_scan_ = *msg;
+  if (!scan_received_) {
+    RCLCPP_INFO(this->get_logger(), "Received first scan message. Ranges: %zu, angle: [%.2f, %.2f]",
+                msg->ranges.size(), msg->angle_min, msg->angle_max);
+    scan_received_ = true;
+  }
+}
+
+bool SimpleController::check_collision_imminent()
+{
+  if (!scan_received_ || current_scan_.ranges.empty()) {
+    return false;
+  }
+  
+  // Check front area (-45 to +45 degrees) for imminent collision
+  double angle_min = current_scan_.angle_min;
+  double angle_inc = current_scan_.angle_increment;
+  int num_ranges = current_scan_.ranges.size();
+  
+  // Define front sector: -45 to +45 degrees (approximately -0.785 to 0.785 radians)
+  double front_angle_min = -0.785;
+  double front_angle_max = 0.785;
+  
+  // Define side sectors for side collision detection
+  // Left side: 45 to 90 degrees (0.785 to 1.57 radians)
+  // Right side: -90 to -45 degrees (-1.57 to -0.785 radians)
+  double side_angle_inner = 0.785;
+  double side_angle_outer = 1.57;
+  
+  double min_front_distance = std::numeric_limits<double>::max();
+  double min_left_distance = std::numeric_limits<double>::max();
+  double min_right_distance = std::numeric_limits<double>::max();
+  
+  for (int i = 0; i < num_ranges; ++i) {
+    double angle = angle_min + i * angle_inc;
+    double range = current_scan_.ranges[i];
+    
+    // Skip invalid readings
+    if (std::isnan(range) || std::isinf(range) || range < 0.05) {
+      continue;
+    }
+    
+    // Check front sector
+    if (angle >= front_angle_min && angle <= front_angle_max) {
+      if (range < min_front_distance) {
+        min_front_distance = range;
+      }
+    }
+    
+    // Check left side
+    if (angle >= side_angle_inner && angle <= side_angle_outer) {
+      if (range < min_left_distance) {
+        min_left_distance = range;
+      }
+    }
+    
+    // Check right side
+    if (angle >= -side_angle_outer && angle <= -side_angle_inner) {
+      if (range < min_right_distance) {
+        min_right_distance = range;
+      }
+    }
+  }
+  
+  // Check if collision is imminent (front or side)
+  bool front_collision = min_front_distance < collision_threshold_;
+  bool side_collision = (min_left_distance < side_collision_threshold_) || 
+                        (min_right_distance < side_collision_threshold_);
+  
+  if (front_collision || side_collision) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                         "Collision imminent! Front: %.2fm, Left: %.2fm, Right: %.2fm",
+                         min_front_distance, min_left_distance, min_right_distance);
+    return true;
+  }
+  
+  return false;
+}
+
+double SimpleController::compute_reverse_steering()
+{
+  // When reversing, steer in the opposite direction to move away from obstacle
+  // Use the last steering angle before reversing, but inverted
+  // This helps the car back away from the corner it was trying to navigate
+  
+  // Gentle steering during reverse - don't steer too aggressively
+  double reverse_steer = -last_steering_before_reverse_ * 0.5;
+  
+  // Clamp to safe steering limits during reverse
+  double max_reverse_steer = max_steer_angle_ * 0.6;  // Limit steering during reverse
+  reverse_steer = std::clamp(reverse_steer, -max_reverse_steer, max_reverse_steer);
+  
+  return reverse_steer;
 }
 
 int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead)
@@ -242,6 +359,56 @@ void SimpleController::control_loop()
     return;
   }
 
+  // Check for collision and handle reverse mode
+  rclcpp::Time current_time = this->get_clock()->now();
+  
+  // If currently reversing, check if we should stop
+  if (is_reversing_) {
+    double elapsed = (current_time - reverse_start_time_).seconds();
+    if (elapsed >= reverse_duration_) {
+      // Stop reversing
+      is_reversing_ = false;
+      RCLCPP_INFO(this->get_logger(), "Reverse complete, resuming forward motion");
+    } else {
+      // Continue reversing - gentle reverse with opposite steering
+      double reverse_steer = compute_reverse_steering();
+      
+      ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+      drive_msg.header.stamp = current_time;
+      drive_msg.header.frame_id = current_odom_.child_frame_id;
+      drive_msg.drive.speed = -reverse_speed_;  // Negative speed for reverse
+      drive_msg.drive.steering_angle = reverse_steer;
+      
+      drive_pub_->publish(drive_msg);
+      
+      static int reverse_log_count = 0;
+      if (reverse_log_count++ % 25 == 0) {
+        RCLCPP_INFO(this->get_logger(), "REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
+                    -reverse_speed_, reverse_steer, elapsed, reverse_duration_);
+      }
+      return;  // Skip normal control during reverse
+    }
+  }
+  
+  // Check if collision is imminent
+  if (check_collision_imminent()) {
+    // Start reversing
+    is_reversing_ = true;
+    reverse_start_time_ = current_time;
+    last_steering_before_reverse_ = prev_steering_angle_;
+    RCLCPP_WARN(this->get_logger(), "Collision detected! Starting gentle reverse maneuver");
+    
+    // Immediately send reverse command
+    double reverse_steer = compute_reverse_steering();
+    ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+    drive_msg.header.stamp = current_time;
+    drive_msg.header.frame_id = current_odom_.child_frame_id;
+    drive_msg.drive.speed = -reverse_speed_;
+    drive_msg.drive.steering_angle = reverse_steer;
+    drive_pub_->publish(drive_msg);
+    return;
+  }
+
   // Compute current speed
   double current_speed = std::sqrt(
     current_odom_.twist.twist.linear.x * current_odom_.twist.twist.linear.x +
@@ -337,7 +504,7 @@ void SimpleController::control_loop()
   }
 
   // === Hybrid Controller (Slide 13-14) ===
-  rclcpp::Time current_time = this->get_clock()->now();
+  // current_time already defined at start of control_loop
   double dt = (current_time - prev_time_).seconds();
   if (dt > 0.1) dt = 0.1;
   if (dt <= 0.0) dt = 0.02;
