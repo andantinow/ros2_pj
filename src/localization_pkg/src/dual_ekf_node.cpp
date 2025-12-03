@@ -368,7 +368,8 @@ private:
             
             Eigen::Vector2d y_odom = z_odom - H_odom * local_state_;
             Eigen::Matrix<double, 2, 2> S_odom = H_odom * local_cov_ * H_odom.transpose() + R_odom;
-            Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * S_odom.inverse();
+            // Use LLT decomposition for numerical stability
+            Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * S_odom.llt().solve(Eigen::Matrix2d::Identity());
             
             local_state_ = local_state_ + K_odom * y_odom;
             local_cov_ = (LocalCov::Identity() - K_odom * H_odom) * local_cov_;
@@ -399,7 +400,8 @@ private:
             
             Eigen::Vector3d y_imu = z_imu - H_imu * local_state_;
             Eigen::Matrix3d S_imu = H_imu * local_cov_ * H_imu.transpose() + R_imu;
-            Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * S_imu.inverse();
+            // Use LLT decomposition for numerical stability
+            Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * S_imu.llt().solve(Eigen::Matrix3d::Identity());
             
             local_state_ = local_state_ + K_imu * y_imu;
             local_cov_ = (LocalCov::Identity() - K_imu * H_imu) * local_cov_;
@@ -501,7 +503,8 @@ private:
             y(2) = normalizeAngle(y(2));
             
             Eigen::Matrix3d S = H * global_cov_ * H.transpose() + R;
-            Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * S.inverse();
+            // Use LLT decomposition for numerical stability
+            Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * S.llt().solve(Eigen::Matrix3d::Identity());
             
             global_state_ = global_state_ + K * y;
             global_state_(2) = normalizeAngle(global_state_(2));
@@ -579,6 +582,14 @@ private:
     
     /**
      * @brief Publish map -> odom transform
+     * 
+     * This computes the correction transform between the map frame and odom frame.
+     * The transform represents: map = T_map_odom * odom
+     * 
+     * In a dual EKF setup:
+     * - odom frame accumulates drift from wheel odometry
+     * - map frame is the global reference from localization
+     * - The map->odom transform corrects for accumulated drift
      */
     void publishTf(const rclcpp::Time& now) {
         geometry_msgs::msg::TransformStamped transform;
@@ -586,14 +597,40 @@ private:
         transform.header.frame_id = map_frame_;
         transform.child_frame_id = odom_frame_;
         
-        // For simplicity, assume odom frame is at the same position as map frame
-        // In a real system, you would compute the correction transform
-        transform.transform.translation.x = global_state_(0);
-        transform.transform.translation.y = global_state_(1);
+        // Get the latest odom position (robot pose in odom frame)
+        double odom_x = 0.0, odom_y = 0.0, odom_yaw = 0.0;
+        if (!odom_buffer_.empty()) {
+            const auto& odom = odom_buffer_.back();
+            odom_x = odom.pose.pose.position.x;
+            odom_y = odom.pose.pose.position.y;
+            odom_yaw = yawFromQuaternion(odom.pose.pose.orientation);
+        }
+        
+        // Global state gives robot pose in map frame
+        double map_x = global_state_(0);
+        double map_y = global_state_(1);
+        double map_yaw = global_state_(2);
+        
+        // Compute map->odom transform
+        // If robot is at (odom_x, odom_y, odom_yaw) in odom frame
+        // and at (map_x, map_y, map_yaw) in map frame
+        // then map->odom transform T satisfies: map_pose = T * odom_pose
+        // 
+        // For the transform, we need: T_map_odom = T_map_robot * T_robot_odom^(-1)
+        double dyaw = normalizeAngle(map_yaw - odom_yaw);
+        double cos_dyaw = std::cos(dyaw);
+        double sin_dyaw = std::sin(dyaw);
+        
+        // Transform odom origin to map frame
+        double dx = map_x - (odom_x * cos_dyaw - odom_y * sin_dyaw);
+        double dy = map_y - (odom_x * sin_dyaw + odom_y * cos_dyaw);
+        
+        transform.transform.translation.x = dx;
+        transform.transform.translation.y = dy;
         transform.transform.translation.z = 0.0;
         
         tf2::Quaternion q;
-        q.setRPY(0.0, 0.0, global_state_(2));
+        q.setRPY(0.0, 0.0, dyaw);
         transform.transform.rotation.x = q.x();
         transform.transform.rotation.y = q.y();
         transform.transform.rotation.z = q.z();
