@@ -510,14 +510,11 @@ private:
     // Publish result
     publishDriveCommand(solution);
     
-    // Debug logging
-    static int log_counter = 0;
-    if (++log_counter % 50 == 0) {  // Every ~1 second at 50Hz
-      RCLCPP_INFO(get_logger(), 
-        "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f]",
-        current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
-        solution.steering, solution.speed, solution.iterations, solution.cost);
-    }
+    // Debug logging using RCLCPP_INFO_THROTTLE for thread safety
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,  // Every 1 second
+      "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f]",
+      current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
+      solution.steering, solution.speed, solution.iterations, solution.cost);
   }
   
   /**
@@ -573,10 +570,13 @@ private:
     }
     
     // Build reference from closest point forward
-    const int num_ref_points = 15;  // Number of reference points
-    const size_t stride = std::max<size_t>(1, num_poses / 50);  // Sampling stride
+    // Constants for reference trajectory building
+    constexpr int NUM_REF_POINTS = 15;      // Number of reference points for MPC horizon
+    constexpr size_t PATH_STRIDE_DIVISOR = 50;  // Divisor for computing sampling stride
     
-    for (int i = 0; i < num_ref_points; ++i) {
+    const size_t stride = std::max<size_t>(1, num_poses / PATH_STRIDE_DIVISOR);
+    
+    for (int i = 0; i < NUM_REF_POINTS; ++i) {
       size_t idx = (closest_idx + i * stride) % num_poses;
       
       nmpc::ReferencePoint ref;
