@@ -68,6 +68,16 @@ private:
   rclcpp::Time reverse_start_time_;       // When reverse started
   double last_steering_before_reverse_ = 0.0;  // Steering angle before reversing
   
+  // 장애물 위치 정보 (후진 방향 결정용)
+  double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
+  double last_obstacle_right_dist_ = 10.0;  // 오른쪽 장애물 거리
+  double last_obstacle_front_dist_ = 10.0;  // 전방 장애물 거리
+  double last_obstacle_angle_ = 0.0;        // 가장 가까운 전방 장애물 각도
+  
+  // 측면 센서 기반 회피 조향 (벽 회피용)
+  double side_avoidance_gain_ = 0.5;        // 측면 회피 강도
+  bool enable_side_avoidance_ = true;       // 측면 회피 활성화
+  
   std::string odom_topic_{"/odom"};
   std::string path_topic_{"/global_raceline"};
   std::string drive_topic_{"/drive"};
@@ -92,5 +102,6 @@ private:
   int find_closest_point_along_path(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int start_idx);
   bool check_collision_imminent();
   double compute_reverse_steering();
+  double compute_side_avoidance_steering();  // 측면 센서 기반 벽 회피 조향
 };
 #endif
