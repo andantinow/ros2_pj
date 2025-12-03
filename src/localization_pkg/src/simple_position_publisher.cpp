@@ -12,18 +12,30 @@ public:
     F1TenthOdomSubscriber()
     : Node("f1tenth_odom_subscriber"), count_(0)
     {
+        // Declare topic parameters (configurable)
+        declare_parameter<std::string>("odom_topic", "/car_state/odom_GT");
+        declare_parameter<std::string>("scan_topic", "/scan");
+        declare_parameter<std::string>("pose_topic", "/localization/pose");
+        declare_parameter<std::string>("output_frame", "map");
+        
+        std::string odom_topic = get_parameter("odom_topic").as_string();
+        std::string scan_topic = get_parameter("scan_topic").as_string();
+        std::string pose_topic = get_parameter("pose_topic").as_string();
+        output_frame_ = get_parameter("output_frame").as_string();
+        
+        RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, scan: %s", odom_topic.c_str(), scan_topic.c_str());
+        RCLCPP_INFO(this->get_logger(), "Publishing pose to: %s with frame: %s", pose_topic.c_str(), output_frame_.c_str());
+
         // 1. Subscriber: Subscribes to the actual F1TENTH vehicle's Odom topic
-        // TOPIC: /sim/ego_racecar/odom (F1TENTH standard for vehicle pose)
         odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            "/sim/ego_racecar/odom", 10, std::bind(&F1TenthOdomSubscriber::odom_callback, this, _1));
+            odom_topic, 10, std::bind(&F1TenthOdomSubscriber::odom_callback, this, _1));
 
         // 2. Subscriber: Subscribes to the Lidar Scan data
-        // TOPIC: /sim/scan (F1TENTH Lidar data)
         scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-            "/sim/scan", 10, std::bind(&F1TenthOdomSubscriber::scan_callback, this, _1));
+            scan_topic, 10, std::bind(&F1TenthOdomSubscriber::scan_callback, this, _1));
 
         // 3. Publisher: Publishes the PoseStamped format for internal use (Planning/Control input)
-        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/localization/pose", 10);
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(pose_topic, 10);
         
         RCLCPP_INFO(this->get_logger(), "F1Tenth Odom and Lidar Subscribers started.");
     }
@@ -34,7 +46,7 @@ private:
         // Convert Odometry to PoseStamped for internal pipeline compatibility
         auto pose_msg = geometry_msgs::msg::PoseStamped();
         pose_msg.header.stamp = this->now();
-        pose_msg.header.frame_id = "map"; // Standard map frame
+        pose_msg.header.frame_id = output_frame_;
         pose_msg.pose = msg->pose.pose;
 
         pose_publisher_->publish(pose_msg);
@@ -50,6 +62,7 @@ private:
         RCLCPP_INFO_ONCE(this->get_logger(), "Lidar data received successfully. Ready for EKF/MHE integration.");
     }
 
+    std::string output_frame_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;

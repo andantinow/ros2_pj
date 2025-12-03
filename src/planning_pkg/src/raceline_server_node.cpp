@@ -23,15 +23,24 @@ class RacelineServer : public rclcpp::Node {
     declare_parameter<bool>("enable_smoothing", false);
     declare_parameter<int>("smoothing_window", 5);
     declare_parameter<double>("resample_spacing", 0.0);  // 0.0 = no resampling
+    // Topic parameters (configurable)
+    declare_parameter<std::string>("path_topic", "/global_raceline");
+    declare_parameter<std::string>("vref_topic", "/global_vref");
+    
     file_ = resolve_file(get_parameter("raceline_file").as_string());
     frame_id_ = get_parameter("frame_id").as_string();
     publish_vref_ = get_parameter("publish_vref").as_bool();
     enable_smoothing_ = get_parameter("enable_smoothing").as_bool();
     smoothing_window_ = get_parameter("smoothing_window").as_int();
     resample_spacing_ = get_parameter("resample_spacing").as_double();
+    path_topic_ = get_parameter("path_topic").as_string();
+    vref_topic_ = get_parameter("vref_topic").as_string();
+    
     qos_.keep_last(1).transient_local().reliable();
-    path_pub_ = create_publisher<nav_msgs::msg::Path>("/global_raceline", qos_);
-    if (publish_vref_) vref_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>("/global_vref", qos_);
+    path_pub_ = create_publisher<nav_msgs::msg::Path>(path_topic_, qos_);
+    if (publish_vref_) vref_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>(vref_topic_, qos_);
+    
+    RCLCPP_INFO(get_logger(), "Publishing path to: %s, vref to: %s", path_topic_.c_str(), vref_topic_.c_str());
     
     auto cb = [this](const std::vector<rclcpp::Parameter> &params) {
       bool reload=false;
@@ -45,7 +54,7 @@ class RacelineServer : public rclcpp::Node {
         }
         if(p.get_name()=="publish_vref" && p.get_type()==rclcpp::ParameterType::PARAMETER_BOOL) {
           publish_vref_=p.as_bool();
-          if(publish_vref_ && !vref_pub_) vref_pub_=create_publisher<std_msgs::msg::Float32MultiArray>("/global_vref", qos_);
+          if(publish_vref_ && !vref_pub_) vref_pub_=create_publisher<std_msgs::msg::Float32MultiArray>(vref_topic_, qos_);
         }
         if(p.get_name()=="enable_smoothing" && p.get_type()==rclcpp::ParameterType::PARAMETER_BOOL) {
           enable_smoothing_=p.as_bool();
@@ -79,6 +88,7 @@ class RacelineServer : public rclcpp::Node {
 
  private:
   std::string file_, frame_id_;
+  std::string path_topic_, vref_topic_;
   bool publish_vref_{true};
   bool enable_smoothing_{false};
   int smoothing_window_{5};
