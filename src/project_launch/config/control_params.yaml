@@ -1,4 +1,4 @@
-nmpc_engine_node:
+simple_controller:
   ros__parameters:
     wheelbase: 0.33
     steer_limit: 0.55

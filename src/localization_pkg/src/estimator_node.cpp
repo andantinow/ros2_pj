@@ -19,6 +19,9 @@ public:
     declare_parameter<double>("Cf_alpha", 0.001);
     declare_parameter<bool>("gate_param_update_on_straight", true);
     declare_parameter<double>("kappa_gate_threshold", 0.01);
+    declare_parameter<std::string>("input_odom_topic", "/car_state/odom_GT");
+    declare_parameter<std::string>("input_imu_topic", "/car_state/vesc/sensors/imu/raw");
+    declare_parameter<std::string>("output_odom_topic", "/perfect_odom");
 
     mu_ = get_parameter("mu_init").as_double();
     Cf_ = get_parameter("Cf_init").as_double();
@@ -31,14 +34,21 @@ public:
     gate_on_straight_ = get_parameter("gate_param_update_on_straight").as_bool();
     kappa_gate_th_ = get_parameter("kappa_gate_threshold").as_double();
 
+    std::string input_odom = get_parameter("input_odom_topic").as_string();
+    std::string input_imu = get_parameter("input_imu_topic").as_string();
+    std::string output_odom = get_parameter("output_odom_topic").as_string();
+
+    RCLCPP_INFO(get_logger(), "Subscribing to odom: %s, imu: %s", input_odom.c_str(), input_imu.c_str());
+    RCLCPP_INFO(get_logger(), "Publishing to: %s", output_odom.c_str());
+
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/sim/ego_racecar/odom", 20,
+      input_odom, 20,
       std::bind(&EstimatorNode::odomCb, this, std::placeholders::_1));
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-      "/sim/imu", 50,
+      input_imu, 50,
       std::bind(&EstimatorNode::imuCb, this, std::placeholders::_1));
 
-    odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("/perfect_odom", 10);
+    odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(output_odom, 10);
     model_pub_ = create_publisher<vehicle_model_msgs::msg::AdaptiveVehicleModel>("/adaptive_vehicle_model", 10);
 
     timer_ = create_wall_timer(std::chrono::milliseconds(10), std::bind(&EstimatorNode::update, this));

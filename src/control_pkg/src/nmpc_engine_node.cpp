@@ -86,6 +86,10 @@ public:
     declare_parameter("nominal_speed", 2.5);
     declare_parameter<std::string>("control_mode", "Pure Pursuit + PID");
     declare_parameter("solver_wheelbase", 0.33);
+    // Topic parameters (configurable)
+    declare_parameter<std::string>("odom_topic", "/car_state/odom_GT");
+    declare_parameter<std::string>("path_topic", "/global_raceline");
+    declare_parameter<std::string>("drive_topic", "/drive");
 
     prediction_horizon_ = get_parameter("prediction_horizon").as_double();
     prediction_steps_ = get_parameter("prediction_steps").as_int();
@@ -93,9 +97,15 @@ public:
     nominal_speed_ = get_parameter("nominal_speed").as_double();
     control_mode_ = get_parameter("control_mode").as_string();
     solver_wheelbase_ = get_parameter("solver_wheelbase").as_double();
+    
+    std::string odom_topic = get_parameter("odom_topic").as_string();
+    std::string path_topic = get_parameter("path_topic").as_string();
+    std::string drive_topic = get_parameter("drive_topic").as_string();
 
     RCLCPP_INFO(this->get_logger(), "Initializing NMPC Engine...");
     RCLCPP_INFO(this->get_logger(), "Current Control Mode: %s", control_mode_.c_str());
+    RCLCPP_INFO(this->get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
+                odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
 
     AcadosConfig cfg{
       .horizon_sec = prediction_horizon_,
@@ -104,19 +114,19 @@ public:
     solver_.initialize(cfg, this->get_logger());
 
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/odom", rclcpp::QoS(20),
+      odom_topic, rclcpp::QoS(20),
       [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
         latest_odom_ = msg;
       });
 
     path_sub_ = create_subscription<nav_msgs::msg::Path>(
-      "/global_raceline", rclcpp::QoS(10).transient_local(),
+      path_topic, rclcpp::QoS(10).transient_local(),
       [this](const nav_msgs::msg::Path::SharedPtr msg) {
         latest_path_ = msg;
       });
 
     drive_pub_ =
-      create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/drive", rclcpp::QoS(10));
+      create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, rclcpp::QoS(10));
 
     const double period_s = 1.0 / std::max(1.0, control_rate_hz_);
     auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
