@@ -6,11 +6,11 @@ simple_controller:
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 6.0
-    lookahead_distance: 0.8  # Reduced for more sensitive tracking
-    min_lookahead: 0.4  # Reduced minimum for closer target
-    max_lookahead: 1.5  # Reduced maximum for more responsive control
-    lookahead_speed_gain: 0.4  # Reduced speed dependency
-    lookahead_error_gain: 1.2  # Increased - reduce lookahead more when error is large
+    lookahead_distance: 0.8
+    min_lookahead: 0.5
+    max_lookahead: 1.5
+    lookahead_speed_gain: 0.3
+    lookahead_error_gain: 1.0
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
@@ -18,15 +18,15 @@ simple_controller:
     drive_topic: '/drive'
     target_speed: 1.5
     max_steer_angle: 0.55
-    max_steer_rate: 5.0
-    lateral_error_gain: 1.5  # Increased for more sensitive lateral correction
-    heading_error_gain: 0.8  # Increased for better heading correction
-    curvature_feedforward_gain: 1.2  # Increased for better curve anticipation
-    smoothing_factor: 0.3  # Reduced for faster response
-    direct_correction_gain: 1.2  # Increased for aggressive correction when far off
-    direct_correction_limit: 1.0  # Increased limit for larger corrections
-    pid_kp: 2.0  # Increased proportional gain
-    pid_ki: 0.1  # Increased integral gain
-    pid_kd: 0.5  # Increased derivative gain
+    max_steer_rate: 3.0
+    lateral_error_gain: 0.8
+    heading_error_gain: 0.5
+    curvature_feedforward_gain: 0.8
+    smoothing_factor: 0.4
+    direct_correction_gain: 0.5
+    direct_correction_limit: 0.5
+    pid_kp: 0.5
+    pid_ki: 0.02
+    pid_kd: 0.1
     use_path_interpolation: true
-    steering_sign: -1.0  # Flip to -1.0 if vehicle goes wrong direction (left/right issue)
+    steering_sign: 1.0  # Normal direction (positive = left turn)
