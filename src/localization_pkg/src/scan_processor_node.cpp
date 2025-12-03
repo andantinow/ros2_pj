@@ -261,15 +261,8 @@ private:
         pose_msg.header = header;
         pose_msg.header.frame_id = "base_link";
         
-        // Compute average feature position (simple centroid)
-        double sum_x = 0.0, sum_y = 0.0;
-        for (const auto& feature : features) {
-            sum_x += feature.second * std::cos(feature.first);
-            sum_y += feature.second * std::sin(feature.first);
-        }
-        
-        // This is a relative measurement from the robot frame
-        pose_msg.pose.pose.position.x = 0.0;  // Robot is at origin in its own frame
+        // Robot is at origin in its own frame
+        pose_msg.pose.pose.position.x = 0.0;
         pose_msg.pose.pose.position.y = 0.0;
         pose_msg.pose.pose.position.z = 0.0;
         pose_msg.pose.pose.orientation.w = 1.0;
@@ -278,9 +271,6 @@ private:
         double cov = scan_covariance_ / std::max(1.0, std::sqrt(static_cast<double>(features.size())));
         
         // Covariance matrix (6x6, row-major)
-        // [xx, xy, xz, xr, xp, xyaw,
-        //  yx, yy, yz, yr, yp, yyaw,
-        //  ...]
         std::fill(pose_msg.pose.covariance.begin(), pose_msg.pose.covariance.end(), 0.0);
         pose_msg.pose.covariance[0] = cov;   // xx
         pose_msg.pose.covariance[7] = cov;   // yy

@@ -24,6 +24,10 @@ dual_ekf_node:
     # Update rate (Hz)
     update_rate: 50.0
     
+    # Buffer sizes (tune based on sensor rates)
+    odom_buffer_size: 50     # ~1 second at 50Hz
+    imu_buffer_size: 200     # ~1 second at 200Hz
+    
     # Measurement noise variances
     # Lower values = trust measurements more
     # Higher values = trust model prediction more

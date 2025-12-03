@@ -87,6 +87,10 @@ private:
     double global_pose_var_;
     double global_yaw_var_;
     
+    // Buffer sizes (configurable)
+    size_t odom_buffer_size_ = 50;
+    size_t imu_buffer_size_ = 200;
+    
     // Time tracking
     rclcpp::Time last_local_update_;
     rclcpp::Time last_global_update_;
@@ -154,6 +158,10 @@ private:
         declare_parameter<double>("global_process_noise_pos", 0.01);
         declare_parameter<double>("global_process_noise_vel", 0.1);
         
+        // Buffer sizes
+        declare_parameter<int>("odom_buffer_size", 50);
+        declare_parameter<int>("imu_buffer_size", 200);
+        
         // TF broadcasting
         declare_parameter<bool>("publish_tf", true);
         
@@ -168,6 +176,10 @@ private:
         imu_accel_var_ = get_parameter("imu_accel_variance").as_double();
         global_pose_var_ = get_parameter("global_pose_variance").as_double();
         global_yaw_var_ = get_parameter("global_yaw_variance").as_double();
+        
+        // Get buffer sizes
+        odom_buffer_size_ = static_cast<size_t>(get_parameter("odom_buffer_size").as_int());
+        imu_buffer_size_ = static_cast<size_t>(get_parameter("imu_buffer_size").as_int());
     }
     
     /**
@@ -261,7 +273,7 @@ private:
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         odom_buffer_.push_back(*msg);
-        if (odom_buffer_.size() > 50) {
+        if (odom_buffer_.size() > odom_buffer_size_) {
             odom_buffer_.pop_front();
         }
     }
@@ -272,7 +284,7 @@ private:
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         imu_buffer_.push_back(*msg);
-        if (imu_buffer_.size() > 200) {
+        if (imu_buffer_.size() > imu_buffer_size_) {
             imu_buffer_.pop_front();
         }
     }
@@ -684,12 +696,15 @@ private:
     }
     
     /**
-     * @brief Normalize angle to [-pi, pi]
+     * @brief Normalize angle to [-pi, pi] using efficient modulo operation
      */
     static double normalizeAngle(double angle) {
-        while (angle > M_PI) angle -= 2.0 * M_PI;
-        while (angle < -M_PI) angle += 2.0 * M_PI;
-        return angle;
+        // Use fmod for efficiency with large angles
+        angle = std::fmod(angle + M_PI, 2.0 * M_PI);
+        if (angle < 0) {
+            angle += 2.0 * M_PI;
+        }
+        return angle - M_PI;
     }
 };
 
