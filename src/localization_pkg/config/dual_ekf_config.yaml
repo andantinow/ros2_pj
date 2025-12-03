@@ -56,13 +56,13 @@ scan_processor_node:
     obstacle_topic: "/scan/obstacles"
     
     # Range filtering
-    min_range: 0.1           # Minimum valid range (meters)
-    max_range: 10.0          # Maximum valid range (meters)
+    min_range: 0.05          # Minimum valid range (meters) - 더 작은 값으로 변경 (0.1 -> 0.05)
+    max_range: 12.0          # Maximum valid range (meters) - 더 먼 거리 감지 (10.0 -> 12.0)
     
     # Obstacle detection - configured for better side obstacle detection
-    obstacle_threshold: 1.5  # Distance threshold for side obstacle detection (meters) - increased for earlier side detection
-    min_cluster_size: 1      # Minimum points to form an obstacle cluster - reduced to 1 for maximum sensitivity
-    cluster_tolerance: 0.2   # Maximum distance between points in a cluster (meters) - increased for better side clustering
+    obstacle_threshold: 2.0  # Distance threshold for side obstacle detection (meters) - increased (1.5 -> 2.0)
+    min_cluster_size: 1      # Minimum points to form an obstacle cluster - maximum sensitivity
+    cluster_tolerance: 0.3   # Maximum distance between points in a cluster (meters) - increased (0.2 -> 0.3)
     
     # Feature extraction
     publish_covariance: true

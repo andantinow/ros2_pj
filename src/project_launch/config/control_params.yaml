@@ -5,37 +5,38 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 4.0           # Reduced from 6.0 for safer driving
-    lookahead_distance: 1.0    # Increased from 0.8 for earlier corner detection
-    min_lookahead: 0.6         # Increased from 0.5 for better corner handling
-    max_lookahead: 2.0         # Increased from 1.5 for more look-ahead in corners
-    lookahead_speed_gain: 0.4  # Increased from 0.3 for more responsive lookahead
-    lookahead_error_gain: 1.5  # Increased from 1.0 for more sensitive lateral error correction
+    speed_limit: 3.0           # Reduced for safer driving
+    lookahead_distance: 1.2    # Increased for earlier corner detection
+    min_lookahead: 0.8         # Increased for better corner handling and wider margin
+    max_lookahead: 2.5         # Increased for more look-ahead in corners
+    lookahead_speed_gain: 0.5  # Increased for more responsive lookahead
+    lookahead_error_gain: 2.0  # Increased for more sensitive lateral error correction
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
-    target_speed: 0.8          # Reduced from 1.5 for slower, safer driving
+    target_speed: 0.6          # Reduced for slower, safer driving
     max_steer_angle: 0.55
-    max_steer_rate: 4.0        # Increased from 3.0 for faster steering response to side obstacles
-    lateral_error_gain: 1.5    # Increased from 0.8 for more sensitive lateral (side) correction
-    heading_error_gain: 0.8    # Increased from 0.5 for better heading correction
-    curvature_feedforward_gain: 1.2  # Increased from 0.8 for better corner anticipation
-    smoothing_factor: 0.6      # Increased from 0.4 for quicker lateral response
-    direct_correction_gain: 0.8  # Increased from 0.5 for more direct lateral correction
-    direct_correction_limit: 0.8  # Increased from 0.5 for wider lateral correction range
-    pid_kp: 0.8                # Increased from 0.5 for more responsive lateral control
-    pid_ki: 0.03               # Increased from 0.02 for better steady-state lateral error correction
-    pid_kd: 0.2                # Increased from 0.1 for faster lateral damping
+    max_steer_rate: 5.0        # Increased for faster steering response to side obstacles
+    lateral_error_gain: 2.0    # Increased for more sensitive lateral (side) correction
+    heading_error_gain: 1.0    # Increased for better heading correction
+    curvature_feedforward_gain: 1.5  # Increased for better corner anticipation
+    smoothing_factor: 0.7      # Increased for quicker lateral response
+    direct_correction_gain: 1.0  # Increased for more direct lateral correction
+    direct_correction_limit: 1.0  # Increased for wider lateral correction range
+    pid_kp: 1.0                # Increased for more responsive lateral control
+    pid_ki: 0.05               # Increased for better steady-state lateral error correction
+    pid_kd: 0.3                # Increased for faster lateral damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
     # Collision avoidance and reverse parameters (후진 기능)
-    collision_threshold: 0.6   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.4 -> 0.6)
-    side_collision_threshold: 0.5  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.3 -> 0.5)
-    reverse_speed: 0.5         # Gentle reverse speed (m/s) - 부드러운 후진 속도 (0.3 -> 0.5)
-    reverse_duration: 1.2      # How long to reverse (seconds) - 후진 지속 시간 (0.8 -> 1.2)
+    # 레이스 라인 폭을 0.8m 이상으로 확장 - 벽에서 충분한 거리 유지
+    collision_threshold: 0.8   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.6 -> 0.8)
+    side_collision_threshold: 0.7  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.5 -> 0.7) - 더 넓은 마진
+    reverse_speed: 0.4         # Gentle reverse speed (m/s) - 부드러운 후진 속도
+    reverse_duration: 1.5      # How long to reverse (seconds) - 후진 지속 시간 (1.2 -> 1.5)
     # 측면 센서 기반 벽 회피 (Side sensor wall avoidance)
-    side_avoidance_gain: 0.6   # 측면 회피 강도 (0.0~1.0) - 클수록 적극적으로 벽 회피
+    side_avoidance_gain: 0.8   # 측면 회피 강도 (0.0~1.0) - 클수록 적극적으로 벽 회피 (0.6 -> 0.8)
     enable_side_avoidance: true  # 측면 회피 활성화
