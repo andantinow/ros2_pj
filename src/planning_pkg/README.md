@@ -75,23 +75,72 @@ ros2 run planning_pkg simple_path_planner \
 
 ### 3. Generate Raceline (CLI)
 
-Generate raceline from centerline CSV with velocity profile.
+Generate raceline from centerline CSV with velocity profile. Supports track boundary-aware positioning.
 
 **Usage:**
 ```bash
+# Generate raceline with track boundaries (recommended)
+ros2 run planning_pkg generate_raceline \
+  --centerline_csv tracks/centerline_with_bounds.csv \
+  --out_csv data/raceline.csv \
+  --lane_position 0.0 \
+  --wall_margin 0.3 \
+  --mu 1.0 \
+  --v_max 5.0 \
+  --ds 0.2
+
+# Generate from simple centerline (legacy mode)
 ros2 run planning_pkg generate_raceline \
   --centerline_csv tracks/centerline.csv \
   --out_csv data/raceline.csv \
+  --wall_offset 0.0 \
   --mu 1.0 \
-  --ax_max 4.0 \
-  --ax_min -6.0 \
   --v_max 20.0 \
   --ds 0.5
 ```
 
-**Input centerline CSV format:**
-- Header: `x,y` (optional)
-- Rows: Closed-loop polyline coordinates in meters
+**Parameters:**
+- `--centerline_csv`: Input CSV file (supports both simple and boundary-aware formats)
+- `--out_csv`: Output raceline CSV file
+- `--lane_position`: Position between walls (-1.0=left/outer, 0.0=center, 1.0=right/inner)
+- `--wall_margin`: Minimum distance from walls in meters (default: 0.3)
+- `--ds`: Sample spacing in meters (default: 0.5)
+- `--mu`: Friction coefficient (default: 1.0)
+- `--v_max`: Maximum speed in m/s (default: 20.0)
+- `--ax_max`: Maximum acceleration in m/s^2 (default: 4.0)
+- `--ax_min`: Maximum deceleration in m/s^2 (default: -6.0)
+- `--wall_offset`: [DEPRECATED] Use lane_position instead
+
+**Input centerline CSV formats:**
+
+1. **Simple format** (`x,y`):
+   ```csv
+   x,y
+   1.0,2.0
+   1.5,2.5
+   ...
+   ```
+
+2. **Boundary-aware format** (`x,y,d_left,d_right,psi`):
+   ```csv
+   x,y,d_left,d_right,psi
+   1.0,2.0,0.8,0.9,0.1
+   1.5,2.5,0.7,0.8,0.15
+   ...
+   ```
+   - `d_left`: Distance to left (outer) wall from centerline
+   - `d_right`: Distance to right (inner) wall from centerline
+   - `psi`: Heading angle (optional)
+
+**Generating centerline with boundaries:**
+
+Use the provided script to extract centerline with track boundaries from stack_master's global_waypoints.json:
+
+```bash
+python3 scripts/generate_centerline_with_bounds.py \
+  --json /path/to/stack_master/maps/teras/global_waypoints.json \
+  --out tracks/centerline_with_bounds.csv
+```
 
 **Output raceline CSV format:**
 - Columns: `s,x,y,psi,kappa,v_ref`
