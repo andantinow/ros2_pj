@@ -7,6 +7,9 @@ log/
 # IDE/Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # Python cache
 __pycache__/
@@ -15,3 +18,7 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary/Debug files
+frames_*.pdf
+_codeql_detected_source_root
