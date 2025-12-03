@@ -5,28 +5,29 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 6.0
-    lookahead_distance: 0.8
-    min_lookahead: 0.5
-    max_lookahead: 1.5
-    lookahead_speed_gain: 0.3
-    lookahead_error_gain: 1.0
+    speed_limit: 4.0           # Reduced from 6.0 for safer driving
+    lookahead_distance: 1.0    # Increased from 0.8 for earlier corner detection
+    min_lookahead: 0.6         # Increased from 0.5 for better corner handling
+    max_lookahead: 2.0         # Increased from 1.5 for more look-ahead in corners
+    lookahead_speed_gain: 0.4  # Increased from 0.3 for more responsive lookahead
+    lookahead_error_gain: 1.2  # Increased from 1.0 for more sensitive error correction
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5
+    target_speed: 1.0          # Reduced from 1.5 for slower, safer driving
     max_steer_angle: 0.55
-    max_steer_rate: 3.0
-    lateral_error_gain: 0.8
-    heading_error_gain: 0.5
-    curvature_feedforward_gain: 0.8
-    smoothing_factor: 0.4
-    direct_correction_gain: 0.5
-    direct_correction_limit: 0.5
-    pid_kp: 0.5
+    max_steer_rate: 3.5        # Increased from 3.0 for quicker steering response
+    lateral_error_gain: 1.0    # Increased from 0.8 for more sensitive lateral correction
+    heading_error_gain: 0.6    # Increased from 0.5 for better heading correction
+    curvature_feedforward_gain: 1.0  # Increased from 0.8 for better corner anticipation
+    smoothing_factor: 0.5      # Increased from 0.4 for quicker response
+    direct_correction_gain: 0.6  # Increased from 0.5 for more direct correction
+    direct_correction_limit: 0.6  # Increased from 0.5 for wider correction range
+    pid_kp: 0.6                # Increased from 0.5 for more responsive control
     pid_ki: 0.02
-    pid_kd: 0.1
+    pid_kd: 0.15               # Increased from 0.1 for better damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
+    max_speed: 3.5             # Added explicit max speed limit for safety
