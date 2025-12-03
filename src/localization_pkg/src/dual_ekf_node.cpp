@@ -13,6 +13,11 @@
 #include <memory>
 #include <mutex>
 
+// Define M_PI if not available (for cross-platform compatibility)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /**
  * @brief Dual EKF Node for robust state estimation
  * 
@@ -368,11 +373,21 @@ private:
             
             Eigen::Vector2d y_odom = z_odom - H_odom * local_state_;
             Eigen::Matrix<double, 2, 2> S_odom = H_odom * local_cov_ * H_odom.transpose() + R_odom;
-            // Use LLT decomposition for numerical stability
-            Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * S_odom.llt().solve(Eigen::Matrix2d::Identity());
             
-            local_state_ = local_state_ + K_odom * y_odom;
-            local_cov_ = (LocalCov::Identity() - K_odom * H_odom) * local_cov_;
+            // Use LLT decomposition for numerical stability with error checking
+            Eigen::LLT<Eigen::Matrix2d> llt_odom(S_odom);
+            if (llt_odom.info() == Eigen::Success) {
+                Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * llt_odom.solve(Eigen::Matrix2d::Identity());
+                
+                local_state_ = local_state_ + K_odom * y_odom;
+                
+                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                LocalCov I_KH = LocalCov::Identity() - K_odom * H_odom;
+                local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_odom * R_odom * K_odom.transpose();
+            } else {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
+                    "Odom EKF update skipped: S matrix not positive definite");
+            }
         }
         
         // === Correction Step with IMU ===
@@ -400,11 +415,21 @@ private:
             
             Eigen::Vector3d y_imu = z_imu - H_imu * local_state_;
             Eigen::Matrix3d S_imu = H_imu * local_cov_ * H_imu.transpose() + R_imu;
-            // Use LLT decomposition for numerical stability
-            Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * S_imu.llt().solve(Eigen::Matrix3d::Identity());
             
-            local_state_ = local_state_ + K_imu * y_imu;
-            local_cov_ = (LocalCov::Identity() - K_imu * H_imu) * local_cov_;
+            // Use LLT decomposition for numerical stability with error checking
+            Eigen::LLT<Eigen::Matrix3d> llt_imu(S_imu);
+            if (llt_imu.info() == Eigen::Success) {
+                Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * llt_imu.solve(Eigen::Matrix3d::Identity());
+                
+                local_state_ = local_state_ + K_imu * y_imu;
+                
+                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                LocalCov I_KH = LocalCov::Identity() - K_imu * H_imu;
+                local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_imu * R_imu * K_imu.transpose();
+            } else {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "IMU EKF update skipped: S matrix not positive definite");
+            }
         }
         
         last_local_update_ = now;
@@ -503,12 +528,22 @@ private:
             y(2) = normalizeAngle(y(2));
             
             Eigen::Matrix3d S = H * global_cov_ * H.transpose() + R;
-            // Use LLT decomposition for numerical stability
-            Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * S.llt().solve(Eigen::Matrix3d::Identity());
             
-            global_state_ = global_state_ + K * y;
-            global_state_(2) = normalizeAngle(global_state_(2));
-            global_cov_ = (GlobalCov::Identity() - K * H) * global_cov_;
+            // Use LLT decomposition for numerical stability with error checking
+            Eigen::LLT<Eigen::Matrix3d> llt_global(S);
+            if (llt_global.info() == Eigen::Success) {
+                Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * llt_global.solve(Eigen::Matrix3d::Identity());
+                
+                global_state_ = global_state_ + K * y;
+                global_state_(2) = normalizeAngle(global_state_(2));
+                
+                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                GlobalCov I_KH = GlobalCov::Identity() - K * H;
+                global_cov_ = I_KH * global_cov_ * I_KH.transpose() + K * R * K.transpose();
+            } else {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Global EKF update skipped: S matrix not positive definite");
+            }
             
             // Clear the latest pose after using it
             latest_global_pose_.reset();
