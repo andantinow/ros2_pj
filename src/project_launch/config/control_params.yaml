@@ -32,7 +32,10 @@ simple_controller:
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
     # Collision avoidance and reverse parameters (후진 기능)
-    collision_threshold: 0.4   # Front collision detection distance (meters) - 전방 충돌 감지 거리
-    side_collision_threshold: 0.3  # Side collision detection distance (meters) - 측면 충돌 감지 거리
-    reverse_speed: 0.3         # Gentle reverse speed (m/s) - 부드러운 후진 속도
-    reverse_duration: 0.8      # How long to reverse (seconds) - 후진 지속 시간
+    collision_threshold: 0.6   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.4 -> 0.6)
+    side_collision_threshold: 0.5  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.3 -> 0.5)
+    reverse_speed: 0.5         # Gentle reverse speed (m/s) - 부드러운 후진 속도 (0.3 -> 0.5)
+    reverse_duration: 1.2      # How long to reverse (seconds) - 후진 지속 시간 (0.8 -> 1.2)
+    # 측면 센서 기반 벽 회피 (Side sensor wall avoidance)
+    side_avoidance_gain: 0.6   # 측면 회피 강도 (0.0~1.0) - 클수록 적극적으로 벽 회피
+    enable_side_avoidance: true  # 측면 회피 활성화
