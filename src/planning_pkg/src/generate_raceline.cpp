@@ -26,6 +26,7 @@ int main(int argc,char** argv){
   std::string in_csv="tracks/centerline.csv";
   std::string out_csv="data/raceline.csv";
   double ds=0.5, mu=1.0, v_max=20.0, ax_max=4.0, ax_min=-6.0;
+  double wall_offset=0.0;  // Offset from centerline toward track center (positive = outward/left)
 
   for(int i=1;i<argc;++i){
     std::string a=argv[i];
@@ -38,6 +39,7 @@ int main(int argc,char** argv){
     else if(a=="--v_max") nextd(v_max);
     else if(a=="--ax_max") nextd(ax_max);
     else if(a=="--ax_min") nextd(ax_min);
+    else if(a=="--wall_offset") nextd(wall_offset);
   }
 
   std::ifstream in(in_csv);
@@ -90,6 +92,27 @@ int main(int argc,char** argv){
   std::vector<double> px(pts.size()), py(pts.size());
   for(size_t i=0;i<pts.size();++i){ px[i]=pts[i].x; py[i]=pts[i].y; }
   auto d1x=gradient(px,ds); auto d1y=gradient(py,ds);
+  
+  // Apply wall offset: push path outward (perpendicular to path direction)
+  // Normal vector: (-d1y, d1x) normalized, points to the left of path direction
+  // Positive wall_offset moves the path outward (away from inner wall toward track center)
+  if(std::abs(wall_offset) > 1e-6){
+    for(size_t i=0;i<pts.size();++i){
+      double norm = std::sqrt(d1x[i]*d1x[i] + d1y[i]*d1y[i]);
+      if(norm > 1e-12){
+        // Normal vector pointing left (outward for counterclockwise track)
+        double nx = -d1y[i] / norm;
+        double ny = d1x[i] / norm;
+        pts[i].x += wall_offset * nx;
+        pts[i].y += wall_offset * ny;
+        px[i] = pts[i].x;
+        py[i] = pts[i].y;
+      }
+    }
+    // Recalculate gradients after offset
+    d1x=gradient(px,ds); d1y=gradient(py,ds);
+  }
+  
   auto d2x=gradient(d1x,ds); auto d2y=gradient(d1y,ds);
 
   std::vector<double> psi(px.size());
@@ -183,7 +206,7 @@ int main(int argc,char** argv){
   double kmax=0.0;
   for(auto &kk:kappa) kmax=std::max(kmax,std::abs(kk));
 
-  fprintf(stdout,"Wrote %s (N=%zu, L≈%.1f m, v_ref_max=%.2f, |kappa|_max=%.3f)\n",
-          out_csv.c_str(), pts.size(), L, vmax, kmax);
+  fprintf(stdout,"Wrote %s (N=%zu, L≈%.1f m, v_ref_max=%.2f, |kappa|_max=%.3f, wall_offset=%.2f m)\n",
+          out_csv.c_str(), pts.size(), L, vmax, kmax, wall_offset);
   return 0;
 }
