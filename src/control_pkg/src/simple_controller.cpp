@@ -162,20 +162,26 @@ bool SimpleController::check_collision_imminent()
     return false;
   }
   
+  // Scan sector angle constants
+  constexpr double FRONT_SECTOR_HALF_ANGLE = M_PI / 4.0;   // 45 degrees = 0.785 radians
+  constexpr double SIDE_SECTOR_INNER_ANGLE = M_PI / 4.0;   // 45 degrees
+  constexpr double SIDE_SECTOR_OUTER_ANGLE = M_PI / 2.0;   // 90 degrees
+  constexpr double MIN_VALID_RANGE = 0.05;                  // Minimum valid sensor reading
+  
   // Check front area (-45 to +45 degrees) for imminent collision
   double angle_min = current_scan_.angle_min;
   double angle_inc = current_scan_.angle_increment;
   int num_ranges = current_scan_.ranges.size();
   
-  // Define front sector: -45 to +45 degrees (approximately -0.785 to 0.785 radians)
-  double front_angle_min = -0.785;
-  double front_angle_max = 0.785;
+  // Define front sector: -45 to +45 degrees
+  double front_angle_min = -FRONT_SECTOR_HALF_ANGLE;
+  double front_angle_max = FRONT_SECTOR_HALF_ANGLE;
   
   // Define side sectors for side collision detection
-  // Left side: 45 to 90 degrees (0.785 to 1.57 radians)
-  // Right side: -90 to -45 degrees (-1.57 to -0.785 radians)
-  double side_angle_inner = 0.785;
-  double side_angle_outer = 1.57;
+  // Left side: 45 to 90 degrees
+  // Right side: -90 to -45 degrees
+  double side_angle_inner = SIDE_SECTOR_INNER_ANGLE;
+  double side_angle_outer = SIDE_SECTOR_OUTER_ANGLE;
   
   double min_front_distance = std::numeric_limits<double>::max();
   double min_left_distance = std::numeric_limits<double>::max();
@@ -186,7 +192,7 @@ bool SimpleController::check_collision_imminent()
     double range = current_scan_.ranges[i];
     
     // Skip invalid readings
-    if (std::isnan(range) || std::isinf(range) || range < 0.05) {
+    if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
       continue;
     }
     
