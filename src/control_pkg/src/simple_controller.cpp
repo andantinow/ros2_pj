@@ -72,10 +72,11 @@ SimpleController::SimpleController() : Node("simple_controller")
   
   prev_time_ = this->get_clock()->now();
 
-  // Path Subscription (Reliable mode with queue depth 10)
+  // Path Subscription - Use transient_local QoS to receive latched path from raceline_server
+  rclcpp::QoS path_qos(rclcpp::QoS(10).transient_local().reliable());
   path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
       path_topic_,
-      10,
+      path_qos,
       std::bind(&SimpleController::path_callback, this, std::placeholders::_1));
 
   // Odom Subscription (Best Effort mode for simulator compatibility)
