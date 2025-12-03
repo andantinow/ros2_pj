@@ -105,7 +105,7 @@ def generate_launch_description():
     nmpc_node = Node(
         package='control_pkg',
         executable='simple_controller_node',
-        name='nmpc_engine_node',
+        name='simple_controller',
         output='screen',
         parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')]
     )
