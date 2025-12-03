@@ -12,6 +12,13 @@ def generate_launch_description():
         'amcl_config.yaml'
     )
     
-    return LaunchDescription(
-        )
+    return LaunchDescription([
+        # AMCL node can be added here if needed
+        # Node(
+        #     package='nav2_amcl',
+        #     executable='amcl',
+        #     name='amcl',
+        #     output='screen',
+        #     parameters=[config]
+        # )
     ])

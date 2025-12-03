@@ -1,0 +1,65 @@
+# Dual EKF Configuration
+# This configuration file contains parameters for the dual EKF localization node
+# The dual EKF architecture uses:
+# 1. Local EKF: Fuses wheel odometry + IMU for velocity estimation
+# 2. Global EKF: Fuses local estimate + global pose for map-frame localization
+
+dual_ekf_node:
+  ros__parameters:
+    # Input topics
+    odom_topic: "/odom"
+    imu_topic: "/sensors/imu/raw"
+    global_pose_topic: "/amcl_pose"
+    
+    # Output topics
+    local_odom_output: "/dual_ekf/local_odom"
+    global_odom_output: "/dual_ekf/global_odom"
+    global_pose_output: "/dual_ekf/pose"
+    
+    # Frame IDs
+    map_frame: "map"
+    odom_frame: "odom"
+    base_link_frame: "base_link"
+    
+    # Update rate (Hz)
+    update_rate: 50.0
+    
+    # Measurement noise variances
+    # Lower values = trust measurements more
+    # Higher values = trust model prediction more
+    odom_vel_variance: 0.01          # Wheel odometry velocity variance (m/s)^2
+    imu_yaw_rate_variance: 0.001     # IMU yaw rate variance (rad/s)^2
+    imu_accel_variance: 0.1          # IMU acceleration variance (m/s^2)^2
+    global_pose_variance: 0.1        # Global pose (AMCL) position variance (m)^2
+    global_yaw_variance: 0.05        # Global pose yaw variance (rad)^2
+    
+    # Process noise (model uncertainty)
+    # Higher values = model evolves faster, responds quicker to measurements
+    local_process_noise_vel: 0.1     # Velocity process noise
+    local_process_noise_accel: 0.5   # Acceleration process noise
+    global_process_noise_pos: 0.01   # Position process noise
+    global_process_noise_vel: 0.1    # Velocity process noise in global EKF
+    
+    # TF broadcasting
+    publish_tf: true
+
+# Scan Processor Configuration
+scan_processor_node:
+  ros__parameters:
+    # Input/Output topics
+    scan_topic: "/scan"
+    processed_scan_topic: "/scan/processed"
+    obstacle_topic: "/scan/obstacles"
+    
+    # Range filtering
+    min_range: 0.1           # Minimum valid range (meters)
+    max_range: 10.0          # Maximum valid range (meters)
+    
+    # Obstacle detection
+    obstacle_threshold: 0.5  # Distance threshold for obstacle detection (meters)
+    min_cluster_size: 3      # Minimum points to form an obstacle cluster
+    cluster_tolerance: 0.1   # Maximum distance between points in a cluster (meters)
+    
+    # Feature extraction
+    publish_covariance: true
+    scan_covariance: 0.05    # Base covariance for scan-based pose estimates
