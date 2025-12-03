@@ -60,11 +60,11 @@ private:
   bool use_path_interpolation_ = true;
   
   // Collision avoidance and reverse parameters
-  // 레이스 라인 폭: 2.0m 이상 유지
-  double collision_threshold_ = 1.0;      // Distance to trigger reverse (meters) - front collision
+  // 센서 범위 축소 - 더 가까운 거리에서만 반응
+  double collision_threshold_ = 0.5;      // Distance to trigger reverse (meters) - front collision
   double reverse_speed_ = 0.5;            // Gentle reverse speed (m/s)
-  double reverse_duration_ = 1.2;         // How long to reverse (seconds)
-  double side_collision_threshold_ = 2.0; // Side obstacle threshold (meters) - 2m wide margin
+  double reverse_duration_ = 1.0;         // How long to reverse (seconds)
+  double side_collision_threshold_ = 0.4; // Side obstacle threshold (meters) - reduced range
   bool is_reversing_ = false;             // Current reverse state
   rclcpp::Time reverse_start_time_;       // When reverse started
   double last_steering_before_reverse_ = 0.0;  // Steering angle before reversing
@@ -76,7 +76,7 @@ private:
   double last_obstacle_angle_ = 0.0;        // 가장 가까운 전방 장애물 각도
   
   // 측면 센서 기반 회피 조향 (벽 회피용)
-  double side_avoidance_gain_ = 0.6;        // 측면 회피 강도 (2m 범위에 맞게 부드럽게 조정)
+  double side_avoidance_gain_ = 0.5;        // 측면 회피 강도 (축소된 범위에 맞게 조정)
   bool enable_side_avoidance_ = true;       // 측면 회피 활성화
   
   std::string odom_topic_{"/odom"};

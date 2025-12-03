@@ -913,13 +913,13 @@ double SimpleController::compute_side_avoidance_steering()
   double angle_inc = current_scan_.angle_increment;
   int num_ranges = current_scan_.ranges.size();
   
-  // 측면 센서 범위 정의 - 2m 반경으로 확장된 감지 범위
-  // 왼쪽: 30° ~ 150° (M_PI/6 ~ 5*M_PI/6) - 훨씬 더 넓은 감지 범위
-  // 오른쪽: -150° ~ -30° (-5*M_PI/6 ~ -M_PI/6) - 훨씬 더 넓은 감지 범위
-  constexpr double SIDE_INNER = M_PI / 6.0;        // 30도 (기존 45도에서 확장)
-  constexpr double SIDE_OUTER = 5.0 * M_PI / 6.0;  // 150도 (기존 135도에서 확장)
+  // 측면 센서 범위 정의 - 축소된 감지 범위 (가까운 거리에서만 반응)
+  // 왼쪽: 60° ~ 120° (M_PI/3 ~ 2*M_PI/3) - 좁은 감지 범위
+  // 오른쪽: -120° ~ -60° (-2*M_PI/3 ~ -M_PI/3) - 좁은 감지 범위
+  constexpr double SIDE_INNER = M_PI / 3.0;        // 60도 (축소)
+  constexpr double SIDE_OUTER = 2.0 * M_PI / 3.0;  // 120도 (축소)
   constexpr double MIN_VALID_RANGE = 0.05;         // 최소 유효 거리
-  constexpr double MAX_DETECTION_RANGE = 6.0;      // 최대 감지 거리 (2m 반경 + 여유)
+  constexpr double MAX_DETECTION_RANGE = 2.0;      // 최대 감지 거리 (축소: 6m -> 2m)
   constexpr double CLOSE_OBSTACLE_MULTIPLIER = 1.5;  // Multiplier for close obstacle detection threshold
   
   double min_left_side = std::numeric_limits<double>::max();
