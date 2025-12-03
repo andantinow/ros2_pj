@@ -10,23 +10,23 @@ simple_controller:
     min_lookahead: 0.6         # Increased from 0.5 for better corner handling
     max_lookahead: 2.0         # Increased from 1.5 for more look-ahead in corners
     lookahead_speed_gain: 0.4  # Increased from 0.3 for more responsive lookahead
-    lookahead_error_gain: 1.5  # Increased from 1.2 for more sensitive lateral error correction
+    lookahead_error_gain: 1.5  # Increased from 1.0 for more sensitive lateral error correction
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 0.8          # Reduced from 1.0 for even slower, safer driving
+    target_speed: 0.8          # Reduced from 1.5 for slower, safer driving
     max_steer_angle: 0.55
-    max_steer_rate: 4.0        # Increased from 3.5 for faster steering response to side obstacles
-    lateral_error_gain: 1.5    # Increased from 1.0 for more sensitive lateral (side) correction
-    heading_error_gain: 0.8    # Increased from 0.6 for better heading correction
-    curvature_feedforward_gain: 1.2  # Increased from 1.0 for better corner anticipation
-    smoothing_factor: 0.6      # Increased from 0.5 for quicker lateral response
-    direct_correction_gain: 0.8  # Increased from 0.6 for more direct lateral correction
-    direct_correction_limit: 0.8  # Increased from 0.6 for wider lateral correction range
-    pid_kp: 0.8                # Increased from 0.6 for more responsive lateral control
+    max_steer_rate: 4.0        # Increased from 3.0 for faster steering response to side obstacles
+    lateral_error_gain: 1.5    # Increased from 0.8 for more sensitive lateral (side) correction
+    heading_error_gain: 0.8    # Increased from 0.5 for better heading correction
+    curvature_feedforward_gain: 1.2  # Increased from 0.8 for better corner anticipation
+    smoothing_factor: 0.6      # Increased from 0.4 for quicker lateral response
+    direct_correction_gain: 0.8  # Increased from 0.5 for more direct lateral correction
+    direct_correction_limit: 0.8  # Increased from 0.5 for wider lateral correction range
+    pid_kp: 0.8                # Increased from 0.5 for more responsive lateral control
     pid_ki: 0.03               # Increased from 0.02 for better steady-state lateral error correction
-    pid_kd: 0.2                # Increased from 0.15 for faster lateral damping
+    pid_kd: 0.2                # Increased from 0.1 for faster lateral damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
