@@ -642,10 +642,12 @@ def main(args=None):
         executor.spin()
     except KeyboardInterrupt:
         gym_bridge.get_logger().info('Exiting gym_bridge')
-    
-
-    gym_bridge.destroy_node()
-    rclpy.shutdown()
+    finally:
+        gym_bridge.destroy_node()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass  # Shutdown already called, ignore
 
 
 if __name__ == '__main__':
