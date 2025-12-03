@@ -59,10 +59,10 @@ scan_processor_node:
     min_range: 0.1           # Minimum valid range (meters)
     max_range: 10.0          # Maximum valid range (meters)
     
-    # Obstacle detection
-    obstacle_threshold: 0.5  # Distance threshold for obstacle detection (meters)
-    min_cluster_size: 3      # Minimum points to form an obstacle cluster
-    cluster_tolerance: 0.1   # Maximum distance between points in a cluster (meters)
+    # Obstacle detection - configured for better side obstacle detection
+    obstacle_threshold: 1.5  # Distance threshold for side obstacle detection (meters) - increased for earlier side detection
+    min_cluster_size: 1      # Minimum points to form an obstacle cluster - reduced to 1 for maximum sensitivity
+    cluster_tolerance: 0.2   # Maximum distance between points in a cluster (meters) - increased for better side clustering
     
     # Feature extraction
     publish_covariance: true

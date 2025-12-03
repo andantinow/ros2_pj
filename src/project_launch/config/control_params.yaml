@@ -5,28 +5,34 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 6.0
-    lookahead_distance: 0.8
-    min_lookahead: 0.5
-    max_lookahead: 1.5
-    lookahead_speed_gain: 0.3
-    lookahead_error_gain: 1.0
+    speed_limit: 4.0           # Reduced from 6.0 for safer driving
+    lookahead_distance: 1.0    # Increased from 0.8 for earlier corner detection
+    min_lookahead: 0.6         # Increased from 0.5 for better corner handling
+    max_lookahead: 2.0         # Increased from 1.5 for more look-ahead in corners
+    lookahead_speed_gain: 0.4  # Increased from 0.3 for more responsive lookahead
+    lookahead_error_gain: 1.5  # Increased from 1.0 for more sensitive lateral error correction
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
-    target_speed: 1.5
+    scan_topic: '/scan'        # LiDAR scan topic for collision detection
+    target_speed: 0.8          # Reduced from 1.5 for slower, safer driving
     max_steer_angle: 0.55
-    max_steer_rate: 3.0
-    lateral_error_gain: 0.8
-    heading_error_gain: 0.5
-    curvature_feedforward_gain: 0.8
-    smoothing_factor: 0.4
-    direct_correction_gain: 0.5
-    direct_correction_limit: 0.5
-    pid_kp: 0.5
-    pid_ki: 0.02
-    pid_kd: 0.1
+    max_steer_rate: 4.0        # Increased from 3.0 for faster steering response to side obstacles
+    lateral_error_gain: 1.5    # Increased from 0.8 for more sensitive lateral (side) correction
+    heading_error_gain: 0.8    # Increased from 0.5 for better heading correction
+    curvature_feedforward_gain: 1.2  # Increased from 0.8 for better corner anticipation
+    smoothing_factor: 0.6      # Increased from 0.4 for quicker lateral response
+    direct_correction_gain: 0.8  # Increased from 0.5 for more direct lateral correction
+    direct_correction_limit: 0.8  # Increased from 0.5 for wider lateral correction range
+    pid_kp: 0.8                # Increased from 0.5 for more responsive lateral control
+    pid_ki: 0.03               # Increased from 0.02 for better steady-state lateral error correction
+    pid_kd: 0.2                # Increased from 0.1 for faster lateral damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
+    # Collision avoidance and reverse parameters (후진 기능)
+    collision_threshold: 0.4   # Front collision detection distance (meters) - 전방 충돌 감지 거리
+    side_collision_threshold: 0.3  # Side collision detection distance (meters) - 측면 충돌 감지 거리
+    reverse_speed: 0.3         # Gentle reverse speed (m/s) - 부드러운 후진 속도
+    reverse_duration: 0.8      # How long to reverse (seconds) - 후진 지속 시간

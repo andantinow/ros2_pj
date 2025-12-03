@@ -6,6 +6,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include <tf2/utils.h>
 #include <vector>
 #include <string>
@@ -18,13 +19,16 @@ public:
 private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   nav_msgs::msg::Odometry current_odom_;
   nav_msgs::msg::Path current_path_;
+  sensor_msgs::msg::LaserScan current_scan_;
   bool odom_received_ = false;
   bool path_received_ = false;
+  bool scan_received_ = false;
 
   double lookahead_distance_ = 0.0;
   double min_lookahead_ = 0.8;
@@ -55,15 +59,26 @@ private:
   // Path interpolation
   bool use_path_interpolation_ = true;
   
+  // Collision avoidance and reverse parameters
+  double collision_threshold_ = 0.4;      // Distance to trigger reverse (meters)
+  double reverse_speed_ = 0.3;            // Gentle reverse speed (m/s)
+  double reverse_duration_ = 1.0;         // How long to reverse (seconds)
+  double side_collision_threshold_ = 0.3; // Side obstacle threshold (meters)
+  bool is_reversing_ = false;             // Current reverse state
+  rclcpp::Time reverse_start_time_;       // When reverse started
+  double last_steering_before_reverse_ = 0.0;  // Steering angle before reversing
+  
   std::string odom_topic_{"/odom"};
   std::string path_topic_{"/global_raceline"};
   std::string drive_topic_{"/drive"};
+  std::string scan_topic_{"/scan"};
   
   double prev_steering_angle_ = 0.0;
   rclcpp::Time prev_time_;
 
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
+  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void control_loop();
   int find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead);
   double compute_adaptive_lookahead(double speed);
@@ -75,5 +90,7 @@ private:
   double limit_steering_rate(double desired_steering, double dt);
   double smooth_steering(double new_steering, double prev_steering);
   int find_closest_point_along_path(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int start_idx);
+  bool check_collision_imminent();
+  double compute_reverse_steering();
 };
 #endif
