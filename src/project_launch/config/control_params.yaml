@@ -17,7 +17,7 @@ simple_controller:
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
-    target_speed: 0.6          # Reduced for slower, safer driving
+    target_speed: 1.5          # Increased for faster driving (0.6 -> 1.5)
     max_steer_angle: 0.55
     max_steer_rate: 5.0        # Increased for faster steering response to side obstacles
     lateral_error_gain: 2.0    # Increased for more sensitive lateral (side) correction
@@ -32,11 +32,11 @@ simple_controller:
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
     # Collision avoidance and reverse parameters (후진 기능)
-    # 레이스 라인 폭을 0.8m 이상으로 확장 - 벽에서 충분한 거리 유지
-    collision_threshold: 0.8   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.6 -> 0.8)
-    side_collision_threshold: 0.7  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.5 -> 0.7) - 더 넓은 마진
-    reverse_speed: 0.4         # Gentle reverse speed (m/s) - 부드러운 후진 속도
-    reverse_duration: 1.5      # How long to reverse (seconds) - 후진 지속 시간 (1.2 -> 1.5)
+    # 센서 범위 축소 - 더 가까운 거리에서만 반응
+    collision_threshold: 0.5   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.8 -> 0.5, 축소)
+    side_collision_threshold: 0.4  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.7 -> 0.4, 축소)
+    reverse_speed: 0.5         # Gentle reverse speed (m/s) - 부드러운 후진 속도
+    reverse_duration: 1.0      # How long to reverse (seconds) - 후진 지속 시간 (더 빠른 복귀)
     # 측면 센서 기반 벽 회피 (Side sensor wall avoidance)
-    side_avoidance_gain: 0.8   # 측면 회피 강도 (0.0~1.0) - 클수록 적극적으로 벽 회피 (0.6 -> 0.8)
+    side_avoidance_gain: 0.5   # 측면 회피 강도 (0.0~1.0) - 축소된 범위에 맞게 조정
     enable_side_avoidance: true  # 측면 회피 활성화

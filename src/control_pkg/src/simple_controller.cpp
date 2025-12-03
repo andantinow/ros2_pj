@@ -913,13 +913,14 @@ double SimpleController::compute_side_avoidance_steering()
   double angle_inc = current_scan_.angle_increment;
   int num_ranges = current_scan_.ranges.size();
   
-  // 측면 센서 범위 정의 - 확장된 감지 범위
-  // 왼쪽: 45° ~ 135° (M_PI/4 ~ 3*M_PI/4) - 더 넓은 감지 범위
-  // 오른쪽: -135° ~ -45° (-3*M_PI/4 ~ -M_PI/4) - 더 넓은 감지 범위
-  constexpr double SIDE_INNER = M_PI / 4.0;        // 45도 (기존 60도에서 확장)
-  constexpr double SIDE_OUTER = 3.0 * M_PI / 4.0;  // 135도 (기존 120도에서 확장)
-  constexpr double MIN_VALID_RANGE = 0.03;         // 최소 유효 거리 (더 민감하게)
-  constexpr double MAX_DETECTION_RANGE = 4.0;      // 최대 감지 거리 (더 멀리)
+  // 측면 센서 범위 정의 - 축소된 감지 범위 (가까운 거리에서만 반응)
+  // 왼쪽: 60° ~ 120° (M_PI/3 ~ 2*M_PI/3) - 좁은 감지 범위
+  // 오른쪽: -120° ~ -60° (-2*M_PI/3 ~ -M_PI/3) - 좁은 감지 범위
+  constexpr double SIDE_INNER = M_PI / 3.0;        // 60도 (축소)
+  constexpr double SIDE_OUTER = 2.0 * M_PI / 3.0;  // 120도 (축소)
+  constexpr double MIN_VALID_RANGE = 0.05;         // 최소 유효 거리
+  constexpr double MAX_DETECTION_RANGE = 2.0;      // 최대 감지 거리 (축소: 6m -> 2m)
+  constexpr double CLOSE_OBSTACLE_MULTIPLIER = 1.5;  // Multiplier for close obstacle detection threshold
   
   double min_left_side = std::numeric_limits<double>::max();
   double min_right_side = std::numeric_limits<double>::max();
@@ -942,32 +943,32 @@ double SimpleController::compute_side_avoidance_steering()
       continue;
     }
     
-    // 왼쪽 측면 (45° ~ 135°)
+    // 왼쪽 측면 (30° ~ 150°)
     if (angle >= SIDE_INNER && angle <= SIDE_OUTER) {
       if (range < min_left_side) {
         min_left_side = range;
       }
-      // 가까울수록 더 큰 가중치 (2승 -> 3승으로 더 민감하게)
-      double weight = 1.0 / (range * range * range);
+      // 가까울수록 더 큰 가중치 (2m 범위에 맞게 2승 사용 - 더 부드럽게)
+      double weight = 1.0 / (range * range);
       left_weighted_sum += range * weight;
       left_weight_total += weight;
       
-      // 가까운 장애물 카운트
-      if (range < side_collision_threshold_ * 2.0) {
+      // 가까운 장애물 카운트 (2m 범위에 맞게 조정)
+      if (range < side_collision_threshold_ * CLOSE_OBSTACLE_MULTIPLIER) {
         left_close_count++;
       }
     }
     
-    // 오른쪽 측면 (-135° ~ -45°)
+    // 오른쪽 측면 (-150° ~ -30°)
     if (angle >= -SIDE_OUTER && angle <= -SIDE_INNER) {
       if (range < min_right_side) {
         min_right_side = range;
       }
-      double weight = 1.0 / (range * range * range);
+      double weight = 1.0 / (range * range);
       right_weighted_sum += range * weight;
       right_weight_total += weight;
       
-      if (range < side_collision_threshold_ * 2.0) {
+      if (range < side_collision_threshold_ * CLOSE_OBSTACLE_MULTIPLIER) {
         right_close_count++;
       }
     }
@@ -977,12 +978,12 @@ double SimpleController::compute_side_avoidance_steering()
   double avg_left = (left_weight_total > 0) ? (left_weighted_sum / left_weight_total) : 10.0;
   double avg_right = (right_weight_total > 0) ? (right_weighted_sum / right_weight_total) : 10.0;
   
-  // Side avoidance constants
-  constexpr double AVOIDANCE_THRESHOLD_MULTIPLIER = 3.0;  // Multiplier for avoidance threshold
-  constexpr double MAX_COUNT_FACTOR = 1.5;                // Maximum urgency factor from obstacle count
+  // Side avoidance constants (2m 범위에 맞게 조정)
+  constexpr double AVOIDANCE_THRESHOLD_MULTIPLIER = 2.5;  // Multiplier for avoidance threshold (3.0 -> 2.5, 더 일찍 회피)
+  constexpr double MAX_COUNT_FACTOR = 1.3;                // Maximum urgency factor from obstacle count (1.5 -> 1.3, 더 부드럽게)
   constexpr double BASE_COUNT_FACTOR = 1.0;               // Base urgency factor
-  constexpr double COUNT_FACTOR_INCREMENT = 0.1;          // Increment per obstacle
-  constexpr double MAX_AVOIDANCE_RATIO = 0.6;             // Maximum avoidance steering ratio
+  constexpr double COUNT_FACTOR_INCREMENT = 0.05;         // Increment per obstacle (0.1 -> 0.05, 더 점진적)
+  constexpr double MAX_AVOIDANCE_RATIO = 0.5;             // Maximum avoidance steering ratio (0.6 -> 0.5, 더 부드럽게)
   
   // 회피 임계값 (이 거리 이하면 회피 시작) - 더 일찍 회피 시작
   double avoidance_threshold = side_collision_threshold_ * AVOIDANCE_THRESHOLD_MULTIPLIER;
