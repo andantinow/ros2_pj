@@ -30,4 +30,3 @@ simple_controller:
     pid_kd: 0.15               # Increased from 0.1 for better damping
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
-    max_speed: 3.5             # Added explicit max speed limit for safety
