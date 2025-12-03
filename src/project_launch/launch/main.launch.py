@@ -17,6 +17,7 @@ def generate_launch_description():
     stack_master_pkg = get_package_share_directory('stack_master')
     f1tenth_gym_pkg = get_package_share_directory('f1tenth_gym_ros')
     opponent_pkg = get_package_share_directory('opponent_publisher_cpp')
+    localization_pkg = get_package_share_directory('localization_pkg')
 
     # launch arguments
     declare_map_name = DeclareLaunchArgument(
@@ -110,6 +111,24 @@ def generate_launch_description():
         parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')]
     )
 
+    # Scan Processor Node - LiDAR scan processing for localization
+    scan_processor_node = Node(
+        package='localization_pkg',
+        executable='scan_processor_node',
+        name='scan_processor_node',
+        output='screen',
+        parameters=[os.path.join(localization_pkg, 'config', 'dual_ekf_config.yaml')]
+    )
+
+    # Dual EKF Node - Two-stage EKF for robust state estimation
+    dual_ekf_node = Node(
+        package='localization_pkg',
+        executable='dual_ekf_node',
+        name='dual_ekf_node',
+        output='screen',
+        parameters=[os.path.join(localization_pkg, 'config', 'dual_ekf_config.yaml')]
+    )
+
     # Remove static transform - let odometry/gym_bridge publish the actual transform
     # static_map_broadcaster = Node(
     #     package='tf2_ros',
@@ -143,6 +162,8 @@ def generate_launch_description():
     ld.add_action(raceline_node)
     ld.add_action(estimator_node)
     ld.add_action(nmpc_node)
+    ld.add_action(scan_processor_node)
+    ld.add_action(dual_ekf_node)
 
     # Static TF broadcaster removed - use actual odometry transform
     # ld.add_action(static_map_broadcaster)
