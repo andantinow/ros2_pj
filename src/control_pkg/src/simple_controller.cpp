@@ -253,10 +253,15 @@ bool SimpleController::check_collision_imminent()
   last_obstacle_front_dist_ = min_front_distance;
   last_obstacle_angle_ = front_obstacle_angle;
   
+  // Collision detection thresholds for obstacle counts
+  constexpr int FRONT_OBSTACLE_COUNT_THRESHOLD = 3;     // Minimum front obstacles to trigger collision
+  constexpr int SIDE_OBSTACLE_COUNT_THRESHOLD = 5;      // Minimum side obstacles to trigger collision
+  constexpr double SIDE_COLLISION_FACTOR = 0.7;         // Factor for side collision threshold
+  
   // 충돌 판정 - 더 민감하게, 가까운 장애물 개수도 고려
-  bool front_collision = min_front_distance < collision_threshold_ || front_close_count >= 3;
-  bool front_left_collision = min_front_left_distance < (collision_threshold_ * 0.7) || left_close_count >= 5;  // 더 민감
-  bool front_right_collision = min_front_right_distance < (collision_threshold_ * 0.7) || right_close_count >= 5;
+  bool front_collision = min_front_distance < collision_threshold_ || front_close_count >= FRONT_OBSTACLE_COUNT_THRESHOLD;
+  bool front_left_collision = min_front_left_distance < (collision_threshold_ * SIDE_COLLISION_FACTOR) || left_close_count >= SIDE_OBSTACLE_COUNT_THRESHOLD;
+  bool front_right_collision = min_front_right_distance < (collision_threshold_ * SIDE_COLLISION_FACTOR) || right_close_count >= SIDE_OBSTACLE_COUNT_THRESHOLD;
   bool left_collision = min_left_distance < side_collision_threshold_;
   bool right_collision = min_right_distance < side_collision_threshold_;
   
@@ -972,8 +977,15 @@ double SimpleController::compute_side_avoidance_steering()
   double avg_left = (left_weight_total > 0) ? (left_weighted_sum / left_weight_total) : 10.0;
   double avg_right = (right_weight_total > 0) ? (right_weighted_sum / right_weight_total) : 10.0;
   
+  // Side avoidance constants
+  constexpr double AVOIDANCE_THRESHOLD_MULTIPLIER = 3.0;  // Multiplier for avoidance threshold
+  constexpr double MAX_COUNT_FACTOR = 1.5;                // Maximum urgency factor from obstacle count
+  constexpr double BASE_COUNT_FACTOR = 1.0;               // Base urgency factor
+  constexpr double COUNT_FACTOR_INCREMENT = 0.1;          // Increment per obstacle
+  constexpr double MAX_AVOIDANCE_RATIO = 0.6;             // Maximum avoidance steering ratio
+  
   // 회피 임계값 (이 거리 이하면 회피 시작) - 더 일찍 회피 시작
-  double avoidance_threshold = side_collision_threshold_ * 3.0;  // 측면 충돌 임계값의 3배 (기존 2.5배에서 증가)
+  double avoidance_threshold = side_collision_threshold_ * AVOIDANCE_THRESHOLD_MULTIPLIER;
   
   double avoidance_steer = 0.0;
   
@@ -981,19 +993,19 @@ double SimpleController::compute_side_avoidance_steering()
   if (min_left_side < avoidance_threshold) {
     double urgency = 1.0 - (min_left_side / avoidance_threshold);  // 0~1, 가까울수록 1
     // 장애물 개수에 따라 긴급도 증가
-    double count_factor = std::min(1.5, 1.0 + left_close_count * 0.1);
+    double count_factor = std::min(MAX_COUNT_FACTOR, BASE_COUNT_FACTOR + left_close_count * COUNT_FACTOR_INCREMENT);
     avoidance_steer -= side_avoidance_gain_ * urgency * count_factor * max_steer_angle_;
   }
   
   // 오른쪽이 가까우면 왼쪽으로 (양수 조향)
   if (min_right_side < avoidance_threshold) {
     double urgency = 1.0 - (min_right_side / avoidance_threshold);
-    double count_factor = std::min(1.5, 1.0 + right_close_count * 0.1);
+    double count_factor = std::min(MAX_COUNT_FACTOR, BASE_COUNT_FACTOR + right_close_count * COUNT_FACTOR_INCREMENT);
     avoidance_steer += side_avoidance_gain_ * urgency * count_factor * max_steer_angle_;
   }
   
   // 최대 회피 각도 제한 - 더 큰 회피 각도 허용
-  double max_avoidance = max_steer_angle_ * 0.6;  // 기존 0.4에서 0.6으로 증가
+  double max_avoidance = max_steer_angle_ * MAX_AVOIDANCE_RATIO;
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
   // 디버그 로그 - 더 자주 출력
