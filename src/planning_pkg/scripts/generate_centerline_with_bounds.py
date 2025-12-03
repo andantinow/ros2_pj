@@ -43,6 +43,12 @@ def main() -> None:
         type=Path,
         help="Destination CSV path (x,y,d_left,d_right,psi columns)",
     )
+    parser.add_argument(
+        "--default-width",
+        type=float,
+        default=0.5,
+        help="Default track half-width if d_left/d_right not in data (default: 0.5m)",
+    )
     args = parser.parse_args()
 
     # Load waypoints
@@ -70,8 +76,8 @@ def main() -> None:
         for wp in waypoints:
             x = wp.get("x_m")
             y = wp.get("y_m")
-            d_left = wp.get("d_left", 0.5)  # Default 0.5m if not specified
-            d_right = wp.get("d_right", 0.5)
+            d_left = wp.get("d_left", args.default_width)
+            d_right = wp.get("d_right", args.default_width)
             psi = wp.get("psi_rad", 0.0)
             
             if x is None or y is None:
