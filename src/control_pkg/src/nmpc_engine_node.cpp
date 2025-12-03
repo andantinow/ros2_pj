@@ -369,47 +369,86 @@ private:
 
 }  // namespace nmpc
 
+/**
+ * @brief NMPC Engine Node - ROS2 interface for the MPC controller
+ * 
+ * Subscribes to odometry and path, runs MPC optimization, publishes drive commands.
+ * Can use either Dual EKF output or ground truth odometry.
+ */
 class NMPCEngineNode : public rclcpp::Node
 {
 public:
   NMPCEngineNode()
   : Node("nmpc_engine_node")
   {
-    declare_parameter("prediction_horizon", 2.0);
-    declare_parameter("prediction_steps", 20);
+    // Declare parameters
+    declare_parameter("prediction_horizon", 1.0);
+    declare_parameter("prediction_steps", 10);
     declare_parameter("control_rate_hz", 50.0);
-    declare_parameter("nominal_speed", 2.5);
-    declare_parameter<std::string>("control_mode", "Pure Pursuit + PID");
+    declare_parameter("nominal_speed", 2.0);
     declare_parameter("solver_wheelbase", 0.33);
-    // Topic parameters (configurable)
-    declare_parameter<std::string>("odom_topic", "/car_state/odom_GT");
+    
+    // MPC weights
+    declare_parameter("w_pos", 10.0);
+    declare_parameter("w_yaw", 5.0);
+    declare_parameter("w_vel", 2.0);
+    declare_parameter("w_steer", 1.0);
+    declare_parameter("w_accel", 0.5);
+    
+    // Constraints
+    declare_parameter("max_steer", 0.5);
+    declare_parameter("max_speed", 5.0);
+    declare_parameter("max_accel", 3.0);
+    declare_parameter("min_accel", -5.0);
+    
+    // Topic parameters
+    declare_parameter<std::string>("odom_topic", "/dual_ekf/global_odom");  // Use Dual EKF output
     declare_parameter<std::string>("path_topic", "/global_raceline");
     declare_parameter<std::string>("drive_topic", "/drive");
+    declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
 
-    prediction_horizon_ = get_parameter("prediction_horizon").as_double();
-    prediction_steps_ = get_parameter("prediction_steps").as_int();
+    // Get parameters
+    double prediction_horizon = get_parameter("prediction_horizon").as_double();
+    int prediction_steps = get_parameter("prediction_steps").as_int();
     control_rate_hz_ = get_parameter("control_rate_hz").as_double();
     nominal_speed_ = get_parameter("nominal_speed").as_double();
-    control_mode_ = get_parameter("control_mode").as_string();
-    solver_wheelbase_ = get_parameter("solver_wheelbase").as_double();
     
     std::string odom_topic = get_parameter("odom_topic").as_string();
     std::string path_topic = get_parameter("path_topic").as_string();
     std::string drive_topic = get_parameter("drive_topic").as_string();
+    use_dual_ekf_ = get_parameter("use_dual_ekf").as_bool();
+    
+    // If not using Dual EKF, use ground truth
+    if (!use_dual_ekf_) {
+      odom_topic = "/car_state/odom_GT";
+    }
 
-    RCLCPP_INFO(this->get_logger(), "Initializing NMPC Engine...");
-    RCLCPP_INFO(this->get_logger(), "Current Control Mode: %s", control_mode_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
+    RCLCPP_INFO(get_logger(), "=== NMPC Engine Node Initialized ===");
+    RCLCPP_INFO(get_logger(), "Prediction horizon: %.2fs, steps: %d", prediction_horizon, prediction_steps);
+    RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
+    RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
 
-    AcadosConfig cfg{
-      .horizon_sec = prediction_horizon_,
-      .steps = static_cast<std::size_t>(std::max(1, prediction_steps_)),
-      .wheelbase = solver_wheelbase_};
-    solver_.initialize(cfg, this->get_logger());
+    // Configure MPC solver
+    nmpc::MPCConfig cfg;
+    cfg.horizon_sec = prediction_horizon;
+    cfg.prediction_steps = prediction_steps;
+    cfg.wheelbase = get_parameter("solver_wheelbase").as_double();
+    cfg.w_pos = get_parameter("w_pos").as_double();
+    cfg.w_yaw = get_parameter("w_yaw").as_double();
+    cfg.w_vel = get_parameter("w_vel").as_double();
+    cfg.w_steer = get_parameter("w_steer").as_double();
+    cfg.w_accel = get_parameter("w_accel").as_double();
+    cfg.max_steer = get_parameter("max_steer").as_double();
+    cfg.max_speed = get_parameter("max_speed").as_double();
+    cfg.max_accel = get_parameter("max_accel").as_double();
+    cfg.min_accel = get_parameter("min_accel").as_double();
+    
+    solver_.initialize(cfg, get_logger());
 
+    // Setup subscribers
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      odom_topic, rclcpp::QoS(20),
+      odom_topic, rclcpp::QoS(20).best_effort(),
       [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
         latest_odom_ = msg;
       });
@@ -418,102 +457,187 @@ public:
       path_topic, rclcpp::QoS(10).transient_local(),
       [this](const nav_msgs::msg::Path::SharedPtr msg) {
         latest_path_ = msg;
+        if (msg && !msg->poses.empty()) {
+          RCLCPP_INFO_ONCE(get_logger(), "Received path with %zu points", msg->poses.size());
+        }
       });
 
-    drive_pub_ =
-      create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, rclcpp::QoS(10));
+    // Setup publisher
+    drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
+      drive_topic, rclcpp::QoS(10));
 
+    // Setup control timer
     const double period_s = 1.0 / std::max(1.0, control_rate_hz_);
-    auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double>(period_s));
-    control_timer_ = create_wall_timer(period_ns, std::bind(&NMPCEngineNode::control_cycle, this));
+    control_timer_ = create_wall_timer(
+      std::chrono::duration<double>(period_s),
+      std::bind(&NMPCEngineNode::controlCycle, this));
+    
+    RCLCPP_INFO(get_logger(), "NMPC control loop running at %.1f Hz", control_rate_hz_);
   }
 
 private:
-  void control_cycle()
+  /**
+   * @brief Main control cycle - called at control_rate_hz
+   */
+  void controlCycle()
   {
     if (!latest_odom_) {
-      RCLCPP_DEBUG_THROTTLE(
-        get_logger(), *get_clock(), 2000, "Waiting for odometry...");
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000, 
+        "Waiting for odometry...");
       return;
     }
     if (!latest_path_ || latest_path_->poses.empty()) {
-      RCLCPP_DEBUG_THROTTLE(
-        get_logger(), *get_clock(), 2000, "Waiting for reference path...");
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000, 
+        "Waiting for reference path...");
       return;
     }
 
-    auto plan = build_reference_plan();
-    auto warm_start = build_warm_start(plan);
-    auto solution = solver_.solve(plan, warm_start, this->get_logger());
-    publish_solution(solution);
-  }
-
-  ReferencePlan build_reference_plan() const
-  {
-    ReferencePlan plan;
-    if (!latest_path_) {
-      return plan;
+    // Extract current state from odometry
+    nmpc::VehicleState current_state = extractState(latest_odom_);
+    
+    // Build reference trajectory
+    std::vector<nmpc::ReferencePoint> reference = buildReference(current_state);
+    
+    if (reference.empty()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+        "Empty reference trajectory");
+      return;
     }
-
-    const auto total_points = latest_path_->poses.size();
-    if (total_points == 0) {
-      return plan;
+    
+    // Solve MPC
+    auto solution = solver_.solve(current_state, reference, get_logger());
+    
+    // Publish result
+    publishDriveCommand(solution);
+    
+    // Debug logging
+    static int log_counter = 0;
+    if (++log_counter % 50 == 0) {  // Every ~1 second at 50Hz
+      RCLCPP_INFO(get_logger(), 
+        "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f]",
+        current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
+        solution.steering, solution.speed, solution.iterations, solution.cost);
     }
-
-    std::size_t steps = std::max<std::size_t>(1, static_cast<std::size_t>(prediction_steps_));
-    std::size_t stride = std::max<std::size_t>(1, total_points / steps);
-
-    for (std::size_t i = 0, idx = 0; i < steps && idx < total_points; ++i, idx += stride) {
-      plan.poses.push_back(latest_path_->poses[idx].pose);
-      plan.speeds.push_back(nominal_speed_);
+  }
+  
+  /**
+   * @brief Extract vehicle state from odometry message
+   */
+  nmpc::VehicleState extractState(const nav_msgs::msg::Odometry::SharedPtr& odom) const
+  {
+    nmpc::VehicleState state;
+    state.x = odom->pose.pose.position.x;
+    state.y = odom->pose.pose.position.y;
+    
+    // Extract yaw from quaternion
+    double qx = odom->pose.pose.orientation.x;
+    double qy = odom->pose.pose.orientation.y;
+    double qz = odom->pose.pose.orientation.z;
+    double qw = odom->pose.pose.orientation.w;
+    state.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+    
+    // Get velocity (use linear velocity magnitude)
+    state.v = std::sqrt(
+      odom->twist.twist.linear.x * odom->twist.twist.linear.x +
+      odom->twist.twist.linear.y * odom->twist.twist.linear.y);
+    
+    return state;
+  }
+  
+  /**
+   * @brief Build reference trajectory from path
+   */
+  std::vector<nmpc::ReferencePoint> buildReference(const nmpc::VehicleState& current_state) const
+  {
+    std::vector<nmpc::ReferencePoint> reference;
+    
+    if (!latest_path_ || latest_path_->poses.empty()) {
+      return reference;
     }
-
-    return plan;
+    
+    const auto& poses = latest_path_->poses;
+    const size_t num_poses = poses.size();
+    
+    // Find closest point on path
+    size_t closest_idx = 0;
+    double min_dist = std::numeric_limits<double>::max();
+    
+    for (size_t i = 0; i < num_poses; ++i) {
+      double dx = poses[i].pose.position.x - current_state.x;
+      double dy = poses[i].pose.position.y - current_state.y;
+      double dist = dx * dx + dy * dy;
+      if (dist < min_dist) {
+        min_dist = dist;
+        closest_idx = i;
+      }
+    }
+    
+    // Build reference from closest point forward
+    const int num_ref_points = 15;  // Number of reference points
+    const size_t stride = std::max<size_t>(1, num_poses / 50);  // Sampling stride
+    
+    for (int i = 0; i < num_ref_points; ++i) {
+      size_t idx = (closest_idx + i * stride) % num_poses;
+      
+      nmpc::ReferencePoint ref;
+      ref.x = poses[idx].pose.position.x;
+      ref.y = poses[idx].pose.position.y;
+      
+      // Extract yaw from pose orientation
+      double qx = poses[idx].pose.orientation.x;
+      double qy = poses[idx].pose.orientation.y;
+      double qz = poses[idx].pose.orientation.z;
+      double qw = poses[idx].pose.orientation.w;
+      ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+      
+      ref.v = nominal_speed_;
+      
+      reference.push_back(ref);
+    }
+    
+    return reference;
   }
-
-  WarmStartSeed build_warm_start(const ReferencePlan & plan) const
+  
+  /**
+   * @brief Publish drive command from MPC solution
+   */
+  void publishDriveCommand(const nmpc::MPCSolution& solution)
   {
-    WarmStartSeed seed;
-    const std::size_t n = plan.poses.size();
-    seed.steering_guess.assign(n, 0.0);
-    seed.speed_guess = plan.speeds;
-    return seed;
-  }
-
-  void publish_solution(const AcadosSolution & solution)
-  {
-    ackermann_msgs::msg::AckermannDriveStamped cmd_msg;
-    cmd_msg.header.stamp = this->now();
-    cmd_msg.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
-
+    ackermann_msgs::msg::AckermannDriveStamped cmd;
+    cmd.header.stamp = now();
+    cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
+    
     if (solution.feasible) {
-      cmd_msg.drive.speed = solution.speed;
-      cmd_msg.drive.steering_angle = solution.steering;
+      cmd.drive.steering_angle = solution.steering;
+      cmd.drive.speed = solution.speed;
     } else {
-      cmd_msg.drive.speed = 0.0;
-      cmd_msg.drive.steering_angle = 0.0;
+      // Stop if solution is not feasible
+      cmd.drive.steering_angle = 0.0;
+      cmd.drive.speed = 0.0;
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+        "MPC solution not feasible, stopping vehicle");
     }
-
-    drive_pub_->publish(cmd_msg);
+    
+    drive_pub_->publish(cmd);
   }
 
+  // ROS2 interfaces
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
+  // State
   nav_msgs::msg::Odometry::SharedPtr latest_odom_;
   nav_msgs::msg::Path::SharedPtr latest_path_;
 
-  double prediction_horizon_{2.0};
-  int prediction_steps_{20};
+  // Parameters
   double control_rate_hz_{50.0};
-  double nominal_speed_{2.5};
-  double solver_wheelbase_{0.33};
-  std::string control_mode_{"Pure Pursuit + PID"};
+  double nominal_speed_{2.0};
+  bool use_dual_ekf_{true};
 
-  AcadosSolverMock solver_;
+  // MPC Solver
+  nmpc::BicycleMPCSolver solver_;
 };
 
 int main(int argc, char ** argv)

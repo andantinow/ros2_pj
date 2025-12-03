@@ -43,12 +43,20 @@ def generate_launch_description():
         default_value='true',
         description='Whether to also start RViz inside the f1tenth_gym bridge launch.'
     )
+    
+    # Controller selection: 'nmpc' or 'simple'
+    declare_controller = DeclareLaunchArgument(
+        'controller',
+        default_value='simple',  # Default to simple controller for stability
+        description='Controller to use: nmpc or simple (Pure Pursuit + PID + Stanley)'
+    )
 
     # LaunchConfiguration shortcuts
     map_name_conf = LaunchConfiguration('map_name')
     raceline_file_conf = LaunchConfiguration('raceline_file')
     start_rviz_conf = LaunchConfiguration('start_rviz')
     bridge_start_rviz_conf = LaunchConfiguration('bridge_start_rviz')
+    controller_conf = LaunchConfiguration('controller')
 
     # Build map yaml path: <stack_master_pkg>/maps/<map_name>/<map_name>.yaml
     # PythonExpression concatenates the LaunchConfiguration value with '.yaml' at runtime.
@@ -103,14 +111,6 @@ def generate_launch_description():
         parameters=[os.path.join(project_launch_pkg, 'config', 'localization_params.yaml')]
     )
 
-    nmpc_node = Node(
-        package='control_pkg',
-        executable='simple_controller_node',
-        name='simple_controller',
-        output='screen',
-        parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')]
-    )
-
     # Scan Processor Node - LiDAR scan processing for localization
     scan_processor_node = Node(
         package='localization_pkg',
@@ -155,13 +155,59 @@ def generate_launch_description():
     ld.add_action(declare_raceline)
     ld.add_action(declare_start_rviz)
     ld.add_action(declare_bridge_start_rviz)
+    ld.add_action(declare_controller)
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)
     ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
     ld.add_action(estimator_node)
-    ld.add_action(nmpc_node)
+    
+    # Controller selection: use simple controller by default, NMPC when specified
+    # Both controllers are added with conditions
+    from launch.conditions import LaunchConfigurationEquals, LaunchConfigurationNotEquals
+    
+    # Simple controller (default)
+    simple_controller_node_cond = Node(
+        package='control_pkg',
+        executable='simple_controller_node',
+        name='simple_controller',
+        output='screen',
+        parameters=[os.path.join(project_launch_pkg, 'config', 'control_params.yaml')],
+        condition=LaunchConfigurationNotEquals('controller', 'nmpc')
+    )
+    ld.add_action(simple_controller_node_cond)
+    
+    # NMPC controller (when controller:=nmpc)
+    nmpc_controller_node_cond = Node(
+        package='control_pkg',
+        executable='nmpc_engine_node',
+        name='nmpc_controller',
+        output='screen',
+        parameters=[{
+            'prediction_horizon': 1.0,
+            'prediction_steps': 10,
+            'control_rate_hz': 50.0,
+            'nominal_speed': 2.0,
+            'solver_wheelbase': 0.33,
+            'use_dual_ekf': True,
+            'odom_topic': '/dual_ekf/global_odom',
+            'path_topic': '/global_raceline',
+            'drive_topic': '/drive',
+            'w_pos': 10.0,
+            'w_yaw': 5.0,
+            'w_vel': 2.0,
+            'w_steer': 1.0,
+            'w_accel': 0.5,
+            'max_steer': 0.5,
+            'max_speed': 5.0,
+            'max_accel': 3.0,
+            'min_accel': -5.0,
+        }],
+        condition=LaunchConfigurationEquals('controller', 'nmpc')
+    )
+    ld.add_action(nmpc_controller_node_cond)
+    
     ld.add_action(scan_processor_node)
     ld.add_action(dual_ekf_node)
 
