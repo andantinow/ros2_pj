@@ -31,12 +31,16 @@ simple_controller:
     pid_kd: 0.2                # Reduced for less aggressive damping (0.3 -> 0.2)
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
-    # Collision avoidance and reverse parameters (후진 기능)
-    # 센서 범위 더 축소 - 더 가까운 거리에서만 반응
-    collision_threshold: 0.4   # Front collision detection distance (meters) - 전방 충돌 감지 거리 (0.5 -> 0.4, 더 축소)
-    side_collision_threshold: 0.3  # Side collision detection distance (meters) - 측면 충돌 감지 거리 (0.4 -> 0.3, 더 축소)
-    reverse_speed: 0.5         # Gentle reverse speed (m/s) - 부드러운 후진 속도
-    reverse_duration: 1.0      # How long to reverse (seconds) - 후진 지속 시간 (더 빠른 복귀)
-    # 측면 센서 기반 벽 회피 (Side sensor wall avoidance)
-    side_avoidance_gain: 0.3   # 측면 회피 강도 감소 (0.5 -> 0.3) - 더 부드러운 회피
-    enable_side_avoidance: true  # 측면 회피 활성화
+    
+    # === A1/A2 범위 기반 충돌 회피 시스템 ===
+    # A1 범위: 좁은 범위 - 이 안에 들어오면 후진 + 반대방향 조향
+    # A2 범위: 넓은 범위 - A1 밖이지만 이 안에 들어오면 조향만 반대방향으로
+    a1_threshold: 0.3          # A1 범위 (meters) - 후진 트리거 거리
+    a2_threshold: 0.8          # A2 범위 (meters) - 조향 회피 거리 (A1보다 넓음)
+    a1_side_factor: 0.8        # A1 측면 거리 팩터 (a1_threshold * 이 값)
+    a2_max_steer_ratio: 0.5    # A2 최대 조향 비율 (max_steer_angle * 이 값)
+    reverse_speed: 0.5         # 후진 속도 (m/s)
+    reverse_duration: 0.8      # 후진 지속 시간 (seconds)
+    a1_steer_gain: 0.8         # A1 범위에서 후진 시 조향 강도
+    a2_steer_gain: 0.4         # A2 범위에서 회피 조향 강도
+    enable_collision_avoidance: true  # 충돌 회피 활성화

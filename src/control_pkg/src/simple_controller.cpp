@@ -44,13 +44,16 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter<std::string>("path_topic", path_topic_);
   declare_parameter<std::string>("drive_topic", drive_topic_);
   declare_parameter<std::string>("scan_topic", scan_topic_);
-  // Collision avoidance parameters
-  declare_parameter("collision_threshold", collision_threshold_);
+  // A1/A2 범위 기반 충돌 회피 파라미터
+  declare_parameter("a1_threshold", a1_threshold_);
+  declare_parameter("a2_threshold", a2_threshold_);
+  declare_parameter("a1_side_factor", a1_side_factor_);
+  declare_parameter("a2_max_steer_ratio", a2_max_steer_ratio_);
   declare_parameter("reverse_speed", reverse_speed_);
   declare_parameter("reverse_duration", reverse_duration_);
-  declare_parameter("side_collision_threshold", side_collision_threshold_);
-  declare_parameter("side_avoidance_gain", side_avoidance_gain_);
-  declare_parameter("enable_side_avoidance", enable_side_avoidance_);
+  declare_parameter("a1_steer_gain", a1_steer_gain_);
+  declare_parameter("a2_steer_gain", a2_steer_gain_);
+  declare_parameter("enable_collision_avoidance", enable_collision_avoidance_);
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
   min_lookahead_ = get_parameter("min_lookahead").as_double();
@@ -78,12 +81,15 @@ SimpleController::SimpleController() : Node("simple_controller")
   path_topic_ = get_parameter("path_topic").as_string();
   drive_topic_ = get_parameter("drive_topic").as_string();
   scan_topic_ = get_parameter("scan_topic").as_string();
-  collision_threshold_ = get_parameter("collision_threshold").as_double();
+  a1_threshold_ = get_parameter("a1_threshold").as_double();
+  a2_threshold_ = get_parameter("a2_threshold").as_double();
+  a1_side_factor_ = get_parameter("a1_side_factor").as_double();
+  a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
   reverse_speed_ = get_parameter("reverse_speed").as_double();
   reverse_duration_ = get_parameter("reverse_duration").as_double();
-  side_collision_threshold_ = get_parameter("side_collision_threshold").as_double();
-  side_avoidance_gain_ = get_parameter("side_avoidance_gain").as_double();
-  enable_side_avoidance_ = get_parameter("enable_side_avoidance").as_bool();
+  a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
+  a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
+  enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
   
   prev_time_ = this->get_clock()->now();
   reverse_start_time_ = this->get_clock()->now();
@@ -115,8 +121,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   
   RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, publishing to drive: %s", 
               odom_topic_.c_str(), path_topic_.c_str(), scan_topic_.c_str(), drive_topic_.c_str());
-  RCLCPP_INFO(this->get_logger(), "Collision avoidance: threshold=%.2fm, reverse_speed=%.2fm/s, duration=%.2fs",
-              collision_threshold_, reverse_speed_, reverse_duration_);
+  RCLCPP_INFO(this->get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), reverse_speed=%.2fm/s",
+              a1_threshold_, a2_threshold_, reverse_speed_);
 
   timer_ = this->create_wall_timer(
       20ms, std::bind(&SimpleController::control_loop, this));
@@ -160,184 +166,203 @@ void SimpleController::scan_callback(const sensor_msgs::msg::LaserScan::SharedPt
   }
 }
 
-bool SimpleController::check_collision_imminent()
+/**
+ * @brief 장애물 거리 업데이트
+ * 센서 데이터에서 전방, 좌측, 우측 장애물까지의 최소 거리를 계산
+ */
+void SimpleController::update_obstacle_distances()
 {
   if (!scan_received_ || current_scan_.ranges.empty()) {
-    return false;
+    last_obstacle_front_dist_ = 10.0;
+    last_obstacle_left_dist_ = 10.0;
+    last_obstacle_right_dist_ = 10.0;
+    last_obstacle_angle_ = 0.0;
+    return;
   }
   
-  // Scan sector angle constants - 더욱 확장된 감지 범위
-  constexpr double FRONT_SECTOR_HALF_ANGLE = M_PI / 2.5;   // 72 degrees (기존 60도에서 확장)
-  constexpr double FRONT_LEFT_INNER = M_PI / 8.0;          // 22.5 degrees - 앞쪽 왼편 (더 좁게)
-  constexpr double FRONT_LEFT_OUTER = M_PI / 1.5;          // 120 degrees (더 넓게)
-  constexpr double FRONT_RIGHT_INNER = -M_PI / 8.0;        // -22.5 degrees - 앞쪽 오른편
-  constexpr double FRONT_RIGHT_OUTER = -M_PI / 1.5;        // -120 degrees
-  constexpr double MIN_VALID_RANGE = 0.03;                  // Minimum valid sensor reading (더 민감)
+  constexpr double FRONT_SECTOR_HALF_ANGLE = M_PI / 3.0;   // 60도
+  constexpr double SIDE_INNER = M_PI / 6.0;               // 30도
+  constexpr double SIDE_OUTER = M_PI / 2.0;               // 90도
+  constexpr double MIN_VALID_RANGE = 0.03;
   
   double angle_min = current_scan_.angle_min;
   double angle_inc = current_scan_.angle_increment;
   int num_ranges = current_scan_.ranges.size();
   
-  // 전방 중앙: -72 ~ +72 degrees
-  double front_angle_min = -FRONT_SECTOR_HALF_ANGLE;
-  double front_angle_max = FRONT_SECTOR_HALF_ANGLE;
-  
-  double min_front_distance = std::numeric_limits<double>::max();
-  double min_front_left_distance = std::numeric_limits<double>::max();
-  double min_front_right_distance = std::numeric_limits<double>::max();
-  double min_left_distance = std::numeric_limits<double>::max();
-  double min_right_distance = std::numeric_limits<double>::max();
-  
-  // 방향별 최소 거리의 각도 저장 (후진 방향 결정용)
-  double front_obstacle_angle = 0.0;
-  double left_obstacle_angle = M_PI / 4.0;
-  double right_obstacle_angle = -M_PI / 4.0;
-  
-  // 가까운 장애물 개수 추적
-  int front_close_count = 0;
-  int left_close_count = 0;
-  int right_close_count = 0;
+  double min_front = std::numeric_limits<double>::max();
+  double min_left = std::numeric_limits<double>::max();
+  double min_right = std::numeric_limits<double>::max();
+  double front_angle = 0.0;
   
   for (int i = 0; i < num_ranges; ++i) {
     double angle = angle_min + i * angle_inc;
     double range = current_scan_.ranges[i];
     
-    // Skip invalid readings
     if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
       continue;
     }
     
-    // 전방 중앙 섹터 (-72° ~ +72°)
-    if (angle >= front_angle_min && angle <= front_angle_max) {
-      if (range < min_front_distance) {
-        min_front_distance = range;
-        front_obstacle_angle = angle;
-      }
-      if (range < collision_threshold_) {
-        front_close_count++;
+    // 전방 섹터 (-60° ~ +60°)
+    if (angle >= -FRONT_SECTOR_HALF_ANGLE && angle <= FRONT_SECTOR_HALF_ANGLE) {
+      if (range < min_front) {
+        min_front = range;
+        front_angle = angle;
       }
     }
     
-    // 앞쪽 왼편 (22.5° ~ 120°) - 코너 진입 시 벽 감지
-    if (angle >= FRONT_LEFT_INNER && angle <= FRONT_LEFT_OUTER) {
-      if (range < min_front_left_distance) {
-        min_front_left_distance = range;
-      }
-      if (range < min_left_distance) {
-        min_left_distance = range;
-        left_obstacle_angle = angle;
-      }
-      if (range < side_collision_threshold_) {
-        left_close_count++;
+    // 좌측 섹터 (30° ~ 90°)
+    if (angle >= SIDE_INNER && angle <= SIDE_OUTER) {
+      if (range < min_left) {
+        min_left = range;
       }
     }
     
-    // 앞쪽 오른편 (-120° ~ -22.5°) - 코너 진입 시 벽 감지
-    if (angle >= FRONT_RIGHT_OUTER && angle <= FRONT_RIGHT_INNER) {
-      if (range < min_front_right_distance) {
-        min_front_right_distance = range;
-      }
-      if (range < min_right_distance) {
-        min_right_distance = range;
-        right_obstacle_angle = angle;
-      }
-      if (range < side_collision_threshold_) {
-        right_close_count++;
+    // 우측 섹터 (-90° ~ -30°)
+    if (angle >= -SIDE_OUTER && angle <= -SIDE_INNER) {
+      if (range < min_right) {
+        min_right = range;
       }
     }
   }
   
-  // 장애물 위치 정보 저장 (후진 방향 결정용)
-  last_obstacle_left_dist_ = min_left_distance;
-  last_obstacle_right_dist_ = min_right_distance;
-  last_obstacle_front_dist_ = min_front_distance;
-  last_obstacle_angle_ = front_obstacle_angle;
-  
-  // Collision detection thresholds for obstacle counts
-  constexpr int FRONT_OBSTACLE_COUNT_THRESHOLD = 3;     // Minimum front obstacles to trigger collision
-  constexpr int SIDE_OBSTACLE_COUNT_THRESHOLD = 5;      // Minimum side obstacles to trigger collision
-  constexpr double SIDE_COLLISION_FACTOR = 0.7;         // Factor for side collision threshold
-  
-  // 충돌 판정 - 더 민감하게, 가까운 장애물 개수도 고려
-  bool front_collision = min_front_distance < collision_threshold_ || front_close_count >= FRONT_OBSTACLE_COUNT_THRESHOLD;
-  bool front_left_collision = min_front_left_distance < (collision_threshold_ * SIDE_COLLISION_FACTOR) || left_close_count >= SIDE_OBSTACLE_COUNT_THRESHOLD;
-  bool front_right_collision = min_front_right_distance < (collision_threshold_ * SIDE_COLLISION_FACTOR) || right_close_count >= SIDE_OBSTACLE_COUNT_THRESHOLD;
-  bool left_collision = min_left_distance < side_collision_threshold_;
-  bool right_collision = min_right_distance < side_collision_threshold_;
-  
-  bool any_collision = front_collision || front_left_collision || front_right_collision || 
-                       left_collision || right_collision;
-  
-  if (any_collision) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                         "Collision imminent! Front: %.2fm[%d], FrontL: %.2fm[%d], FrontR: %.2fm[%d], L: %.2fm, R: %.2fm",
-                         min_front_distance, front_close_count, min_front_left_distance, left_close_count,
-                         min_front_right_distance, right_close_count, min_left_distance, min_right_distance);
-    return true;
-  }
-  
-  return false;
+  last_obstacle_front_dist_ = min_front;
+  last_obstacle_left_dist_ = min_left;
+  last_obstacle_right_dist_ = min_right;
+  last_obstacle_angle_ = front_angle;
 }
 
+/**
+ * @brief A1 범위 체크 - 후진이 필요한지 확인
+ * A1 범위: 좁은 범위, 이 안에 장애물이 있으면 후진 필요
+ */
+bool SimpleController::check_a1_zone()
+{
+  if (!enable_collision_avoidance_ || !scan_received_) {
+    is_in_a1_zone_ = false;
+    return false;
+  }
+  
+  // 장애물 거리는 control_loop에서 미리 업데이트됨
+  double side_threshold = a1_threshold_ * a1_side_factor_;
+  
+  // A1 범위 내에 장애물이 있는지 확인
+  is_in_a1_zone_ = (last_obstacle_front_dist_ < a1_threshold_) ||
+                   (last_obstacle_left_dist_ < side_threshold) ||
+                   (last_obstacle_right_dist_ < side_threshold);
+  
+  if (is_in_a1_zone_) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                         "A1 Zone! Front: %.2fm, L: %.2fm, R: %.2fm (threshold: %.2fm, side: %.2fm)",
+                         last_obstacle_front_dist_, last_obstacle_left_dist_, 
+                         last_obstacle_right_dist_, a1_threshold_, side_threshold);
+  }
+  
+  return is_in_a1_zone_;
+}
+
+/**
+ * @brief A2 범위 체크 - 조향 회피가 필요한지 확인
+ * A2 범위: A1보다 넓은 범위, 이 안에 장애물이 있으면 (A1 밖) 조향으로 회피
+ * 주의: check_a1_zone()이 true면 이 함수는 호출하지 않아야 함
+ */
+bool SimpleController::check_a2_zone()
+{
+  if (!enable_collision_avoidance_ || !scan_received_) {
+    return false;
+  }
+  
+  // A1 범위 체크는 호출자에서 미리 수행되어야 함
+  // 여기서는 A2 범위만 체크
+  
+  // A2 범위 내에 장애물이 있는지 확인
+  bool in_a2 = (last_obstacle_front_dist_ < a2_threshold_) ||
+               (last_obstacle_left_dist_ < a2_threshold_) ||
+               (last_obstacle_right_dist_ < a2_threshold_);
+  
+  return in_a2;
+}
+
+/**
+ * @brief A1 범위에서 후진 시 조향각 계산
+ * 원래 가던 방향의 반대 방향으로 조향
+ */
 double SimpleController::compute_reverse_steering()
 {
-  // 장애물 위치에 따라 반대 방향으로 조향
-  // 왼쪽에 장애물이 가까우면 -> 오른쪽으로 조향 (음수)
-  // 오른쪽에 장애물이 가까우면 -> 왼쪽으로 조향 (양수)
-  
   double reverse_steer = 0.0;
   
   // 좌우 장애물 거리 비교
-  double left_dist = last_obstacle_left_dist_;
-  double right_dist = last_obstacle_right_dist_;
-  double front_dist = last_obstacle_front_dist_;
+  double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+  double right_dist = std::min(last_obstacle_right_dist_, 5.0);
   
-  // 무한대 값 처리 - 더 작은 최대값으로 정규화
-  const double MAX_DIST = 5.0;
-  if (left_dist > MAX_DIST) left_dist = MAX_DIST;
-  if (right_dist > MAX_DIST) right_dist = MAX_DIST;
-  if (front_dist > MAX_DIST) front_dist = MAX_DIST;
+  // 장애물이 있는 방향의 반대로 조향
+  // 왼쪽에 장애물이 가까우면 -> 오른쪽으로 조향 (음수)
+  // 오른쪽에 장애물이 가까우면 -> 왼쪽으로 조향 (양수)
+  double dist_diff = right_dist - left_dist;
   
-  // 전방 장애물 각도도 고려 - 더 강하게
-  double angle_factor = 0.0;
-  if (std::abs(last_obstacle_angle_) > 0.05) {
-    // 장애물이 왼쪽에 있으면 (양수 각도) -> 오른쪽으로 (음수 조향)
-    // 장애물이 오른쪽에 있으면 (음수 각도) -> 왼쪽으로 (양수 조향)
-    angle_factor = -last_obstacle_angle_ * 0.7;  // 기존 0.5에서 0.7로 증가
-  }
-  
-  // 좌우 거리 차이로 조향 결정
-  double dist_diff = right_dist - left_dist;  // 오른쪽이 더 멀면 양수 -> 오른쪽으로 후진
-  
-  // 조향 각도 계산: 멀리 있는 쪽으로 후진
-  if (std::abs(dist_diff) > 0.05) {  // 기존 0.1에서 0.05로 낮춤 (더 민감하게)
-    // dist_diff > 0: 오른쪽이 더 멀다 -> 후진하면서 오른쪽으로 (음수 조향, 차가 오른쪽으로 감)
-    double diff_factor = std::clamp(dist_diff / 2.0, -1.0, 1.0);  // 정규화
-    reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_angle_ * 0.6;  // 기존 0.5에서 0.6으로 증가
-    
-    // 거리 차이가 클수록 더 강한 조향
-    if (std::abs(dist_diff) > 0.5) {
-      reverse_steer *= 1.2;
-    }
+  if (std::abs(dist_diff) > 0.05) {
+    // dist_diff > 0: 오른쪽이 더 멀다 -> 후진하면서 차가 오른쪽으로 가도록
+    reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_angle_ * a1_steer_gain_;
   } else {
     // 좌우 비슷하면 전방 장애물 각도 기반
-    reverse_steer = angle_factor;
+    if (std::abs(last_obstacle_angle_) > 0.1) {
+      // 장애물이 왼쪽(양수)이면 오른쪽으로(음수), 오른쪽(음수)이면 왼쪽으로(양수)
+      reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
+    }
   }
   
-  // 추가: 전방 장애물이 매우 가까우면 더 강한 회피
-  if (front_dist < collision_threshold_ * 0.5) {
-    reverse_steer *= 1.3;
-  }
-  
-  // 조향 각도 제한 - 더 큰 조향 허용
-  double max_reverse_steer = max_steer_angle_ * 0.8;  // 기존 0.7에서 0.8으로 증가
-  reverse_steer = std::clamp(reverse_steer, -max_reverse_steer, max_reverse_steer);
+  // 조향 각도 제한
+  reverse_steer = std::clamp(reverse_steer, -max_steer_angle_, max_steer_angle_);
   
   RCLCPP_DEBUG(this->get_logger(), 
-               "Reverse steer: %.3f (L:%.2f, R:%.2f, F:%.2f, angle:%.2f, diff:%.2f)",
-               reverse_steer, left_dist, right_dist, front_dist, last_obstacle_angle_, dist_diff);
+               "A1 Reverse steer: %.3f (L:%.2f, R:%.2f, angle:%.2f)",
+               reverse_steer, left_dist, right_dist, last_obstacle_angle_);
   
   return reverse_steer;
+}
+
+/**
+ * @brief A2 범위에서 회피 조향각 계산
+ * 후진 없이 조향만으로 장애물 회피
+ */
+double SimpleController::compute_avoidance_steering()
+{
+  double avoidance_steer = 0.0;
+  
+  // 장애물이 있는 방향의 반대로 조향
+  double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+  double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+  double front_dist = std::min(last_obstacle_front_dist_, 5.0);
+  
+  // 거리가 가까울수록 더 강한 회피
+  double urgency = 1.0 - (front_dist / a2_threshold_);
+  urgency = std::clamp(urgency, 0.0, 1.0);
+  
+  if (left_dist < right_dist) {
+    // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 조향 (음수)
+    double left_urgency = 1.0 - (left_dist / a2_threshold_);
+    left_urgency = std::clamp(left_urgency, 0.0, 1.0);
+    avoidance_steer = -max_steer_angle_ * a2_steer_gain_ * left_urgency;
+  } else if (right_dist < left_dist) {
+    // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 조향 (양수)
+    double right_urgency = 1.0 - (right_dist / a2_threshold_);
+    right_urgency = std::clamp(right_urgency, 0.0, 1.0);
+    avoidance_steer = max_steer_angle_ * a2_steer_gain_ * right_urgency;
+  } else {
+    // 전방 장애물 각도 기반
+    if (std::abs(last_obstacle_angle_) > 0.05) {
+      avoidance_steer = -last_obstacle_angle_ * a2_steer_gain_ * urgency;
+    }
+  }
+  
+  // 조향 각도 제한 (파라미터 사용)
+  double max_avoidance = max_steer_angle_ * a2_max_steer_ratio_;
+  avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
+  
+  RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+               "A2 Avoidance steer: %.3f (L:%.2f, R:%.2f, F:%.2f, urgency:%.2f)",
+               avoidance_steer, left_dist, right_dist, front_dist, urgency);
+  
+  return avoidance_steer;
 }
 
 int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead)
@@ -459,51 +484,50 @@ void SimpleController::control_loop()
   // Check for collision and handle reverse mode
   rclcpp::Time current_time = this->get_clock()->now();
   
-  // If currently reversing, check if we should stop
-  if (is_reversing_) {
+  // === A1/A2 범위 기반 충돌 회피 ===
+  // 먼저 장애물 거리 업데이트
+  update_obstacle_distances();
+  
+  // A1 범위 체크: 후진 필요
+  if (check_a1_zone()) {
+    // Start or continue reversing
+    if (!is_reversing_) {
+      is_reversing_ = true;
+      reverse_start_time_ = current_time;
+      last_steering_before_reverse_ = prev_steering_angle_;
+      RCLCPP_WARN(this->get_logger(), "A1 Zone! Starting reverse with opposite steering");
+    }
+    
     double elapsed = (current_time - reverse_start_time_).seconds();
-    if (elapsed >= reverse_duration_) {
-      // Stop reversing
-      is_reversing_ = false;
-      RCLCPP_INFO(this->get_logger(), "Reverse complete, resuming forward motion");
-    } else {
-      // Continue reversing - gentle reverse with opposite steering
+    if (elapsed < reverse_duration_) {
+      // Continue reversing
       double reverse_steer = compute_reverse_steering();
       
       ackermann_msgs::msg::AckermannDriveStamped drive_msg;
       drive_msg.header.stamp = current_time;
       drive_msg.header.frame_id = current_odom_.child_frame_id;
-      drive_msg.drive.speed = -reverse_speed_;  // Negative speed for reverse
+      drive_msg.drive.speed = -reverse_speed_;
       drive_msg.drive.steering_angle = reverse_steer;
       
       drive_pub_->publish(drive_msg);
       
       static int reverse_log_count = 0;
       if (reverse_log_count++ % 25 == 0) {
-        RCLCPP_INFO(this->get_logger(), "REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
+        RCLCPP_INFO(this->get_logger(), "A1 REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
                     -reverse_speed_, reverse_steer, elapsed, reverse_duration_);
       }
-      return;  // Skip normal control during reverse
+      return;
+    } else {
+      // Reverse complete
+      is_reversing_ = false;
+      RCLCPP_INFO(this->get_logger(), "A1 Reverse complete, resuming forward");
     }
-  }
-  
-  // Check if collision is imminent
-  if (check_collision_imminent()) {
-    // Start reversing
-    is_reversing_ = true;
-    reverse_start_time_ = current_time;
-    last_steering_before_reverse_ = prev_steering_angle_;
-    RCLCPP_WARN(this->get_logger(), "Collision detected! Starting gentle reverse maneuver");
-    
-    // Immediately send reverse command
-    double reverse_steer = compute_reverse_steering();
-    ackermann_msgs::msg::AckermannDriveStamped drive_msg;
-    drive_msg.header.stamp = current_time;
-    drive_msg.header.frame_id = current_odom_.child_frame_id;
-    drive_msg.drive.speed = -reverse_speed_;
-    drive_msg.drive.steering_angle = reverse_steer;
-    drive_pub_->publish(drive_msg);
-    return;
+  } else {
+    // Not in A1 zone, stop reversing if we were
+    if (is_reversing_) {
+      is_reversing_ = false;
+      RCLCPP_INFO(this->get_logger(), "Left A1 zone, stopping reverse");
+    }
   }
 
   // Compute current speed
@@ -628,9 +652,15 @@ void SimpleController::control_loop()
   // 5) Raw sum: delta_raw = delta_pp + delta_pid + delta_stanley + delta_ff
   double steering_angle = delta_pp + delta_pid + delta_stanley + delta_ff;
   
-  // 6) 측면 센서 기반 벽 회피 조향 추가
-  double delta_side_avoidance = compute_side_avoidance_steering();
-  steering_angle += delta_side_avoidance;
+  // 6) A2 범위 기반 회피 조향 추가 (후진 없이 조향만)
+  // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
+  double delta_a2_avoidance = 0.0;
+  if (!is_in_a1_zone_ && check_a2_zone()) {
+    delta_a2_avoidance = compute_avoidance_steering();
+    steering_angle += delta_a2_avoidance;
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+                          "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
+  }
 
   // Clamp to physical steering limits
   steering_angle = std::clamp(steering_angle, -max_steer_angle_, max_steer_angle_);
@@ -651,17 +681,18 @@ void SimpleController::control_loop()
   static int debug_count = 0;
   if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, SideAvoid=%.3f, steer=%.3f",
-                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_side_avoidance, steering_angle);
+                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, A2Avoid=%.3f, steer=%.3f",
+                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, steering_angle);
   }
 
   // Speed control: Reduce speed based on curvature
-  // 측면 장애물이 가까우면 속도도 줄임
+  // A2 범위에 있으면 속도도 줄임
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
   
-  // 측면 회피 중이면 속도 추가 감소
-  if (std::abs(delta_side_avoidance) > 0.05) {
+  // A2 회피 중이면 속도 추가 감소 (delta_a2_avoidance가 유의미하면)
+  constexpr double A2_AVOIDANCE_ACTIVE_THRESHOLD = 0.02;  // 2% 이상이면 활성화로 판단
+  if (std::abs(delta_a2_avoidance) > A2_AVOIDANCE_ACTIVE_THRESHOLD) {
     speed_factor *= 0.7;  // 30% 감속
   }
   
@@ -897,125 +928,4 @@ double SimpleController::smooth_steering(double new_steering, double prev_steeri
 {
   // Exponential moving average filter
   return smoothing_factor_ * new_steering + (1.0 - smoothing_factor_) * prev_steering;
-}
-
-double SimpleController::compute_side_avoidance_steering()
-{
-  // 측면 센서 기반 벽 회피 조향
-  // 왼쪽 벽이 가까우면 오른쪽으로 조향 (음수)
-  // 오른쪽 벽이 가까우면 왼쪽으로 조향 (양수)
-  
-  if (!enable_side_avoidance_ || !scan_received_ || current_scan_.ranges.empty()) {
-    return 0.0;
-  }
-  
-  double angle_min = current_scan_.angle_min;
-  double angle_inc = current_scan_.angle_increment;
-  int num_ranges = current_scan_.ranges.size();
-  
-  // 측면 센서 범위 정의 - 더욱 축소된 감지 범위 (가까운 거리에서만 반응)
-  // 왼쪽: 70° ~ 110° (7*M_PI/18 ~ 11*M_PI/18) - 더 좁은 감지 범위
-  // 오른쪽: -110° ~ -70° (-11*M_PI/18 ~ -7*M_PI/18) - 더 좁은 감지 범위
-  constexpr double SIDE_INNER = 7.0 * M_PI / 18.0;   // 70도 (더 축소: 60도 -> 70도)
-  constexpr double SIDE_OUTER = 11.0 * M_PI / 18.0;  // 110도 (더 축소: 120도 -> 110도)
-  constexpr double MIN_VALID_RANGE = 0.05;           // 최소 유효 거리
-  constexpr double MAX_DETECTION_RANGE = 1.5;        // 최대 감지 거리 (더 축소: 2m -> 1.5m)
-  constexpr double CLOSE_OBSTACLE_MULTIPLIER = 1.5;  // Multiplier for close obstacle detection threshold
-  
-  double min_left_side = std::numeric_limits<double>::max();
-  double min_right_side = std::numeric_limits<double>::max();
-  
-  // 가중 평균을 위한 변수
-  double left_weighted_sum = 0.0;
-  double left_weight_total = 0.0;
-  double right_weighted_sum = 0.0;
-  double right_weight_total = 0.0;
-  
-  // 가까운 장애물 개수 추적
-  int left_close_count = 0;
-  int right_close_count = 0;
-  
-  for (int i = 0; i < num_ranges; ++i) {
-    double angle = angle_min + i * angle_inc;
-    double range = current_scan_.ranges[i];
-    
-    if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE || range > MAX_DETECTION_RANGE) {
-      continue;
-    }
-    
-    // 왼쪽 측면 (70° ~ 110°)
-    if (angle >= SIDE_INNER && angle <= SIDE_OUTER) {
-      if (range < min_left_side) {
-        min_left_side = range;
-      }
-      // 가까울수록 더 큰 가중치 (1.5m 범위에 맞게 2승 사용 - 더 부드럽게)
-      double weight = 1.0 / (range * range);
-      left_weighted_sum += range * weight;
-      left_weight_total += weight;
-      
-      // 가까운 장애물 카운트 (1.5m 범위에 맞게 조정)
-      if (range < side_collision_threshold_ * CLOSE_OBSTACLE_MULTIPLIER) {
-        left_close_count++;
-      }
-    }
-    
-    // 오른쪽 측면 (-110° ~ -70°)
-    if (angle >= -SIDE_OUTER && angle <= -SIDE_INNER) {
-      if (range < min_right_side) {
-        min_right_side = range;
-      }
-      double weight = 1.0 / (range * range);
-      right_weighted_sum += range * weight;
-      right_weight_total += weight;
-      
-      if (range < side_collision_threshold_ * CLOSE_OBSTACLE_MULTIPLIER) {
-        right_close_count++;
-      }
-    }
-  }
-  
-  // 가중 평균 거리 계산
-  double avg_left = (left_weight_total > 0) ? (left_weighted_sum / left_weight_total) : 10.0;
-  double avg_right = (right_weight_total > 0) ? (right_weighted_sum / right_weight_total) : 10.0;
-  
-  // Side avoidance constants (1.5m 범위에 맞게 조정)
-  constexpr double AVOIDANCE_THRESHOLD_MULTIPLIER = 2.0;  // Multiplier for avoidance threshold (2.5 -> 2.0, 더 늦게 회피)
-  constexpr double MAX_COUNT_FACTOR = 1.2;                // Maximum urgency factor from obstacle count (1.3 -> 1.2, 더 부드럽게)
-  constexpr double BASE_COUNT_FACTOR = 1.0;               // Base urgency factor
-  constexpr double COUNT_FACTOR_INCREMENT = 0.03;         // Increment per obstacle (0.05 -> 0.03, 더 점진적)
-  constexpr double MAX_AVOIDANCE_RATIO = 0.4;             // Maximum avoidance steering ratio (0.5 -> 0.4, 더 부드럽게)
-  
-  // 회피 임계값 (이 거리 이하면 회피 시작) - 더 일찍 회피 시작
-  double avoidance_threshold = side_collision_threshold_ * AVOIDANCE_THRESHOLD_MULTIPLIER;
-  
-  double avoidance_steer = 0.0;
-  
-  // 왼쪽이 가까우면 오른쪽으로 (음수 조향)
-  if (min_left_side < avoidance_threshold) {
-    double urgency = 1.0 - (min_left_side / avoidance_threshold);  // 0~1, 가까울수록 1
-    // 장애물 개수에 따라 긴급도 증가
-    double count_factor = std::min(MAX_COUNT_FACTOR, BASE_COUNT_FACTOR + left_close_count * COUNT_FACTOR_INCREMENT);
-    avoidance_steer -= side_avoidance_gain_ * urgency * count_factor * max_steer_angle_;
-  }
-  
-  // 오른쪽이 가까우면 왼쪽으로 (양수 조향)
-  if (min_right_side < avoidance_threshold) {
-    double urgency = 1.0 - (min_right_side / avoidance_threshold);
-    double count_factor = std::min(MAX_COUNT_FACTOR, BASE_COUNT_FACTOR + right_close_count * COUNT_FACTOR_INCREMENT);
-    avoidance_steer += side_avoidance_gain_ * urgency * count_factor * max_steer_angle_;
-  }
-  
-  // 최대 회피 각도 제한 - 더 큰 회피 각도 허용
-  double max_avoidance = max_steer_angle_ * MAX_AVOIDANCE_RATIO;
-  avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
-  
-  // 디버그 로그 - 더 자주 출력
-  static int side_log_count = 0;
-  if (side_log_count++ % 25 == 0 && (std::abs(avoidance_steer) > 0.005 || min_left_side < 1.5 || min_right_side < 1.5)) {
-    RCLCPP_INFO(this->get_logger(), 
-                "Side avoidance: steer=%.3f (L:%.2fm[%d], R:%.2fm[%d], threshold:%.2fm)",
-                avoidance_steer, min_left_side, left_close_count, min_right_side, right_close_count, avoidance_threshold);
-  }
-  
-  return avoidance_steer;
 }

@@ -6,10 +6,11 @@
 
 dual_ekf_node:
   ros__parameters:
-    # Input topics
-    odom_topic: "/odom"
-    imu_topic: "/sensors/imu/raw"
-    global_pose_topic: "/amcl_pose"
+    # Input topics (matched to gym_bridge sim.yaml: ego_namespace='car_state')
+    odom_topic: "/car_state/odom_GT"
+    imu_topic: "/car_state/vesc/sensors/imu/raw"
+    global_pose_topic: ""  # PoseWithCovarianceStamped format (empty if not used)
+    global_pose_stamped_topic: "/car_state/pose_GT"  # PoseStamped format (gym_bridge uses this)
     
     # Output topics
     local_odom_output: "/dual_ekf/local_odom"
