@@ -552,12 +552,15 @@ public:
     // A1/A2 collision avoidance parameters (Issue 6: soft constraints via cost)
     declare_parameter("a1_threshold", 0.3);            // A1 range: reverse trigger distance (meters) - 30cm for safety
     declare_parameter("a2_threshold", 0.8);            // A2 range: side steering avoidance distance (meters) - 80cm
+    declare_parameter("a2_urgent_threshold", 0.4);     // A2 urgent range: sharp steering when < 0.4m
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
     declare_parameter("a2_max_steer_ratio", 0.7);     // A2 max steering ratio - increased for sharper avoidance
+    declare_parameter("a2_urgent_steer_ratio", 1.0);  // A2 urgent: full steering allowed when < 0.4m
     declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
     declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
     declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
     declare_parameter("a2_steer_gain", 0.6);          // A2 avoidance steering gain - increased for stronger response
+    declare_parameter("a2_urgent_steer_gain", 1.5);   // A2 urgent steering gain - 1.5x when < 0.4m
     declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
 
     // Get parameters
@@ -577,12 +580,15 @@ public:
     // Get collision avoidance parameters
     a1_threshold_ = get_parameter("a1_threshold").as_double();
     a2_threshold_ = get_parameter("a2_threshold").as_double();
+    a2_urgent_threshold_ = get_parameter("a2_urgent_threshold").as_double();
     a1_side_factor_ = get_parameter("a1_side_factor").as_double();
     a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
+    a2_urgent_steer_ratio_ = get_parameter("a2_urgent_steer_ratio").as_double();
     reverse_speed_ = get_parameter("reverse_speed").as_double();
     reverse_duration_ = get_parameter("reverse_duration").as_double();
     a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
     a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
+    a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
     enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
     
     // If not using Dual EKF, use ground truth
@@ -769,10 +775,23 @@ private:
       last_steering_before_collision_ = solution.steering;
     }
     
-    // A2 zone: apply steering avoidance (without reversing)
+    // A2 zone: apply steering avoidance - lookahead 방향 기준 gap following
     double delta_a2_avoidance = 0.0;
     if (!is_in_a1_zone_ && checkA2Zone()) {
-      delta_a2_avoidance = computeAvoidanceSteering();
+      // lookahead 방향 = 현재 위치에서 첫 번째 reference point 방향
+      double lookahead_angle = 0.0;
+      if (!reference.empty()) {
+        double dx = reference[0].x - current_state.x;
+        double dy = reference[0].y - current_state.y;
+        // 차량 프레임으로 변환
+        double cos_yaw = std::cos(-current_state.yaw);
+        double sin_yaw = std::sin(-current_state.yaw);
+        double dx_vehicle = dx * cos_yaw - dy * sin_yaw;
+        double dy_vehicle = dx * sin_yaw + dy * cos_yaw;
+        lookahead_angle = std::atan2(dy_vehicle, dx_vehicle);
+      }
+      
+      delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
       solution.steering += delta_a2_avoidance;
       solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
       // Reduce speed in A2 zone - more aggressive slowdown for closer obstacles
@@ -936,44 +955,180 @@ private:
   }
   
   /**
-   * @brief Compute avoidance steering (A2 zone)
-   * When obstacles are within 0.4m on sides, slow down and steer sharply opposite
+   * @brief lookahead 방향 기준으로 라이다 스캔에서 장애물 사이 중간점(gap center) 각도 계산
+   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
+   * @return gap center 방향 각도 (rad), 장애물이 없으면 lookahead_angle 반환
    */
-  double computeAvoidanceSteering()
+  double findGapCenterAngle(double lookahead_angle)
+  {
+    if (!scan_received_ || !latest_scan_ || latest_scan_->ranges.empty()) {
+      return lookahead_angle;
+    }
+    
+    double angle_min = latest_scan_->angle_min;
+    double angle_inc = latest_scan_->angle_increment;
+    int num_ranges = latest_scan_->ranges.size();
+    
+    constexpr double SEARCH_HALF_ANGLE = M_PI / 3.0;  // 60 degrees
+    constexpr double MIN_VALID_RANGE = 0.05;
+    
+    double search_min = lookahead_angle - SEARCH_HALF_ANGLE;
+    double search_max = lookahead_angle + SEARCH_HALF_ANGLE;
+    
+    struct RayInfo {
+      double angle;
+      double range;
+      bool is_obstacle;
+    };
+    std::vector<RayInfo> rays;
+    
+    for (int i = 0; i < num_ranges; ++i) {
+      double angle = angle_min + i * angle_inc;
+      
+      if (angle < search_min || angle > search_max) {
+        continue;
+      }
+      
+      double range = latest_scan_->ranges[i];
+      bool valid = !std::isnan(range) && !std::isinf(range) && range > MIN_VALID_RANGE;
+      bool is_close_obstacle = valid && range < a2_threshold_;
+      
+      rays.push_back({angle, valid ? range : 10.0, is_close_obstacle});
+    }
+    
+    if (rays.empty()) {
+      return lookahead_angle;
+    }
+    
+    double best_gap_center = lookahead_angle;
+    double best_gap_score = -1.0;
+    int gap_start_idx = -1;
+    
+    for (size_t i = 0; i < rays.size(); ++i) {
+      if (!rays[i].is_obstacle) {
+        if (gap_start_idx < 0) {
+          gap_start_idx = i;
+        }
+      } else {
+        if (gap_start_idx >= 0) {
+          int gap_end_idx = i - 1;
+          double gap_start_angle = rays[gap_start_idx].angle;
+          double gap_end_angle = rays[gap_end_idx].angle;
+          double gap_width = gap_end_angle - gap_start_angle;
+          double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
+          
+          double avg_range = 0.0;
+          int count = 0;
+          for (int j = gap_start_idx; j <= gap_end_idx; ++j) {
+            avg_range += rays[j].range;
+            count++;
+          }
+          avg_range = count > 0 ? avg_range / count : 0.0;
+          
+          double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
+          double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
+          
+          if (score > best_gap_score) {
+            best_gap_score = score;
+            best_gap_center = gap_center;
+          }
+          
+          gap_start_idx = -1;
+        }
+      }
+    }
+    
+    if (gap_start_idx >= 0) {
+      int gap_end_idx = rays.size() - 1;
+      double gap_start_angle = rays[gap_start_idx].angle;
+      double gap_end_angle = rays[gap_end_idx].angle;
+      double gap_width = gap_end_angle - gap_start_angle;
+      double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
+      
+      double avg_range = 0.0;
+      int count = 0;
+      for (size_t j = gap_start_idx; j <= static_cast<size_t>(gap_end_idx); ++j) {
+        avg_range += rays[j].range;
+        count++;
+      }
+      avg_range = count > 0 ? avg_range / count : 0.0;
+      
+      double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
+      double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
+      
+      if (score > best_gap_score) {
+        best_gap_score = score;
+        best_gap_center = gap_center;
+      }
+    }
+    
+    if (best_gap_score < 0.1) {
+      return lookahead_angle;
+    }
+    
+    return best_gap_center;
+  }
+  
+  /**
+   * @brief Compute avoidance steering (A2 zone) - lookahead 방향 기준 gap following
+   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
+   * 
+   * When obstacles are detected, find gap center relative to lookahead direction
+   * and steer toward the gap. Urgent mode (< 0.4m): maximum steering with 1.5x gain
+   */
+  double computeAvoidanceSteering(double lookahead_angle)
   {
     double avoidance_steer = 0.0;
     
     double left_dist = std::min(last_obstacle_left_dist_, 5.0);
     double right_dist = std::min(last_obstacle_right_dist_, 5.0);
     double front_dist = std::min(last_obstacle_front_dist_, 5.0);
+    double min_side_dist = std::min(left_dist, right_dist);
+    double min_dist = std::min(min_side_dist, front_dist);
     
-    // Calculate urgency - closer obstacles mean more urgent avoidance
-    double urgency = 1.0 - (std::min(left_dist, std::min(right_dist, front_dist)) / a2_threshold_);
-    urgency = std::clamp(urgency, 0.0, 1.0);
-    
-    // Increased steering gain for sharper avoidance
-    double effective_gain = a2_steer_gain_ * (1.0 + urgency);  // Increases with urgency
-    
-    if (left_dist < right_dist) {
-      // Obstacle closer on left - steer sharply right (negative)
-      double left_urgency = 1.0 - (left_dist / a2_threshold_);
-      left_urgency = std::clamp(left_urgency, 0.0, 1.0);
-      avoidance_steer = -max_steer_ * effective_gain * left_urgency;
-    } else if (right_dist < left_dist) {
-      // Obstacle closer on right - steer sharply left (positive)
-      double right_urgency = 1.0 - (right_dist / a2_threshold_);
-      right_urgency = std::clamp(right_urgency, 0.0, 1.0);
-      avoidance_steer = max_steer_ * effective_gain * right_urgency;
-    } else {
-      // Front obstacle - steer based on angle
-      if (std::abs(last_obstacle_angle_) > 0.05) {
-        avoidance_steer = -last_obstacle_angle_ * effective_gain * urgency;
-      }
+    if (min_dist > a2_threshold_) {
+      return 0.0;
     }
     
-    // Allow up to full steering for sharp avoidance (increased from a2_max_steer_ratio_)
-    double max_avoidance = max_steer_ * std::min(1.0, a2_max_steer_ratio_ + urgency * 0.5);
+    // Find gap center relative to lookahead direction
+    double gap_center_angle = findGapCenterAngle(lookahead_angle);
+    double angle_diff = gap_center_angle - lookahead_angle;
+    
+    // Check if in urgent zone (< 0.4m)
+    bool is_urgent = min_dist < a2_urgent_threshold_;
+    
+    // Calculate urgency and effective gain
+    double urgency = 0.0;
+    double effective_gain = a2_steer_gain_;
+    double steer_ratio = a2_max_steer_ratio_;
+    
+    if (is_urgent) {
+      urgency = 1.0 - (min_dist / a2_urgent_threshold_);
+      urgency = std::clamp(urgency, 0.5, 1.0);
+      effective_gain = a2_urgent_steer_gain_;
+      steer_ratio = a2_urgent_steer_ratio_;
+    } else {
+      urgency = 1.0 - (min_dist / a2_threshold_);
+      urgency = std::clamp(urgency, 0.0, 1.0);
+      effective_gain = a2_steer_gain_ * (1.0 + urgency * 0.5);
+      steer_ratio = a2_max_steer_ratio_ + urgency * 0.2;
+    }
+    
+    // Steer toward gap center
+    avoidance_steer = angle_diff * effective_gain * (0.5 + 0.5 * urgency);
+    
+    // Apply steering limit
+    double max_avoidance = max_steer_ * std::min(1.0, steer_ratio);
     avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
+    
+    // Log avoidance
+    if (std::abs(avoidance_steer) > 0.01) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), is_urgent ? 200 : 500,
+        "[%s GAP] lookahead=%.1f° gap=%.1f° | steer=%.3f | L:%.2f R:%.2f F:%.2f",
+        is_urgent ? "URGENT" : "AVOID",
+        lookahead_angle * 180.0 / M_PI, gap_center_angle * 180.0 / M_PI,
+        avoidance_steer, left_dist, right_dist, front_dist);
+    }
     
     return avoidance_steer;
   }
@@ -1291,12 +1446,15 @@ private:
   // A1/A2 Collision avoidance parameters
   double a1_threshold_{0.3};    // Reverse trigger at 30cm for safety
   double a2_threshold_{0.8};    // Side avoidance threshold (80cm)
+  double a2_urgent_threshold_{0.4};  // Urgent threshold: sharp steering when < 0.4m
   double a1_side_factor_{0.8};
   double a2_max_steer_ratio_{0.7};
+  double a2_urgent_steer_ratio_{1.0};  // Full steering in urgent mode
   double reverse_speed_{0.5};
   double reverse_duration_{0.8};
   double a1_steer_gain_{0.8};
   double a2_steer_gain_{0.6};
+  double a2_urgent_steer_gain_{1.5};  // 1.5x gain when < 0.4m
   bool enable_collision_avoidance_{true};
   
   // Collision avoidance state

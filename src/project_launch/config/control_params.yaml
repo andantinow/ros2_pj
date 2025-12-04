@@ -6,10 +6,10 @@ simple_controller:
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 5.0           # Increased for faster driving (3.0 -> 5.0)
-    lookahead_distance: 1.5    # Reduced for tighter path following (3.5 -> 1.5)
-    min_lookahead: 0.8         # Reduced for closer lookahead at low speed (2.5 -> 0.8)
-    max_lookahead: 2.5         # Reduced for tighter corner tracking (6.0 -> 2.5)
-    lookahead_speed_gain: 0.5  # Reduced for less aggressive speed-based lookahead (0.8 -> 0.5)
+    lookahead_distance: 0.8    # Much reduced for tighter path following (1.5 -> 0.8)
+    min_lookahead: 0.4         # Much reduced for closer lookahead at low speed (0.8 -> 0.4)
+    max_lookahead: 1.2         # Much reduced for tighter corner tracking (2.5 -> 1.2)
+    lookahead_speed_gain: 0.3  # Reduced for tighter speed-based lookahead (0.5 -> 0.3)
     lookahead_error_gain: 1.2  # Reduced for smoother lateral error correction (1.5 -> 1.2)
     use_vref: true
     # Topic remappings
@@ -35,12 +35,16 @@ simple_controller:
     # === A1/A2 범위 기반 충돌 회피 시스템 ===
     # A1 범위: 좁은 범위 - 이 안에 들어오면 후진 + 반대방향 조향
     # A2 범위: 넓은 범위 - A1 밖이지만 이 안에 들어오면 조향만 반대방향으로
+    # A2 긴급 범위: 0.4m 이내 - 최대 조향으로 급격히 꺾음
     a1_threshold: 0.15         # A1 범위 (meters) - 벽에 0.15m 이내시 후진 (increased from 0.01m)
     a2_threshold: 0.6          # A2 범위 (meters) - 측면 0.6m 이내시 조향 회피 + 감속 (increased from 0.4m)
+    a2_urgent_threshold: 0.4   # A2 긴급 범위 (meters) - 0.4m 이내시 최대 조향으로 급격히 꺾음
     a1_side_factor: 0.8        # A1 측면 거리 팩터 (a1_threshold * 이 값)
     a2_max_steer_ratio: 0.8    # A2 최대 조향 비율 (max_steer_angle * 이 값) - 더 강한 회피 조향 허용 (0.5 -> 0.8)
+    a2_urgent_steer_ratio: 1.0 # A2 긴급시 최대 조향 비율 - 0.4m 이내시 최대 조향 허용
     reverse_speed: 0.5         # 후진 속도 (m/s)
     reverse_duration: 0.8      # 후진 지속 시간 (seconds)
     a1_steer_gain: 0.8         # A1 범위에서 후진 시 조향 강도
     a2_steer_gain: 0.8         # A2 범위에서 회피 조향 강도 (0.4 -> 0.8 for stronger avoidance)
+    a2_urgent_steer_gain: 1.5  # A2 긴급시 조향 강도 - 0.4m 이내시 1.5배 강화
     enable_collision_avoidance: true  # 충돌 회피 활성화

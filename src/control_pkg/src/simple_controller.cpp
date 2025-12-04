@@ -47,12 +47,15 @@ SimpleController::SimpleController() : Node("simple_controller")
   // A1/A2 범위 기반 충돌 회피 파라미터
   declare_parameter("a1_threshold", a1_threshold_);
   declare_parameter("a2_threshold", a2_threshold_);
+  declare_parameter("a2_urgent_threshold", a2_urgent_threshold_);
   declare_parameter("a1_side_factor", a1_side_factor_);
   declare_parameter("a2_max_steer_ratio", a2_max_steer_ratio_);
+  declare_parameter("a2_urgent_steer_ratio", a2_urgent_steer_ratio_);
   declare_parameter("reverse_speed", reverse_speed_);
   declare_parameter("reverse_duration", reverse_duration_);
   declare_parameter("a1_steer_gain", a1_steer_gain_);
   declare_parameter("a2_steer_gain", a2_steer_gain_);
+  declare_parameter("a2_urgent_steer_gain", a2_urgent_steer_gain_);
   declare_parameter("enable_collision_avoidance", enable_collision_avoidance_);
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
@@ -83,12 +86,15 @@ SimpleController::SimpleController() : Node("simple_controller")
   scan_topic_ = get_parameter("scan_topic").as_string();
   a1_threshold_ = get_parameter("a1_threshold").as_double();
   a2_threshold_ = get_parameter("a2_threshold").as_double();
+  a2_urgent_threshold_ = get_parameter("a2_urgent_threshold").as_double();
   a1_side_factor_ = get_parameter("a1_side_factor").as_double();
   a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
+  a2_urgent_steer_ratio_ = get_parameter("a2_urgent_steer_ratio").as_double();
   reverse_speed_ = get_parameter("reverse_speed").as_double();
   reverse_duration_ = get_parameter("reverse_duration").as_double();
   a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
   a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
+  a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
   enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
   
   prev_time_ = this->get_clock()->now();
@@ -327,68 +333,208 @@ double SimpleController::compute_reverse_steering()
 }
 
 /**
- * @brief A2 범위에서 회피 조향각 계산
- * 후진 없이 조향만으로 장애물 회피 - 측면 장애물 0.4m 이내시 급격한 반대방향 조향
+ * @brief lookahead 방향 기준으로 라이다 스캔에서 장애물 사이 중간점(gap center) 각도 계산
+ * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
+ * @return gap center 방향 각도 (rad), 장애물이 없으면 lookahead_angle 반환
+ * 
+ * 로직:
+ * 1. lookahead 방향을 중심으로 좌우 일정 범위 스캔
+ * 2. 그 범위 내에서 가장 가까운 장애물의 좌측/우측 경계 찾기
+ * 3. 장애물들 사이의 가장 넓은 gap의 중심으로 조향
  */
-double SimpleController::compute_avoidance_steering()
+double SimpleController::find_gap_center_angle(double lookahead_angle)
 {
-  double avoidance_steer = 0.0;
+  if (!scan_received_ || current_scan_.ranges.empty()) {
+    return lookahead_angle;  // 스캔 없으면 원래 방향 유지
+  }
   
-  // 장애물이 있는 방향의 반대로 조향
-  double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-  double right_dist = std::min(last_obstacle_right_dist_, 5.0);
-  double front_dist = std::min(last_obstacle_front_dist_, 5.0);
+  double angle_min = current_scan_.angle_min;
+  double angle_inc = current_scan_.angle_increment;
+  int num_ranges = current_scan_.ranges.size();
   
-  // 방향별 긴급도 계산 - 각 방향의 거리에 따라 다름
-  constexpr double URGENCY_BOOST = 0.5;  // Boost factor for urgency-based steering
+  // lookahead 방향 기준 ±60도 범위에서 gap 찾기
+  constexpr double SEARCH_HALF_ANGLE = M_PI / 3.0;  // 60도
+  constexpr double MIN_VALID_RANGE = 0.05;
+  constexpr double GAP_THRESHOLD = 0.5;  // 0.5m 이상 떨어지면 gap으로 인식
   
-  std::string avoid_direction = "NONE";
-  double urgency = 0.0;
+  double search_min = lookahead_angle - SEARCH_HALF_ANGLE;
+  double search_max = lookahead_angle + SEARCH_HALF_ANGLE;
   
-  if (left_dist < right_dist) {
-    // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 급격히 조향 (음수)
-    double left_urgency = 1.0 - (left_dist / a2_threshold_);
-    left_urgency = std::clamp(left_urgency, 0.0, 1.0);
-    urgency = left_urgency;
-    // 긴급도가 높을수록 조향 강도 증가
-    double effective_gain = a2_steer_gain_ * (1.0 + left_urgency * URGENCY_BOOST);
-    avoidance_steer = -max_steer_angle_ * effective_gain * left_urgency;
-    avoid_direction = "RIGHT (wall on LEFT)";
-  } else if (right_dist < left_dist) {
-    // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 급격히 조향 (양수)
-    double right_urgency = 1.0 - (right_dist / a2_threshold_);
-    right_urgency = std::clamp(right_urgency, 0.0, 1.0);
-    urgency = right_urgency;
-    // 긴급도가 높을수록 조향 강도 증가
-    double effective_gain = a2_steer_gain_ * (1.0 + right_urgency * URGENCY_BOOST);
-    avoidance_steer = max_steer_angle_ * effective_gain * right_urgency;
-    avoid_direction = "LEFT (wall on RIGHT)";
-  } else {
-    // 전방 장애물 각도 기반
-    double front_urgency = 1.0 - (front_dist / a2_threshold_);
-    front_urgency = std::clamp(front_urgency, 0.0, 1.0);
-    urgency = front_urgency;
-    if (std::abs(last_obstacle_angle_) > 0.05) {
-      double effective_gain = a2_steer_gain_ * (1.0 + front_urgency * URGENCY_BOOST);
-      avoidance_steer = -last_obstacle_angle_ * effective_gain;
-      avoid_direction = last_obstacle_angle_ > 0 ? "RIGHT (front-left wall)" : "LEFT (front-right wall)";
+  // 각 방향별 장애물 거리 저장 (gap 분석용)
+  struct RayInfo {
+    double angle;
+    double range;
+    bool is_obstacle;
+  };
+  std::vector<RayInfo> rays;
+  
+  for (int i = 0; i < num_ranges; ++i) {
+    double angle = angle_min + i * angle_inc;
+    
+    // lookahead 방향 중심으로 범위 제한
+    if (angle < search_min || angle > search_max) {
+      continue;
+    }
+    
+    double range = current_scan_.ranges[i];
+    bool valid = !std::isnan(range) && !std::isinf(range) && range > MIN_VALID_RANGE;
+    bool is_close_obstacle = valid && range < a2_threshold_;
+    
+    rays.push_back({angle, valid ? range : 10.0, is_close_obstacle});
+  }
+  
+  if (rays.empty()) {
+    return lookahead_angle;
+  }
+  
+  // Gap 찾기: 장애물이 없거나 멀리 있는 구간들 분석
+  double best_gap_center = lookahead_angle;
+  double best_gap_score = -1.0;  // gap 크기 * 거리 점수
+  
+  int gap_start_idx = -1;
+  
+  for (size_t i = 0; i < rays.size(); ++i) {
+    if (!rays[i].is_obstacle) {
+      // Gap 시작 또는 계속
+      if (gap_start_idx < 0) {
+        gap_start_idx = i;
+      }
+    } else {
+      // Gap 끝 - 평가
+      if (gap_start_idx >= 0) {
+        int gap_end_idx = i - 1;
+        double gap_start_angle = rays[gap_start_idx].angle;
+        double gap_end_angle = rays[gap_end_idx].angle;
+        double gap_width = gap_end_angle - gap_start_angle;
+        double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
+        
+        // Gap 내 평균 거리
+        double avg_range = 0.0;
+        int count = 0;
+        for (int j = gap_start_idx; j <= gap_end_idx; ++j) {
+          avg_range += rays[j].range;
+          count++;
+        }
+        avg_range = count > 0 ? avg_range / count : 0.0;
+        
+        // 점수: gap 폭 * 거리 * lookahead 방향과의 일치도
+        double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
+        double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
+        
+        if (score > best_gap_score) {
+          best_gap_score = score;
+          best_gap_center = gap_center;
+        }
+        
+        gap_start_idx = -1;
+      }
     }
   }
   
-  // 가장 가까운 장애물 기준으로 최대 조향 각도 제한 조정
-  double min_dist = std::min(left_dist, std::min(right_dist, front_dist));
-  double min_urgency = 1.0 - (min_dist / a2_threshold_);
-  min_urgency = std::clamp(min_urgency, 0.0, 1.0);
+  // 마지막 gap 처리
+  if (gap_start_idx >= 0) {
+    int gap_end_idx = rays.size() - 1;
+    double gap_start_angle = rays[gap_start_idx].angle;
+    double gap_end_angle = rays[gap_end_idx].angle;
+    double gap_width = gap_end_angle - gap_start_angle;
+    double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
+    
+    double avg_range = 0.0;
+    int count = 0;
+    for (size_t j = gap_start_idx; j <= static_cast<size_t>(gap_end_idx); ++j) {
+      avg_range += rays[j].range;
+      count++;
+    }
+    avg_range = count > 0 ? avg_range / count : 0.0;
+    
+    double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
+    double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
+    
+    if (score > best_gap_score) {
+      best_gap_score = score;
+      best_gap_center = gap_center;
+    }
+  }
   
-  // 급격한 회피 허용 - 긴급시 최대 조향까지
-  double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + min_urgency * URGENCY_BOOST);
+  // Gap이 너무 작으면 원래 방향 유지
+  if (best_gap_score < 0.1) {
+    return lookahead_angle;
+  }
+  
+  return best_gap_center;
+}
+
+/**
+ * @brief A2 범위에서 회피 조향각 계산 - lookahead 방향 기준 gap following
+ * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
+ * 
+ * 새로운 로직:
+ * 1. lookahead 방향 기준으로 라이다에서 장애물들 사이 gap center 찾기
+ * 2. gap center 방향으로 조향 (lookahead에서 벗어나는 정도에 비례)
+ * 3. 0.4m 이내 긴급 상황시 더 강하게 gap 방향으로 꺾음
+ */
+double SimpleController::compute_avoidance_steering(double lookahead_angle)
+{
+  double avoidance_steer = 0.0;
+  
+  // 장애물 거리 정보
+  double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+  double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+  double front_dist = std::min(last_obstacle_front_dist_, 5.0);
+  double min_side_dist = std::min(left_dist, right_dist);
+  double min_dist = std::min(min_side_dist, front_dist);
+  
+  // 장애물이 충분히 멀면 회피 불필요
+  if (min_dist > a2_threshold_) {
+    return 0.0;
+  }
+  
+  // lookahead 방향 기준으로 gap center 찾기
+  double gap_center_angle = find_gap_center_angle(lookahead_angle);
+  
+  // gap center와 lookahead의 차이 = 회피에 필요한 조향
+  double angle_diff = gap_center_angle - lookahead_angle;
+  
+  // 0.4m 이내 긴급 모드 판단
+  bool is_urgent = min_dist < a2_urgent_threshold_;
+  
+  // 긴급도 및 gain 계산
+  double urgency = 0.0;
+  double effective_gain = a2_steer_gain_;
+  double steer_ratio = a2_max_steer_ratio_;
+  
+  if (is_urgent) {
+    // 0.4m 이내: 긴급 모드 - gap 방향으로 강하게 꺾음
+    urgency = 1.0 - (min_dist / a2_urgent_threshold_);
+    urgency = std::clamp(urgency, 0.5, 1.0);
+    effective_gain = a2_urgent_steer_gain_;
+    steer_ratio = a2_urgent_steer_ratio_;
+  } else {
+    // 일반 회피 모드
+    urgency = 1.0 - (min_dist / a2_threshold_);
+    urgency = std::clamp(urgency, 0.0, 1.0);
+    effective_gain = a2_steer_gain_ * (1.0 + urgency * 0.5);
+    steer_ratio = a2_max_steer_ratio_ + urgency * 0.2;
+  }
+  
+  // Gap 방향으로 조향 (angle_diff를 조향각으로 변환)
+  // angle_diff가 양수면 gap이 왼쪽 -> 왼쪽 조향 (양수)
+  // angle_diff가 음수면 gap이 오른쪽 -> 오른쪽 조향 (음수)
+  avoidance_steer = angle_diff * effective_gain * (0.5 + 0.5 * urgency);
+  
+  // 최대 조향 각도 제한
+  double max_avoidance = max_steer_angle_ * std::min(1.0, steer_ratio);
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
-  // 벽 감지 시 로그 출력 (INFO level for wall avoidance debugging - throttled to 500ms)
+  // 로그 출력
+  int throttle_ms = is_urgent ? 200 : 500;
   if (std::abs(avoidance_steer) > 0.01) {
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                 "[WALL AVOID] %s | steer=%.3f | L:%.2fm R:%.2fm F:%.2fm | urgency:%.2f",
-                 avoid_direction.c_str(), avoidance_steer, left_dist, right_dist, front_dist, urgency);
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), throttle_ms,
+                 "[%s GAP] lookahead=%.2f° gap=%.2f° diff=%.2f° | steer=%.3f | dist: L%.2f R%.2f F%.2f",
+                 is_urgent ? "URGENT" : "AVOID",
+                 lookahead_angle * 180.0 / M_PI, gap_center_angle * 180.0 / M_PI,
+                 angle_diff * 180.0 / M_PI, avoidance_steer,
+                 left_dist, right_dist, front_dist);
   }
   
   return avoidance_steer;
@@ -684,12 +830,13 @@ void SimpleController::control_loop()
   // 5) Raw sum: delta_raw = delta_pp + delta_pid + delta_stanley + delta_ff
   double steering_angle = delta_pp + delta_pid + delta_stanley + delta_ff;
   
-  // 6) A2 범위 기반 회피 조향 추가 (후진 없이 조향만)
+  // 6) A2 범위 기반 회피 조향 추가 - lookahead 방향(alpha) 기준 gap following
   // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
   double a2_slowdown_factor = 1.0;
   if (!is_in_a1_zone_ && check_a2_zone()) {
-    delta_a2_avoidance = compute_avoidance_steering();
+    // alpha = lookahead point 방향 각도 (차량 프레임 기준)
+    delta_a2_avoidance = compute_avoidance_steering(alpha);
     steering_angle += delta_a2_avoidance;
     
     // 측면 장애물 거리에 따른 속도 감소 - 0.4m 이내면 점점 느려짐
