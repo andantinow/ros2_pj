@@ -378,9 +378,9 @@ double SimpleController::compute_avoidance_steering()
   double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + min_urgency * URGENCY_BOOST);
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
-  // 벽 감지 시 로그 출력 (디버깅용)
+  // 벽 감지 시 로그 출력 (INFO level for wall avoidance debugging - throttled to 500ms)
   if (std::abs(avoidance_steer) > 0.01) {
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                  "[WALL AVOID] %s | steer=%.3f | L:%.2fm R:%.2fm F:%.2fm | urgency:%.2f",
                  avoid_direction.c_str(), avoidance_steer, left_dist, right_dist, front_dist, urgency);
   }
