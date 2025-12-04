@@ -302,12 +302,12 @@ double SimpleController::compute_reverse_steering()
   if (std::abs(dist_diff) > 0.05) {
     // dist_diff > 0: 오른쪽이 더 멀다 -> 후진하면서 차가 오른쪽으로 가도록
     reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_angle_ * a1_steer_gain_;
-  } else {
-    // 좌우 비슷하면 전방 장애물 각도 기반
-    if (std::abs(last_obstacle_angle_) > 0.1) {
-      // 장애물이 왼쪽(양수)이면 오른쪽으로(음수), 오른쪽(음수)이면 왼쪽으로(양수)
-      reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
-    }
+  } else if (std::abs(last_steering_before_reverse_) > 0.05) {
+    // 충돌 전 조향 방향의 반대로 조향
+    reverse_steer = -last_steering_before_reverse_ * a1_steer_gain_;
+  } else if (std::abs(last_obstacle_angle_) > 0.1) {
+    // 장애물이 왼쪽(양수)이면 오른쪽으로(음수), 오른쪽(음수)이면 왼쪽으로(양수)
+    reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
   }
   
   // 조향 각도 제한
@@ -322,7 +322,7 @@ double SimpleController::compute_reverse_steering()
 
 /**
  * @brief A2 범위에서 회피 조향각 계산
- * 후진 없이 조향만으로 장애물 회피
+ * 후진 없이 조향만으로 장애물 회피 - 측면 장애물 0.4m 이내시 급격한 반대방향 조향
  */
 double SimpleController::compute_avoidance_steering()
 {
@@ -333,29 +333,33 @@ double SimpleController::compute_avoidance_steering()
   double right_dist = std::min(last_obstacle_right_dist_, 5.0);
   double front_dist = std::min(last_obstacle_front_dist_, 5.0);
   
-  // 거리가 가까울수록 더 강한 회피
-  double urgency = 1.0 - (front_dist / a2_threshold_);
+  // 거리가 가까울수록 더 강한 회피 - 가장 가까운 장애물 기준
+  double min_dist = std::min(left_dist, std::min(right_dist, front_dist));
+  double urgency = 1.0 - (min_dist / a2_threshold_);
   urgency = std::clamp(urgency, 0.0, 1.0);
   
+  // 증가된 조향 강도 - 긴급할수록 더 강하게
+  double effective_gain = a2_steer_gain_ * (1.0 + urgency);
+  
   if (left_dist < right_dist) {
-    // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 조향 (음수)
+    // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 급격히 조향 (음수)
     double left_urgency = 1.0 - (left_dist / a2_threshold_);
     left_urgency = std::clamp(left_urgency, 0.0, 1.0);
-    avoidance_steer = -max_steer_angle_ * a2_steer_gain_ * left_urgency;
+    avoidance_steer = -max_steer_angle_ * effective_gain * left_urgency;
   } else if (right_dist < left_dist) {
-    // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 조향 (양수)
+    // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 급격히 조향 (양수)
     double right_urgency = 1.0 - (right_dist / a2_threshold_);
     right_urgency = std::clamp(right_urgency, 0.0, 1.0);
-    avoidance_steer = max_steer_angle_ * a2_steer_gain_ * right_urgency;
+    avoidance_steer = max_steer_angle_ * effective_gain * right_urgency;
   } else {
     // 전방 장애물 각도 기반
     if (std::abs(last_obstacle_angle_) > 0.05) {
-      avoidance_steer = -last_obstacle_angle_ * a2_steer_gain_ * urgency;
+      avoidance_steer = -last_obstacle_angle_ * effective_gain * urgency;
     }
   }
   
-  // 조향 각도 제한 (파라미터 사용)
-  double max_avoidance = max_steer_angle_ * a2_max_steer_ratio_;
+  // 급격한 회피 허용 - 긴급시 최대 조향까지
+  double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + urgency * 0.5);
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
   RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
@@ -655,11 +659,18 @@ void SimpleController::control_loop()
   // 6) A2 범위 기반 회피 조향 추가 (후진 없이 조향만)
   // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
+  double a2_slowdown_factor = 1.0;
   if (!is_in_a1_zone_ && check_a2_zone()) {
     delta_a2_avoidance = compute_avoidance_steering();
     steering_angle += delta_a2_avoidance;
+    
+    // 측면 장애물 거리에 따른 속도 감소 - 0.4m 이내면 점점 느려짐
+    double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
+    a2_slowdown_factor = std::max(0.3, min_side_dist / a2_threshold_);  // 30% ~ 100% 속도
+    
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                          "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
+                          "A2 Zone: steer=%.3f, slowdown=%.1f%%", 
+                          delta_a2_avoidance, a2_slowdown_factor * 100.0);
   }
 
   // Clamp to physical steering limits
@@ -690,11 +701,8 @@ void SimpleController::control_loop()
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
   
-  // A2 회피 중이면 속도 추가 감소 (delta_a2_avoidance가 유의미하면)
-  constexpr double A2_AVOIDANCE_ACTIVE_THRESHOLD = 0.02;  // 2% 이상이면 활성화로 판단
-  if (std::abs(delta_a2_avoidance) > A2_AVOIDANCE_ACTIVE_THRESHOLD) {
-    speed_factor *= 0.7;  // 30% 감속
-  }
+  // A2 회피 중이면 속도 추가 감소 (거리 기반)
+  speed_factor *= a2_slowdown_factor;
   
   double adjusted_speed = target_speed_ * speed_factor;
   

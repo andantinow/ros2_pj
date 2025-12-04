@@ -200,13 +200,13 @@ def generate_launch_description():
             'w_vel': 8.0,                    # Increased velocity tracking weight (2.0 -> 8.0)
             'w_steer': 0.5,                  # Reduced steering effort weight (1.0 -> 0.5)
             'w_accel': 0.3,                  # Reduced acceleration effort weight (0.5 -> 0.3)
-            'max_steer': 0.5,
+            'max_steer': 0.436,              # 25 degrees max steering
             'max_speed': 7.0,                # Increased max speed (5.0 -> 7.0)
             'max_accel': 5.0,                # Increased max acceleration (3.0 -> 5.0)
             'min_accel': -6.0,               # Increased deceleration capability (-5.0 -> -6.0)
             # A1/A2 collision avoidance parameters
-            'a1_threshold': 0.3,             # A1 range: reverse trigger distance (meters)
-            'a2_threshold': 0.8,             # A2 range: steering avoidance distance (meters)
+            'a1_threshold': 0.01,            # A1 range: very close collision reverse trigger (0.01m)
+            'a2_threshold': 0.4,             # A2 range: side steering avoidance distance (0.4m)
             'a1_side_factor': 0.8,           # A1 side distance factor
             'a2_max_steer_ratio': 0.5,       # A2 max steering ratio
             'reverse_speed': 0.5,            # Reverse speed (m/s)
