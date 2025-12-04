@@ -242,9 +242,10 @@ private:
             global_pose_topic, 10,
             std::bind(&DualEkfNode::globalPoseCallback, this, std::placeholders::_1));
         
-        // Also subscribe to PoseStamped (e.g., from particle filter)
+        // Also subscribe to PoseStamped format (e.g., from gym_bridge or particle filter)
+        // This handles global_pose_topic if it publishes PoseStamped instead of PoseWithCovarianceStamped
         amcl_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/pf/viz/inferred_pose", 10,
+            global_pose_topic, 10,
             std::bind(&DualEkfNode::amclPoseCallback, this, std::placeholders::_1));
         
         RCLCPP_INFO(get_logger(), "Subscribing to odom: %s, imu: %s, global_pose: %s",
