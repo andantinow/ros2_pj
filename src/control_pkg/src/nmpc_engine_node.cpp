@@ -50,7 +50,7 @@ struct MPCConfig
   double w_accel_rate = 5.0;      // Acceleration rate weight (smoothness)
   
   // Constraints
-  double max_steer = 0.5;         // Maximum steering angle [rad]
+  double max_steer = 0.436;       // Maximum steering angle [rad] (25 degrees)
   double max_steer_rate = 1.0;    // Maximum steering rate [rad/s]
   double max_accel = 3.0;         // Maximum acceleration [m/s^2]
   double min_accel = -5.0;        // Maximum deceleration [m/s^2]
@@ -409,7 +409,7 @@ public:
     declare_parameter("w_accel", 0.5);
     
     // Constraints
-    declare_parameter("max_steer", 0.5);
+    declare_parameter("max_steer", 0.436);  // 25 degrees in radians
     declare_parameter("max_speed", 5.0);
     declare_parameter("max_accel", 3.0);
     declare_parameter("min_accel", -5.0);
@@ -422,8 +422,8 @@ public:
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
     // A1/A2 collision avoidance parameters
-    declare_parameter("a1_threshold", 0.3);           // A1 range: reverse trigger distance (meters)
-    declare_parameter("a2_threshold", 0.8);           // A2 range: steering avoidance distance (meters)
+    declare_parameter("a1_threshold", 0.01);           // A1 range: reverse trigger distance (meters) - very close collision
+    declare_parameter("a2_threshold", 0.4);            // A2 range: side steering avoidance distance (meters)
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
     declare_parameter("a2_max_steer_ratio", 0.5);     // A2 max steering ratio
     declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
@@ -606,16 +606,24 @@ private:
     // Solve MPC
     auto solution = solver_.solve(current_state, reference, get_logger());
     
+    // Track steering for collision recovery (before A2 modifications)
+    if (!is_reversing_) {
+      last_steering_before_collision_ = solution.steering;
+    }
+    
     // A2 zone: apply steering avoidance (without reversing)
     double delta_a2_avoidance = 0.0;
     if (!is_in_a1_zone_ && checkA2Zone()) {
       delta_a2_avoidance = computeAvoidanceSteering();
       solution.steering += delta_a2_avoidance;
       solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-      // Also reduce speed in A2 zone
-      solution.speed *= 0.7;
+      // Reduce speed in A2 zone - more aggressive slowdown for closer obstacles
+      double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
+      double slowdown_factor = std::max(0.3, min_side_dist / a2_threshold_);  // 30% to 100% speed
+      solution.speed *= slowdown_factor;
       RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
-        "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
+        "A2 Zone: adding avoidance steer=%.3f, slowdown=%.1f%%", 
+        delta_a2_avoidance, slowdown_factor * 100.0);
     }
     
     // Publish result
@@ -736,6 +744,7 @@ private:
   
   /**
    * @brief Compute steering angle for reverse (A1 zone)
+   * When hitting obstacle, reverse and steer opposite to the direction that caused collision
    */
   double computeReverseSteering()
   {
@@ -744,14 +753,20 @@ private:
     double left_dist = std::min(last_obstacle_left_dist_, 5.0);
     double right_dist = std::min(last_obstacle_right_dist_, 5.0);
     
+    // If we have a clear direction from obstacle distances
     double dist_diff = right_dist - left_dist;
     
     if (std::abs(dist_diff) > 0.05) {
+      // Obstacle is closer on one side - steer opposite direction when reversing
+      // If right side closer (dist_diff < 0), steer left (positive) when reversing
+      // If left side closer (dist_diff > 0), steer right (negative) when reversing
       reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_ * a1_steer_gain_;
-    } else {
-      if (std::abs(last_obstacle_angle_) > 0.1) {
-        reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
-      }
+    } else if (std::abs(last_steering_before_collision_) > 0.05) {
+      // Steer opposite to the direction we were going before collision
+      reverse_steer = -last_steering_before_collision_ * a1_steer_gain_;
+    } else if (std::abs(last_obstacle_angle_) > 0.1) {
+      // Fall back to obstacle angle based steering
+      reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
     }
     
     reverse_steer = std::clamp(reverse_steer, -max_steer_, max_steer_);
@@ -761,6 +776,7 @@ private:
   
   /**
    * @brief Compute avoidance steering (A2 zone)
+   * When obstacles are within 0.4m on sides, slow down and steer sharply opposite
    */
   double computeAvoidanceSteering()
   {
@@ -770,24 +786,32 @@ private:
     double right_dist = std::min(last_obstacle_right_dist_, 5.0);
     double front_dist = std::min(last_obstacle_front_dist_, 5.0);
     
-    double urgency = 1.0 - (front_dist / a2_threshold_);
+    // Calculate urgency - closer obstacles mean more urgent avoidance
+    double urgency = 1.0 - (std::min(left_dist, std::min(right_dist, front_dist)) / a2_threshold_);
     urgency = std::clamp(urgency, 0.0, 1.0);
     
+    // Increased steering gain for sharper avoidance
+    double effective_gain = a2_steer_gain_ * (1.0 + urgency);  // Increases with urgency
+    
     if (left_dist < right_dist) {
+      // Obstacle closer on left - steer sharply right (negative)
       double left_urgency = 1.0 - (left_dist / a2_threshold_);
       left_urgency = std::clamp(left_urgency, 0.0, 1.0);
-      avoidance_steer = -max_steer_ * a2_steer_gain_ * left_urgency;
+      avoidance_steer = -max_steer_ * effective_gain * left_urgency;
     } else if (right_dist < left_dist) {
+      // Obstacle closer on right - steer sharply left (positive)
       double right_urgency = 1.0 - (right_dist / a2_threshold_);
       right_urgency = std::clamp(right_urgency, 0.0, 1.0);
-      avoidance_steer = max_steer_ * a2_steer_gain_ * right_urgency;
+      avoidance_steer = max_steer_ * effective_gain * right_urgency;
     } else {
+      // Front obstacle - steer based on angle
       if (std::abs(last_obstacle_angle_) > 0.05) {
-        avoidance_steer = -last_obstacle_angle_ * a2_steer_gain_ * urgency;
+        avoidance_steer = -last_obstacle_angle_ * effective_gain * urgency;
       }
     }
     
-    double max_avoidance = max_steer_ * a2_max_steer_ratio_;
+    // Allow up to full steering for sharp avoidance (increased from a2_max_steer_ratio_)
+    double max_avoidance = max_steer_ * std::min(1.0, a2_max_steer_ratio_ + urgency * 0.5);
     avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
     
     return avoidance_steer;
@@ -818,10 +842,20 @@ private:
   }
   
   /**
-   * @brief Build reference trajectory from path
+   * @brief Build reference trajectory from path with proper lookahead
+   * Reference points should be ahead of the vehicle, with adaptive spacing based on speed
    */
   std::vector<nmpc::ReferencePoint> buildReference(const nmpc::VehicleState& current_state) const
   {
+    // Constants for reference trajectory building
+    constexpr size_t MAX_SEARCH_ITERATIONS = 10;    // Max iterations when searching for point ahead
+    constexpr double MIN_AHEAD_DISTANCE = 0.1;      // Minimum distance ahead to consider (meters)
+    constexpr double BEHIND_PENALTY = 2.0;          // Weight penalty for points behind vehicle
+    constexpr double MIN_SPEED_FOR_LOOKAHEAD = 0.5; // Minimum speed for lookahead calculation (m/s)
+    constexpr double LOOKAHEAD_TIME_FACTOR = 0.15;  // Time factor for lookahead (~seconds per point)
+    constexpr double MIN_POINT_SPACING = 0.05;      // Minimum assumed point spacing (meters)
+    constexpr int NUM_REF_POINTS = 15;              // Number of reference points for MPC horizon
+    
     std::vector<nmpc::ReferencePoint> reference;
     
     if (!latest_path_ || latest_path_->poses.empty()) {
@@ -831,29 +865,67 @@ private:
     const auto& poses = latest_path_->poses;
     const size_t num_poses = poses.size();
     
-    // Find closest point on path
+    // Find closest point on path, preferring points ahead of the vehicle
     size_t closest_idx = 0;
     double min_dist = std::numeric_limits<double>::max();
+    double cos_yaw = std::cos(current_state.yaw);
+    double sin_yaw = std::sin(current_state.yaw);
     
     for (size_t i = 0; i < num_poses; ++i) {
       double dx = poses[i].pose.position.x - current_state.x;
       double dy = poses[i].pose.position.y - current_state.y;
       double dist = dx * dx + dy * dy;
-      if (dist < min_dist) {
-        min_dist = dist;
+      
+      // Check if point is ahead of vehicle (positive dot product)
+      double ahead = dx * cos_yaw + dy * sin_yaw;
+      
+      // Prefer points ahead by weighting points behind with a penalty
+      double weighted_dist = dist;
+      if (ahead < 0.0) {
+        weighted_dist *= BEHIND_PENALTY;
+      }
+      
+      if (weighted_dist < min_dist) {
+        min_dist = weighted_dist;
         closest_idx = i;
       }
     }
     
-    // Build reference from closest point forward
-    // Constants for reference trajectory building
-    constexpr int NUM_REF_POINTS = 15;      // Number of reference points for MPC horizon
-    constexpr size_t PATH_STRIDE_DIVISOR = 50;  // Divisor for computing sampling stride
+    // Skip the closest point if it's behind us, move to a point ahead
+    size_t start_idx = closest_idx;
+    for (size_t i = 0; i < MAX_SEARCH_ITERATIONS && start_idx < num_poses; ++i) {
+      double dx = poses[start_idx].pose.position.x - current_state.x;
+      double dy = poses[start_idx].pose.position.y - current_state.y;
+      double ahead = dx * cos_yaw + dy * sin_yaw;
+      
+      if (ahead > MIN_AHEAD_DISTANCE) {
+        break;
+      }
+      start_idx = (start_idx + 1) % num_poses;
+    }
     
-    const size_t stride = std::max<size_t>(1, num_poses / PATH_STRIDE_DIVISOR);
+    // Adaptive lookahead based on speed
+    // Higher speed = look further ahead, sample fewer points but at greater distances
+    double speed = std::max(MIN_SPEED_FOR_LOOKAHEAD, current_state.v);
+    double lookahead_per_point = speed * LOOKAHEAD_TIME_FACTOR;
     
+    // Calculate stride based on path resolution and desired lookahead
+    // Assume path points are roughly evenly spaced
+    double total_path_length = 0.0;
+    for (size_t i = 0; i < num_poses - 1; ++i) {
+      double dx = poses[i + 1].pose.position.x - poses[i].pose.position.x;
+      double dy = poses[i + 1].pose.position.y - poses[i].pose.position.y;
+      total_path_length += std::sqrt(dx * dx + dy * dy);
+    }
+    double avg_point_spacing = std::max(MIN_POINT_SPACING, total_path_length / std::max<size_t>(1, num_poses - 1));
+    
+    // Compute stride - bounded between 1 and reasonable max to prevent issues with dense/sparse paths
+    size_t stride = static_cast<size_t>(lookahead_per_point / avg_point_spacing);
+    stride = std::max<size_t>(1, std::min(stride, std::max<size_t>(1, num_poses / 10)));
+    
+    // Build reference from the start point forward
     for (int i = 0; i < NUM_REF_POINTS; ++i) {
-      size_t idx = (closest_idx + i * stride) % num_poses;
+      size_t idx = (start_idx + i * stride) % num_poses;
       
       nmpc::ReferencePoint ref;
       ref.x = poses[idx].pose.position.x;
@@ -914,11 +986,11 @@ private:
   double control_rate_hz_{50.0};
   double nominal_speed_{2.0};
   bool use_dual_ekf_{true};
-  double max_steer_{0.5};
+  double max_steer_{0.436};  // 25 degrees in radians
   
   // A1/A2 Collision avoidance parameters
-  double a1_threshold_{0.3};
-  double a2_threshold_{0.8};
+  double a1_threshold_{0.01};   // Reverse trigger at very close collision (0.01m)
+  double a2_threshold_{0.4};    // Side avoidance threshold (0.4m)
   double a1_side_factor_{0.8};
   double a2_max_steer_ratio_{0.5};
   double reverse_speed_{0.5};
@@ -935,6 +1007,7 @@ private:
   double last_obstacle_right_dist_{10.0};
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
+  double last_steering_before_collision_{0.0};  // Track last steering direction before collision
 
   // MPC Solver
   nmpc::BicycleMPCSolver solver_;
