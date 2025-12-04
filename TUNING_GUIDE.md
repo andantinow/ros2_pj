@@ -204,9 +204,60 @@ imu_covariance: [0.0, 0.0, 0.0]  # 선형가속도, 각속도, 방향
 | 용도 | 파일 경로 |
 |------|-----------|
 | **Pure Pursuit 파라미터** | `src/planning_pkg/config/pure_pursuit_params.yaml` |
-| **컨트롤러 코드** | `src/control_pkg/src/` |
+| **NMPC 엔진 코드** | `src/control_pkg/src/nmpc_engine_node.cpp` |
+| **Simple Controller 코드** | `src/control_pkg/src/simple_controller.cpp` |
 
-### Pure Pursuit 파라미터
+### NMPC 파라미터 (권장 제어기)
+
+NMPC(Nonlinear Model Predictive Control)는 고성능 자율 주행에 권장되는 제어기입니다.
+
+**핵심 파라미터 (ROS2 파라미터로 설정):**
+
+```yaml
+nmpc_engine_node:
+  ros__parameters:
+    # 예측 수평선 설정
+    prediction_horizon: 1.0      # 예측 구간 (초) - 높으면 미리 계획, 낮으면 반응적
+    prediction_steps: 10         # 예측 단계 수
+    control_rate_hz: 50.0        # 제어 루프 주파수 (Hz)
+    nominal_speed: 2.0           # 목표 속도 (m/s)
+    
+    # 비용 함수 가중치 (Issue 3.1 해결: 조향 변화율 페널티)
+    w_pos: 10.0                  # 위치 추적 가중치
+    w_yaw: 8.0                   # 헤딩 추적 가중치 (안정성 위해 증가)
+    w_vel: 2.0                   # 속도 추적 가중치
+    w_steer: 0.5                 # 조향 입력 가중치
+    w_accel: 0.3                 # 가속도 입력 가중치
+    w_steer_rate: 500.0          # ⚠️ 조향 변화율 가중치 - 진동 억제에 핵심!
+    w_accel_rate: 50.0           # 가속도 변화율 가중치
+    w_terminal: 20.0             # 종단 비용 가중치
+    
+    # 횡방향 허용 튜브 (Issue 5.1: 최적 레이싱 라인 허용)
+    lateral_tolerance: 0.3       # 중심선에서 ±0.3m 이탈 허용
+    
+    # 지연 보상 (Issue 3.3: 계산 지연 보상)
+    latency_compensation_sec: 0.02  # 20ms 계산 지연 보상
+    
+    # 제약 조건
+    max_steer: 0.436             # 최대 조향각 [rad] (25도)
+    max_steer_rate: 1.5          # 최대 조향 변화율 [rad/s]
+    max_speed: 5.0               # 최대 속도 [m/s]
+    max_accel: 3.0               # 최대 가속도 [m/s²]
+    min_accel: -5.0              # 최대 감속도 [m/s²]
+```
+
+**NMPC 튜닝 가이드:**
+
+| 증상 | 원인 | 조치 |
+|------|------|------|
+| 직진 시 좌우 진동 (Snaking) | `w_steer_rate` 너무 낮음 | `w_steer_rate`를 500 이상으로 증가 |
+| 코너에서 반응 느림 | `w_steer_rate` 너무 높음 | `w_steer_rate`를 200~300으로 감소 |
+| 중심선 과도 추종 | `lateral_tolerance` 없음 | `lateral_tolerance`를 0.2~0.5로 설정 |
+| 고속에서 불안정 | 지연 보상 없음 | `latency_compensation_sec` 증가 |
+| 코너 오버슈트 | `w_yaw` 너무 낮음 | `w_yaw`를 8~15로 증가 |
+| 속도 유지 안됨 | `w_vel` 너무 낮음 | `w_vel`를 3~5로 증가 |
+
+### Pure Pursuit 파라미터 (백업 제어기)
 
 `src/planning_pkg/config/pure_pursuit_params.yaml`:
 
@@ -230,7 +281,39 @@ pure_pursuit_node:
 
 ---
 
+## NMPC vs Pure Pursuit 선택 가이드
+
+| 상황 | 권장 제어기 | 이유 |
+|------|-------------|------|
+| 고속 레이싱 | NMPC | 예측 제어로 미래 경로 최적화 |
+| 급커브 구간 | NMPC | 전체 경로 고려한 조향 계획 |
+| 저속 정밀 주행 | Pure Pursuit | 간단하고 안정적 |
+| 계산 자원 제한 | Pure Pursuit | 낮은 계산 비용 |
+| 장애물 회피 필요 | NMPC | 소프트 제약으로 유연한 회피 |
+
+---
+
 ## 트러블슈팅
+
+### 문제: NMPC 직진 구간에서 진동 (Oscillation)
+
+**원인:** 조향 변화율(Slew Rate) 페널티 부족
+
+**해결:**
+```bash
+# w_steer_rate 파라미터를 500 이상으로 설정
+ros2 param set /nmpc_engine_node w_steer_rate 500.0
+```
+
+### 문제: NMPC가 코너를 직선으로 자르려 함 (Corner Cutting)
+
+**원인:** 횡방향 허용 튜브가 너무 넓거나 참조 궤적 생성 문제
+
+**해결:**
+```bash
+# lateral_tolerance 줄이기
+ros2 param set /nmpc_engine_node lateral_tolerance 0.1
+```
 
 ### 문제: 수정한 raceline.csv가 반영 안 됨
 

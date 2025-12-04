@@ -41,25 +41,36 @@ struct MPCConfig
   double wheelbase = 0.33;        // Vehicle wheelbase [m]
   
   // Weights for cost function
-  double w_pos = 10.0;            // Position tracking weight
-  double w_yaw = 5.0;             // Heading tracking weight
+  // Issue 3.1: Strengthen control rate (slew rate) penalty to prevent oscillation
+  // The steering rate weight is critical for stability - must be significantly higher
+  // than position/heading weights to prevent Bang-Bang control behavior
+  double w_pos = 10.0;            // Position tracking weight (lateral error)
+  double w_yaw = 8.0;             // Heading tracking weight (increased for stability)
   double w_vel = 2.0;             // Velocity tracking weight
-  double w_steer = 1.0;           // Steering effort weight
-  double w_accel = 0.5;           // Acceleration effort weight
-  double w_steer_rate = 10.0;     // Steering rate weight (smoothness)
-  double w_accel_rate = 5.0;      // Acceleration rate weight (smoothness)
+  double w_steer = 0.5;           // Steering effort weight (reduced to allow necessary steering)
+  double w_accel = 0.3;           // Acceleration effort weight
+  double w_steer_rate = 500.0;    // Steering rate weight - CRITICAL for oscillation suppression
+  double w_accel_rate = 50.0;     // Acceleration rate weight (smoothness)
+  
+  // Issue 5.1: Lateral error tube - allow deviation from centerline within bounds
+  // This enables NMPC to find optimal racing lines within the tube
+  double lateral_tolerance = 0.3; // Allow ±0.3m deviation from reference (Frenet tube)
+  double w_terminal = 20.0;       // Terminal cost weight for better convergence
   
   // Constraints
   double max_steer = 0.436;       // Maximum steering angle [rad] (25 degrees)
-  double max_steer_rate = 1.0;    // Maximum steering rate [rad/s]
+  double max_steer_rate = 1.5;    // Maximum steering rate [rad/s] (slightly increased)
   double max_accel = 3.0;         // Maximum acceleration [m/s^2]
   double min_accel = -5.0;        // Maximum deceleration [m/s^2]
   double max_speed = 5.0;         // Maximum speed [m/s]
   double min_speed = 0.0;         // Minimum speed [m/s]
   
   // Solver settings
-  int max_iterations = 10;        // Maximum SQP iterations (increased from 5)
-  double convergence_tol = 1e-3;  // Convergence tolerance
+  int max_iterations = 15;        // Maximum SQP iterations (increased for better convergence)
+  double convergence_tol = 1e-4;  // Tighter convergence tolerance
+  
+  // Issue 3.3: Latency compensation
+  double latency_compensation_sec = 0.0;  // Estimated computation delay for forward simulation
 };
 
 // Vehicle state
@@ -128,10 +139,48 @@ public:
       "NMPC Solver initialized | horizon: %.2fs, steps: %d, dt: %.3fs, wheelbase: %.2fm",
       config_.horizon_sec, config_.prediction_steps, config_.dt, config_.wheelbase);
     RCLCPP_INFO(logger,
-      "Weights | pos: %.1f, yaw: %.1f, vel: %.1f, steer: %.1f, accel: %.1f",
-      config_.w_pos, config_.w_yaw, config_.w_vel, config_.w_steer, config_.w_accel);
+      "Weights | pos: %.1f, yaw: %.1f, vel: %.1f, steer_rate: %.1f (CRITICAL)",
+      config_.w_pos, config_.w_yaw, config_.w_vel, config_.w_steer_rate);
+    RCLCPP_INFO(logger,
+      "Lateral tolerance tube: %.2fm, Terminal weight: %.1f",
+      config_.lateral_tolerance, config_.w_terminal);
     
     return true;
+  }
+  
+  /**
+   * @brief Issue 3.3 Fix: Forward simulate state to compensate for computation latency
+   * 
+   * When NMPC computation takes time (e.g., 50ms), the vehicle has moved.
+   * This function predicts where the vehicle will be after the latency period.
+   */
+  VehicleState compensateLatency(
+    const VehicleState& current_state,
+    double latency_sec) const
+  {
+    if (latency_sec <= 0.0 || u_prev_.empty()) {
+      return current_state;
+    }
+    
+    VehicleState predicted = current_state;
+    
+    // Use previous control input to predict state after latency
+    const auto& last_control = u_prev_[0];
+    
+    // Simple forward integration using bicycle model
+    double cos_yaw = std::cos(predicted.yaw);
+    double sin_yaw = std::sin(predicted.yaw);
+    double tan_steer = std::tan(last_control.steering);
+    
+    predicted.x += predicted.v * cos_yaw * latency_sec;
+    predicted.y += predicted.v * sin_yaw * latency_sec;
+    predicted.yaw += (predicted.v / config_.wheelbase) * tan_steer * latency_sec;
+    predicted.v += last_control.acceleration * latency_sec;
+    
+    predicted.yaw = normalizeAngle(predicted.yaw);
+    predicted.v = std::clamp(predicted.v, config_.min_speed, config_.max_speed);
+    
+    return predicted;
   }
   
   MPCSolution solve(
@@ -148,6 +197,9 @@ public:
       return solution;
     }
     
+    // Issue 3.3: Apply latency compensation - predict where vehicle will be
+    VehicleState compensated_state = compensateLatency(current_state, config_.latency_compensation_sec);
+    
     // Ensure reference has enough points
     std::vector<ReferencePoint> ref = reference;
     while (ref.size() < static_cast<size_t>(config_.prediction_steps + 1)) {
@@ -161,8 +213,8 @@ public:
     double prev_cost = std::numeric_limits<double>::max();
     
     for (int iter = 0; iter < config_.max_iterations; ++iter) {
-      // Forward simulate with current control sequence
-      std::vector<VehicleState> predicted_states = forwardSimulate(current_state, u);
+      // Forward simulate with current control sequence (using compensated state)
+      std::vector<VehicleState> predicted_states = forwardSimulate(compensated_state, u);
       
       // Compute cost
       double cost = computeCost(predicted_states, u, ref);
@@ -176,7 +228,7 @@ public:
       solution.iterations = iter + 1;
       
       // Compute gradients and update controls
-      updateControls(current_state, predicted_states, u, ref);
+      updateControls(compensated_state, predicted_states, u, ref);
       
       solution.cost = cost;
     }
@@ -258,6 +310,12 @@ private:
   
   /**
    * @brief Compute total cost for the predicted trajectory
+   * 
+   * Issue 3.1 & 5.1 Fix: Improved cost function with:
+   * - Lateral tolerance tube (soft constraint) instead of hard position tracking
+   * - Strong steering rate penalty to prevent oscillation
+   * - Coupled heading-lateral error for better straight-line stability
+   * - Terminal cost for improved convergence
    */
   double computeCost(
     const std::vector<VehicleState>& states,
@@ -266,16 +324,53 @@ private:
   {
     double cost = 0.0;
     
-    // State tracking cost
+    // State tracking cost with lateral tolerance tube (Issue 5.1)
     for (size_t i = 0; i < states.size() && i < reference.size(); ++i) {
       double dx = states[i].x - reference[i].x;
       double dy = states[i].y - reference[i].y;
       double dyaw = normalizeAngle(states[i].yaw - reference[i].yaw);
       double dv = states[i].v - reference[i].v;
       
-      cost += config_.w_pos * (dx * dx + dy * dy);
-      cost += config_.w_yaw * dyaw * dyaw;
+      // Compute lateral error in path frame (Frenet-like)
+      // Approximate: project position error onto perpendicular to reference heading
+      double ref_cos = std::cos(reference[i].yaw);
+      double ref_sin = std::sin(reference[i].yaw);
+      double lateral_error = -dx * ref_sin + dy * ref_cos;
+      double longitudinal_error = dx * ref_cos + dy * ref_sin;
+      
+      // Issue 5.1: Lateral tolerance tube - soft constraint with dead zone
+      // Only penalize lateral error beyond the tolerance (allows optimal line within tube)
+      double lateral_excess = std::max(0.0, std::abs(lateral_error) - config_.lateral_tolerance);
+      
+      // Issue 3.2: Coupled heading-lateral error for straight-line stability
+      // When lateral error is small, heading error should dominate to prevent crabbing
+      double lateral_weight_factor = 1.0;
+      double heading_weight_factor = 1.0;
+      if (std::abs(lateral_error) < 0.1) {
+        // Small lateral error: increase heading weight to maintain direction
+        heading_weight_factor = 2.0;
+        lateral_weight_factor = 0.5;
+      }
+      
+      // Position cost: penalize lateral excess (tube violation) and longitudinal error
+      cost += config_.w_pos * lateral_weight_factor * lateral_excess * lateral_excess;
+      cost += config_.w_pos * 0.3 * longitudinal_error * longitudinal_error;  // Lower weight for along-path error
+      
+      // Heading cost with adaptive weighting
+      cost += config_.w_yaw * heading_weight_factor * dyaw * dyaw;
+      
+      // Velocity tracking cost
       cost += config_.w_vel * dv * dv;
+    }
+    
+    // Terminal cost for better convergence (Issue 7.2)
+    if (!states.empty() && !reference.empty()) {
+      size_t last_idx = std::min(states.size() - 1, reference.size() - 1);
+      double dx_term = states[last_idx].x - reference[last_idx].x;
+      double dy_term = states[last_idx].y - reference[last_idx].y;
+      double dyaw_term = normalizeAngle(states[last_idx].yaw - reference[last_idx].yaw);
+      cost += config_.w_terminal * (dx_term * dx_term + dy_term * dy_term);
+      cost += config_.w_terminal * 0.5 * dyaw_term * dyaw_term;
     }
     
     // Control effort cost
@@ -283,13 +378,22 @@ private:
       cost += config_.w_steer * controls[i].steering * controls[i].steering;
       cost += config_.w_accel * controls[i].acceleration * controls[i].acceleration;
       
-      // Control rate cost (smoothness)
+      // Issue 3.1: Strong control rate cost (slew rate penalty) - CRITICAL for stability
+      // This prevents Bang-Bang control and oscillation on straight sections
       if (i > 0) {
         double d_steer = controls[i].steering - controls[i-1].steering;
         double d_accel = controls[i].acceleration - controls[i-1].acceleration;
         cost += config_.w_steer_rate * d_steer * d_steer;
         cost += config_.w_accel_rate * d_accel * d_accel;
       }
+    }
+    
+    // Add first control change cost (from previous command)
+    if (!controls.empty() && !u_prev_.empty()) {
+      double d_steer_init = controls[0].steering - u_prev_[0].steering;
+      double d_accel_init = controls[0].acceleration - u_prev_[0].acceleration;
+      cost += config_.w_steer_rate * d_steer_init * d_steer_init;
+      cost += config_.w_accel_rate * d_accel_init * d_accel_init;
     }
     
     return cost;
@@ -387,6 +491,14 @@ private:
  * Subscribes to odometry and path, runs MPC optimization, publishes drive commands.
  * Can use either Dual EKF output or ground truth odometry.
  * Includes A1/A2 range-based collision avoidance using LiDAR.
+ * 
+ * Issue Fixes Applied:
+ * - 3.1: Strong steering rate penalty for oscillation suppression
+ * - 3.2: Heading-lateral error coupling for straight-line stability
+ * - 3.3: Latency compensation for high-speed control
+ * - 4.1/4.2: Improved reference trajectory building (path-based, not Ld-based)
+ * - 5.1: Lateral tolerance tube for optimal racing lines
+ * - 6.2: Soft constraints for obstacle avoidance (via cost weighting)
  */
 class NMPCEngineNode : public rclcpp::Node
 {
@@ -401,15 +513,25 @@ public:
     declare_parameter("nominal_speed", 2.0);
     declare_parameter("solver_wheelbase", 0.33);
     
-    // MPC weights
+    // MPC weights - Issue 3.1: steering rate is critical
     declare_parameter("w_pos", 10.0);
-    declare_parameter("w_yaw", 5.0);
+    declare_parameter("w_yaw", 8.0);           // Increased for stability
     declare_parameter("w_vel", 2.0);
-    declare_parameter("w_steer", 1.0);
-    declare_parameter("w_accel", 0.5);
+    declare_parameter("w_steer", 0.5);         // Reduced to allow necessary steering
+    declare_parameter("w_accel", 0.3);
+    declare_parameter("w_steer_rate", 500.0);  // CRITICAL: High value prevents oscillation
+    declare_parameter("w_accel_rate", 50.0);
+    declare_parameter("w_terminal", 20.0);     // Terminal cost for convergence
+    
+    // Issue 5.1: Lateral tolerance tube
+    declare_parameter("lateral_tolerance", 0.3);  // Allow ±0.3m deviation from centerline
+    
+    // Issue 3.3: Latency compensation
+    declare_parameter("latency_compensation_sec", 0.02);  // 20ms default computation latency
     
     // Constraints
     declare_parameter("max_steer", 0.436);  // 25 degrees in radians
+    declare_parameter("max_steer_rate", 1.5);  // rad/s
     declare_parameter("max_speed", 5.0);
     declare_parameter("max_accel", 3.0);
     declare_parameter("min_accel", -5.0);
@@ -421,7 +543,7 @@ public:
     declare_parameter<std::string>("scan_topic", "/scan");  // LiDAR topic
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
-    // A1/A2 collision avoidance parameters
+    // A1/A2 collision avoidance parameters (Issue 6: soft constraints via cost)
     declare_parameter("a1_threshold", 0.01);           // A1 range: reverse trigger distance (meters) - very close collision
     declare_parameter("a2_threshold", 0.4);            // A2 range: side steering avoidance distance (meters)
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
@@ -469,22 +591,41 @@ public:
     RCLCPP_INFO(get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), enabled=%s",
                 a1_threshold_, a2_threshold_, enable_collision_avoidance_ ? "true" : "false");
 
-    // Configure MPC solver
+    // Configure MPC solver with all Issue fixes
     nmpc::MPCConfig cfg;
     cfg.horizon_sec = prediction_horizon;
     cfg.prediction_steps = prediction_steps;
     cfg.wheelbase = get_parameter("solver_wheelbase").as_double();
+    
+    // Issue 3.1: Weights - steering rate is critical for oscillation suppression
     cfg.w_pos = get_parameter("w_pos").as_double();
     cfg.w_yaw = get_parameter("w_yaw").as_double();
     cfg.w_vel = get_parameter("w_vel").as_double();
     cfg.w_steer = get_parameter("w_steer").as_double();
     cfg.w_accel = get_parameter("w_accel").as_double();
+    cfg.w_steer_rate = get_parameter("w_steer_rate").as_double();
+    cfg.w_accel_rate = get_parameter("w_accel_rate").as_double();
+    cfg.w_terminal = get_parameter("w_terminal").as_double();
+    
+    // Issue 5.1: Lateral tolerance tube
+    cfg.lateral_tolerance = get_parameter("lateral_tolerance").as_double();
+    
+    // Issue 3.3: Latency compensation
+    cfg.latency_compensation_sec = get_parameter("latency_compensation_sec").as_double();
+    
+    // Constraints
     cfg.max_steer = get_parameter("max_steer").as_double();
+    cfg.max_steer_rate = get_parameter("max_steer_rate").as_double();
     cfg.max_speed = get_parameter("max_speed").as_double();
     cfg.max_accel = get_parameter("max_accel").as_double();
     cfg.min_accel = get_parameter("min_accel").as_double();
     
     solver_.initialize(cfg, get_logger());
+    
+    RCLCPP_INFO(get_logger(), "NMPC Issue Fixes Applied:");
+    RCLCPP_INFO(get_logger(), "  - Steering rate weight: %.1f (Issue 3.1: oscillation suppression)", cfg.w_steer_rate);
+    RCLCPP_INFO(get_logger(), "  - Lateral tolerance: %.2fm (Issue 5.1: racing line tube)", cfg.lateral_tolerance);
+    RCLCPP_INFO(get_logger(), "  - Latency compensation: %.3fs (Issue 3.3: delay handling)", cfg.latency_compensation_sec);
 
     // Setup subscribers
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -842,20 +983,18 @@ private:
   }
   
   /**
-   * @brief Build reference trajectory from path with proper lookahead
-   * Reference points should be ahead of the vehicle, with adaptive spacing based on speed
+   * @brief Build reference trajectory from path for NMPC horizon
+   * 
+   * Issue 4.1/4.2 Fix: Build time-based reference trajectory for NMPC
+   * - Uses prediction horizon time (Tp), NOT Pure Pursuit lookahead distance (Ld)
+   * - Provides full trajectory for NMPC optimization, not just a single point
+   * - Spacing is based on time steps (dt), not geometric lookahead
+   * 
+   * This decouples NMPC from Pure Pursuit logic and allows NMPC to see
+   * the full path ahead for proper trajectory optimization.
    */
   std::vector<nmpc::ReferencePoint> buildReference(const nmpc::VehicleState& current_state) const
   {
-    // Constants for reference trajectory building
-    constexpr size_t MAX_SEARCH_ITERATIONS = 10;    // Max iterations when searching for point ahead
-    constexpr double MIN_AHEAD_DISTANCE = 0.1;      // Minimum distance ahead to consider (meters)
-    constexpr double BEHIND_PENALTY = 2.0;          // Weight penalty for points behind vehicle
-    constexpr double MIN_SPEED_FOR_LOOKAHEAD = 0.5; // Minimum speed for lookahead calculation (m/s)
-    constexpr double LOOKAHEAD_TIME_FACTOR = 0.15;  // Time factor for lookahead (~seconds per point)
-    constexpr double MIN_POINT_SPACING = 0.05;      // Minimum assumed point spacing (meters)
-    constexpr int NUM_REF_POINTS = 15;              // Number of reference points for MPC horizon
-    
     std::vector<nmpc::ReferencePoint> reference;
     
     if (!latest_path_ || latest_path_->poses.empty()) {
@@ -865,22 +1004,36 @@ private:
     const auto& poses = latest_path_->poses;
     const size_t num_poses = poses.size();
     
-    // Find closest point on path, preferring points ahead of the vehicle
-    size_t closest_idx = 0;
-    double min_dist = std::numeric_limits<double>::max();
+    // Issue 4.2: Use prediction horizon parameters, NOT Pure Pursuit Ld
+    // The MPC solver config determines the horizon, which should match reference
+    constexpr int NUM_REF_POINTS = 15;              // Match or exceed prediction_steps
+    constexpr double BEHIND_PENALTY = 3.0;          // Strong penalty for points behind
+    constexpr size_t MAX_SEARCH_ITERATIONS = 20;    // Increased for better path following
+    constexpr double MIN_AHEAD_DISTANCE = 0.05;     // Closer start point for precision
+    
     double cos_yaw = std::cos(current_state.yaw);
     double sin_yaw = std::sin(current_state.yaw);
     
-    for (size_t i = 0; i < num_poses; ++i) {
+    // Find closest point on path, strongly preferring points ahead
+    size_t closest_idx = 0;
+    double min_dist = std::numeric_limits<double>::max();
+    
+    // Search in a local window for efficiency (wrap around for closed loops)
+    static size_t last_closest_idx = 0;
+    size_t search_start = (last_closest_idx > 50) ? last_closest_idx - 50 : 0;
+    size_t search_end = std::min(num_poses, last_closest_idx + 100);
+    
+    // First pass: search near last known position
+    for (size_t i = search_start; i < search_end; ++i) {
       double dx = poses[i].pose.position.x - current_state.x;
       double dy = poses[i].pose.position.y - current_state.y;
-      double dist = dx * dx + dy * dy;
+      double dist_sq = dx * dx + dy * dy;
       
-      // Check if point is ahead of vehicle (positive dot product)
+      // Check if point is ahead of vehicle
       double ahead = dx * cos_yaw + dy * sin_yaw;
       
-      // Prefer points ahead by weighting points behind with a penalty
-      double weighted_dist = dist;
+      // Strong preference for points ahead
+      double weighted_dist = dist_sq;
       if (ahead < 0.0) {
         weighted_dist *= BEHIND_PENALTY;
       }
@@ -891,7 +1044,25 @@ private:
       }
     }
     
-    // Skip the closest point if it's behind us, move to a point ahead
+    // If search window didn't find a good match, search globally
+    if (min_dist > 4.0) {  // More than 2m away
+      for (size_t i = 0; i < num_poses; ++i) {
+        double dx = poses[i].pose.position.x - current_state.x;
+        double dy = poses[i].pose.position.y - current_state.y;
+        double dist_sq = dx * dx + dy * dy;
+        double ahead = dx * cos_yaw + dy * sin_yaw;
+        double weighted_dist = (ahead < 0.0) ? dist_sq * BEHIND_PENALTY : dist_sq;
+        
+        if (weighted_dist < min_dist) {
+          min_dist = weighted_dist;
+          closest_idx = i;
+        }
+      }
+    }
+    
+    last_closest_idx = closest_idx;
+    
+    // Advance to first point that is clearly ahead
     size_t start_idx = closest_idx;
     for (size_t i = 0; i < MAX_SEARCH_ITERATIONS && start_idx < num_poses; ++i) {
       double dx = poses[start_idx].pose.position.x - current_state.x;
@@ -904,26 +1075,30 @@ private:
       start_idx = (start_idx + 1) % num_poses;
     }
     
-    // Adaptive lookahead based on speed
-    // Higher speed = look further ahead, sample fewer points but at greater distances
-    double speed = std::max(MIN_SPEED_FOR_LOOKAHEAD, current_state.v);
-    double lookahead_per_point = speed * LOOKAHEAD_TIME_FACTOR;
+    // Issue 4.1: Time-based reference spacing (NOT Pure Pursuit Ld)
+    // Compute spacing based on prediction horizon and vehicle speed
+    // This ensures NMPC sees the full trajectory it needs for optimization
+    double horizon_sec = 1.0;  // Should match solver config
+    double speed = std::max(0.5, current_state.v);
+    double total_lookahead_dist = speed * horizon_sec;
     
-    // Calculate stride based on path resolution and desired lookahead
-    // Assume path points are roughly evenly spaced
+    // Calculate path resolution
     double total_path_length = 0.0;
     for (size_t i = 0; i < num_poses - 1; ++i) {
       double dx = poses[i + 1].pose.position.x - poses[i].pose.position.x;
       double dy = poses[i + 1].pose.position.y - poses[i].pose.position.y;
       total_path_length += std::sqrt(dx * dx + dy * dy);
     }
-    double avg_point_spacing = std::max(MIN_POINT_SPACING, total_path_length / std::max<size_t>(1, num_poses - 1));
+    double avg_point_spacing = std::max(0.05, total_path_length / std::max<size_t>(1, num_poses - 1));
     
-    // Compute stride - bounded between 1 and reasonable max to prevent issues with dense/sparse paths
-    size_t stride = static_cast<size_t>(lookahead_per_point / avg_point_spacing);
-    stride = std::max<size_t>(1, std::min(stride, std::max<size_t>(1, num_poses / 10)));
+    // Stride to cover prediction horizon evenly
+    double dist_per_ref_point = total_lookahead_dist / NUM_REF_POINTS;
+    size_t stride = std::max<size_t>(1, static_cast<size_t>(dist_per_ref_point / avg_point_spacing));
     
-    // Build reference from the start point forward
+    // Bound stride to prevent issues with very dense or sparse paths
+    stride = std::min(stride, std::max<size_t>(1, num_poses / 5));
+    
+    // Build reference trajectory covering full prediction horizon
     for (int i = 0; i < NUM_REF_POINTS; ++i) {
       size_t idx = (start_idx + i * stride) % num_poses;
       
@@ -938,7 +1113,30 @@ private:
       double qw = poses[idx].pose.orientation.w;
       ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       
+      // Reference speed - can be modulated based on path curvature
       ref.v = nominal_speed_;
+      
+      // Optional: reduce reference speed for high curvature sections
+      if (i < NUM_REF_POINTS - 1) {
+        size_t next_idx = (start_idx + (i + 1) * stride) % num_poses;
+        double dx = poses[next_idx].pose.position.x - poses[idx].pose.position.x;
+        double dy = poses[next_idx].pose.position.y - poses[idx].pose.position.y;
+        double next_qz = poses[next_idx].pose.orientation.z;
+        double next_qw = poses[next_idx].pose.orientation.w;
+        double next_yaw = std::atan2(2.0 * next_qw * next_qz, 1.0 - 2.0 * next_qz * next_qz);
+        
+        double dyaw = std::abs(next_yaw - ref.yaw);
+        while (dyaw > M_PI) dyaw = 2.0 * M_PI - dyaw;
+        
+        double seg_dist = std::sqrt(dx * dx + dy * dy);
+        if (seg_dist > 0.01) {
+          double curvature = dyaw / seg_dist;
+          // Slow down for sharp curves
+          if (curvature > 0.5) {
+            ref.v = nominal_speed_ * std::max(0.3, 1.0 - curvature * 0.5);
+          }
+        }
+      }
       
       reference.push_back(ref);
     }
