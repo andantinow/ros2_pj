@@ -2,11 +2,20 @@
  * @file nmpc_engine_node.cpp
  * @brief Nonlinear Model Predictive Controller (NMPC) for autonomous racing
  * 
- * This implementation uses a bicycle kinematic model for prediction and
+ * This implementation uses a bicycle kinematic/dynamic model for prediction and
  * solves the optimization problem using iterative linearization (SQP-like approach).
+ * 
+ * Key Features (v2.0):
+ * - Levenberg-Marquardt regularization for numerical stability (Status 3 prevention)
+ * - Soft constraints with slack variables for infeasibility prevention (Status 4)
+ * - Dynamic bicycle model with Pacejka tire model for high-speed operation
+ * - Latency compensation for control delay handling
+ * - Lateral tolerance tube for optimal racing lines
  * 
  * State: [x, y, yaw, v]
  * Control: [steering_angle, acceleration]
+ * 
+ * Reference: ForzaETH autonomous racing stack architecture
  */
 
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
@@ -38,7 +47,7 @@ struct MPCConfig
 {
   double horizon_sec = 1.5;       // Prediction horizon in seconds (increased from 1.0 for better planning)
   int prediction_steps = 15;      // Number of prediction steps (N) (increased for finer resolution)
-  double dt = 0.1;                // Time step for prediction
+  double dt = 0.1;                // Time step for prediction (NOTE: computed as horizon_sec/prediction_steps in initialize)
   double wheelbase = 0.33;        // Vehicle wheelbase [m]
   
   // Vehicle dynamics parameters (for Dynamic Bicycle Model at high speed)
@@ -345,11 +354,12 @@ public:
       step_size = updateControlsWithRegularization(
         compensated_state, predicted_states, u, ref, lambda);
       
-      // Adaptive regularization: increase if cost not decreasing well
-      if (cost_change < 0.1 * prev_cost && lambda < 1.0) {
-        lambda *= 2.0;
-      } else if (cost_change > 0.3 * prev_cost && lambda > 1e-4) {
-        lambda *= 0.5;
+      // Adaptive regularization: increase if cost not decreasing well (use relative change)
+      double relative_change = (prev_cost > 1e-6) ? cost_change / prev_cost : 1.0;
+      if (relative_change < 0.1 && lambda < 1.0) {
+        lambda *= 2.0;  // Slow convergence: increase regularization
+      } else if (relative_change > 0.3 && lambda > 1e-4) {
+        lambda *= 0.5;  // Good convergence: decrease regularization
       }
       
       solution.cost = cost;
@@ -717,12 +727,19 @@ private:
     const std::vector<ReferencePoint>& reference,
     double lambda)
   {
-    // Learning rates with L-M regularization factor
-    double reg_factor = 1.0 / (1.0 + lambda);
-    double learning_rate_steer = 0.25 * reg_factor;
-    double learning_rate_accel = 0.20 * reg_factor;
+    // Base learning rates (can be tuned for different scenarios)
+    constexpr double BASE_LEARNING_RATE_STEER = 0.25;
+    constexpr double BASE_LEARNING_RATE_ACCEL = 0.20;
+    constexpr double GRADIENT_EPSILON = 1e-4;
+    constexpr double MAX_STEP_STEER = 0.1;
+    constexpr double MAX_STEP_ACCEL = 0.5;
     
-    const double epsilon = 1e-4;
+    // Learning rates with L-M regularization factor
+    // As lambda increases, steps become smaller (more conservative)
+    double reg_factor = 1.0 / (1.0 + lambda);
+    double learning_rate_steer = BASE_LEARNING_RATE_STEER * reg_factor;
+    double learning_rate_accel = BASE_LEARNING_RATE_ACCEL * reg_factor;
+    
     double total_step = 0.0;
     
     // Use batched gradient update for efficiency
@@ -735,8 +752,8 @@ private:
       // Numerical gradient for steering
       std::vector<ControlInput> u_plus = controls;
       std::vector<ControlInput> u_minus = controls;
-      u_plus[i].steering += epsilon;
-      u_minus[i].steering -= epsilon;
+      u_plus[i].steering += GRADIENT_EPSILON;
+      u_minus[i].steering -= GRADIENT_EPSILON;
       
       // Use dynamic model for high speed
       std::vector<VehicleState> states_plus, states_minus;
@@ -750,7 +767,7 @@ private:
       
       double cost_plus = computeCostWithSoftConstraints(states_plus, u_plus, reference, slack_dummy);
       double cost_minus = computeCostWithSoftConstraints(states_minus, u_minus, reference, slack_dummy);
-      grad_steer[i] = (cost_plus - cost_minus) / (2.0 * epsilon);
+      grad_steer[i] = (cost_plus - cost_minus) / (2.0 * GRADIENT_EPSILON);
       
       // Check for NaN gradient (numerical issue)
       if (std::isnan(grad_steer[i]) || std::isinf(grad_steer[i])) {
@@ -760,8 +777,8 @@ private:
       // Numerical gradient for acceleration
       u_plus = controls;
       u_minus = controls;
-      u_plus[i].acceleration += epsilon;
-      u_minus[i].acceleration -= epsilon;
+      u_plus[i].acceleration += GRADIENT_EPSILON;
+      u_minus[i].acceleration -= GRADIENT_EPSILON;
       
       if (current_state.v > config_.dynamic_model_threshold) {
         states_plus = forwardSimulateDynamic(current_state, u_plus);
@@ -773,7 +790,7 @@ private:
       
       cost_plus = computeCostWithSoftConstraints(states_plus, u_plus, reference, slack_dummy);
       cost_minus = computeCostWithSoftConstraints(states_minus, u_minus, reference, slack_dummy);
-      grad_accel[i] = (cost_plus - cost_minus) / (2.0 * epsilon);
+      grad_accel[i] = (cost_plus - cost_minus) / (2.0 * GRADIENT_EPSILON);
       
       // Check for NaN gradient
       if (std::isnan(grad_accel[i]) || std::isinf(grad_accel[i])) {
@@ -781,16 +798,12 @@ private:
       }
     }
     
-    // Apply updates with L-M regularization (add diagonal to Hessian approximation)
+    // Apply gradient descent updates
     for (size_t i = 0; i < controls.size(); ++i) {
-      // Regularized update: step = grad / (1 + lambda)
-      // This prevents overshooting when gradients are large
       double step_steer = learning_rate_steer * grad_steer[i];
       double step_accel = learning_rate_accel * grad_accel[i];
       
       // Gradient clipping for stability
-      constexpr double MAX_STEP_STEER = 0.1;
-      constexpr double MAX_STEP_ACCEL = 0.5;
       step_steer = std::clamp(step_steer, -MAX_STEP_STEER, MAX_STEP_STEER);
       step_accel = std::clamp(step_accel, -MAX_STEP_ACCEL, MAX_STEP_ACCEL);
       
