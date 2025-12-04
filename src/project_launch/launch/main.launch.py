@@ -47,7 +47,7 @@ def generate_launch_description():
     # Controller selection: 'nmpc' or 'simple'
     declare_controller = DeclareLaunchArgument(
         'controller',
-        default_value='simple',  # Default to simple controller for stability
+        default_value='nmpc',  # Default to NMPC controller for better performance
         description='Controller to use: nmpc or simple (Pure Pursuit + PID + Stanley)'
     )
 
