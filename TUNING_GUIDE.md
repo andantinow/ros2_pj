@@ -359,6 +359,35 @@ sudo chmod 666 /dev/input/js0
 sudo chmod 666 /dev/input/event*
 ```
 
+### 문제: 벽을 인식하지 못하거나 회피 조향이 안 됨
+
+**원인:** A1/A2 임계값이 너무 작거나, 조향 강도가 너무 낮음
+
+**증상 확인:**
+1. LiDAR 토픽 확인: `ros2 topic echo /scan`
+2. 컨트롤러 로그 확인: 벽 근처에서 `[WALL AVOID]` 로그가 출력되는지 확인
+
+**해결 (control_params.yaml에서 조정):**
+```yaml
+# 벽 인식 거리 증가 (더 일찍 감지)
+a1_threshold: 0.15         # 후진 트리거 (0.15m 이내)
+a2_threshold: 0.6          # 조향 회피 (0.6m 이내)
+
+# 회피 조향 강도 증가
+a2_steer_gain: 0.8         # 더 강한 회피 조향 (기본 0.4 -> 0.8)
+a2_max_steer_ratio: 0.8    # 최대 조향 비율 (기본 0.5 -> 0.8)
+```
+
+**A1/A2 시스템 설명:**
+| 범위 | 거리 | 동작 |
+|------|------|------|
+| A1 | < a1_threshold (0.15m) | 후진 + 반대방향 조향 |
+| A2 | a1 < dist < a2_threshold (0.6m) | 반대방향 조향만 (속도 감소) |
+
+**디버깅 팁:**
+- 벽 감지 시 `[WALL AVOID] RIGHT (wall on LEFT)` 형태의 로그 확인
+- 조향 값(steer), 거리(L/R/F), 긴급도(urgency) 값 확인
+
 ---
 
 ## 빠른 참조: 자주 쓰는 명령어

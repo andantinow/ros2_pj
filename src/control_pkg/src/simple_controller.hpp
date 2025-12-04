@@ -62,14 +62,14 @@ private:
   // === A1/A2 범위 기반 충돌 회피 시스템 ===
   // A1 범위: 좁은 범위 - 이 범위 안에 들어오면 후진 + 반대방향 조향
   // A2 범위: 넓은 범위 - A1보다 넓지만 이 범위 안에 들어오면 조향만 반대방향으로
-  double a1_threshold_ = 0.01;            // A1 범위: 후진 트리거 거리 (meters) - 0.01m 매우 가까운 충돌
-  double a2_threshold_ = 0.4;             // A2 범위: 조향 회피 거리 (meters) - 0.4m
+  double a1_threshold_ = 0.15;            // A1 범위: 후진 트리거 거리 (meters) - 0.15m 벽에 가까움
+  double a2_threshold_ = 0.6;             // A2 범위: 조향 회피 거리 (meters) - 0.6m
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
-  double a2_max_steer_ratio_ = 0.5;       // A2 최대 조향 비율 (max_steer_angle * 이 값)
+  double a2_max_steer_ratio_ = 0.8;       // A2 최대 조향 비율 (max_steer_angle * 이 값) - 더 강한 회피
   double reverse_speed_ = 0.5;            // 후진 속도 (m/s)
   double reverse_duration_ = 0.8;         // 후진 지속 시간 (seconds)
   double a1_steer_gain_ = 0.8;            // A1 범위에서 후진 시 조향 강도
-  double a2_steer_gain_ = 0.4;            // A2 범위에서 회피 조향 강도
+  double a2_steer_gain_ = 0.8;            // A2 범위에서 회피 조향 강도 - 더 강한 회피
   bool is_reversing_ = false;             // 현재 후진 중인지
   bool is_in_a1_zone_ = false;            // 현재 A1 범위에 있는지 (중복 체크 방지)
   rclcpp::Time reverse_start_time_;       // 후진 시작 시간

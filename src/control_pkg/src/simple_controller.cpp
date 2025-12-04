@@ -336,27 +336,36 @@ double SimpleController::compute_avoidance_steering()
   // 방향별 긴급도 계산 - 각 방향의 거리에 따라 다름
   constexpr double URGENCY_BOOST = 0.5;  // Boost factor for urgency-based steering
   
+  std::string avoid_direction = "NONE";
+  double urgency = 0.0;
+  
   if (left_dist < right_dist) {
     // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 급격히 조향 (음수)
     double left_urgency = 1.0 - (left_dist / a2_threshold_);
     left_urgency = std::clamp(left_urgency, 0.0, 1.0);
+    urgency = left_urgency;
     // 긴급도가 높을수록 조향 강도 증가
     double effective_gain = a2_steer_gain_ * (1.0 + left_urgency * URGENCY_BOOST);
     avoidance_steer = -max_steer_angle_ * effective_gain * left_urgency;
+    avoid_direction = "RIGHT (wall on LEFT)";
   } else if (right_dist < left_dist) {
     // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 급격히 조향 (양수)
     double right_urgency = 1.0 - (right_dist / a2_threshold_);
     right_urgency = std::clamp(right_urgency, 0.0, 1.0);
+    urgency = right_urgency;
     // 긴급도가 높을수록 조향 강도 증가
     double effective_gain = a2_steer_gain_ * (1.0 + right_urgency * URGENCY_BOOST);
     avoidance_steer = max_steer_angle_ * effective_gain * right_urgency;
+    avoid_direction = "LEFT (wall on RIGHT)";
   } else {
     // 전방 장애물 각도 기반
     double front_urgency = 1.0 - (front_dist / a2_threshold_);
     front_urgency = std::clamp(front_urgency, 0.0, 1.0);
+    urgency = front_urgency;
     if (std::abs(last_obstacle_angle_) > 0.05) {
       double effective_gain = a2_steer_gain_ * (1.0 + front_urgency * URGENCY_BOOST);
       avoidance_steer = -last_obstacle_angle_ * effective_gain;
+      avoid_direction = last_obstacle_angle_ > 0 ? "RIGHT (front-left wall)" : "LEFT (front-right wall)";
     }
   }
   
@@ -369,9 +378,12 @@ double SimpleController::compute_avoidance_steering()
   double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + min_urgency * URGENCY_BOOST);
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
-  RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-               "A2 Avoidance steer: %.3f (L:%.2f, R:%.2f, F:%.2f, urgency:%.2f)",
-               avoidance_steer, left_dist, right_dist, front_dist, min_urgency);
+  // 벽 감지 시 로그 출력 (디버깅용)
+  if (std::abs(avoidance_steer) > 0.01) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+                 "[WALL AVOID] %s | steer=%.3f | L:%.2fm R:%.2fm F:%.2fm | urgency:%.2f",
+                 avoid_direction.c_str(), avoidance_steer, left_dist, right_dist, front_dist, urgency);
+  }
   
   return avoidance_steer;
 }
