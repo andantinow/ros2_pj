@@ -204,15 +204,15 @@ def generate_launch_description():
             'max_speed': 7.0,                # Increased max speed (5.0 -> 7.0)
             'max_accel': 5.0,                # Increased max acceleration (3.0 -> 5.0)
             'min_accel': -6.0,               # Increased deceleration capability (-5.0 -> -6.0)
-            # A1/A2 collision avoidance parameters
-            'a1_threshold': 0.01,            # A1 range: very close collision reverse trigger (0.01m)
-            'a2_threshold': 0.4,             # A2 range: side steering avoidance distance (0.4m)
+            # A1/A2 collision avoidance parameters - Increased thresholds for better wall avoidance
+            'a1_threshold': 0.3,             # A1 range: reverse trigger distance (0.01m -> 0.3m)
+            'a2_threshold': 0.8,             # A2 range: side steering avoidance distance (0.4m -> 0.8m)
             'a1_side_factor': 0.8,           # A1 side distance factor
-            'a2_max_steer_ratio': 0.5,       # A2 max steering ratio
+            'a2_max_steer_ratio': 0.7,       # A2 max steering ratio (0.5 -> 0.7 for sharper avoidance)
             'reverse_speed': 0.5,            # Reverse speed (m/s)
             'reverse_duration': 0.8,         # Reverse duration (seconds)
             'a1_steer_gain': 0.8,            # A1 steering gain during reverse
-            'a2_steer_gain': 0.4,            # A2 avoidance steering gain
+            'a2_steer_gain': 0.6,            # A2 avoidance steering gain (0.4 -> 0.6 for stronger response)
             'enable_collision_avoidance': True,  # Enable collision avoidance
         }],
         condition=LaunchConfigurationEquals('controller', 'nmpc')
