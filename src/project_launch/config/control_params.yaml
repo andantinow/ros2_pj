@@ -6,9 +6,9 @@ simple_controller:
     accel_limit: 4.0
     decel_limit: -6.0
     speed_limit: 3.0           # Reduced for safer driving
-    lookahead_distance: 1.5    # Increased for earlier corner detection (1.2 -> 1.5)
-    min_lookahead: 1.0         # Increased for better corner handling and wider margin (0.8 -> 1.0)
-    max_lookahead: 3.0         # Increased for more look-ahead on straights (2.5 -> 3.0)
+    lookahead_distance: 2.0    # Increased for earlier corner detection (1.5 -> 2.0)
+    min_lookahead: 1.5         # Increased to look further ahead and avoid extreme angles (1.0 -> 1.5)
+    max_lookahead: 4.0         # Increased for more look-ahead on straights (3.0 -> 4.0)
     lookahead_speed_gain: 0.6  # Increased for more responsive lookahead on straights (0.5 -> 0.6)
     lookahead_error_gain: 1.5  # Reduced for less aggressive lateral error correction (2.0 -> 1.5)
     use_vref: true

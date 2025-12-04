@@ -31,8 +31,8 @@ private:
   bool scan_received_ = false;
 
   double lookahead_distance_ = 0.0;
-  double min_lookahead_ = 1.0;         // Increased for better corner handling (0.8 -> 1.0)
-  double max_lookahead_ = 3.0;         // Increased for more look-ahead on straights (2.0 -> 3.0)
+  double min_lookahead_ = 1.5;         // Increased to look further ahead (1.0 -> 1.5)
+  double max_lookahead_ = 4.0;         // Increased for more look-ahead on straights (3.0 -> 4.0)
   double lookahead_speed_gain_ = 0.6;  // Decreased for smoother look-ahead (0.8 -> 0.6)
   double lookahead_error_gain_ = 0.0;
   double target_speed_ = 2.0;
