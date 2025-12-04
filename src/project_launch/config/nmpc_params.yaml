@@ -8,6 +8,10 @@
 # - Issue 5.1: Lateral tolerance tube
 # - Issue 6.1: Soft constraints (Status 4 prevention)
 #
+# NOTE: These parameter values match the optimized defaults in nmpc_engine_node.cpp
+# which were tuned based on ForzaETH reference architecture recommendations.
+# Previous inline parameters in the launch file deviated from these optimal values.
+#
 # Reference: https://github.com/ForzaETH/race_stack
 # =============================================================================
 
@@ -29,7 +33,10 @@ nmpc_engine_node:
     # =========================================================================
     # TARGET SPEED AND VEHICLE PARAMETERS
     # =========================================================================
-    nominal_speed: 3.0           # [m/s] Target racing speed
+    # nominal_speed: Target racing speed - can be increased for faster racing
+    # Default: 2.5 m/s (matched to nmpc_engine_node.cpp)
+    # For competitive racing, consider increasing to 3.0-4.0 m/s
+    nominal_speed: 2.5           # [m/s] Target racing speed
     solver_wheelbase: 0.33       # [m] F1TENTH wheelbase
     
     # =========================================================================
@@ -49,10 +56,13 @@ nmpc_engine_node:
     #
     # Higher weight = stronger tracking of that objective
     # Lower weight = more flexibility in that dimension
+    #
+    # NOTE: These values match the optimized defaults in nmpc_engine_node.cpp
+    # based on ForzaETH reference architecture recommendations.
     
-    # State tracking weights
+    # State tracking weights (matched to nmpc_engine_node.cpp defaults)
     w_pos: 10.0                  # Position tracking weight (lateral error)
-    w_yaw: 10.0                  # Heading tracking weight
+    w_yaw: 10.0                  # Heading tracking weight (important for stability)
     w_vel: 3.0                   # Velocity tracking weight
     
     # Control effort weights
@@ -62,6 +72,7 @@ nmpc_engine_node:
     # CRITICAL: Control rate (slew rate) weights
     # Issue 3.1: High steering rate weight prevents oscillation on straights
     # This is the single most important tuning parameter for stability
+    # Value of 600.0 matches the optimized default in nmpc_engine_node.cpp
     w_steer_rate: 600.0          # Steering rate penalty - CRITICAL FOR STABILITY
     w_accel_rate: 60.0           # Acceleration rate penalty
     
