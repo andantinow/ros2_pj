@@ -47,6 +47,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   // A1/A2 범위 기반 충돌 회피 파라미터
   declare_parameter("a1_threshold", a1_threshold_);
   declare_parameter("a2_threshold", a2_threshold_);
+  declare_parameter("a1_side_factor", a1_side_factor_);
+  declare_parameter("a2_max_steer_ratio", a2_max_steer_ratio_);
   declare_parameter("reverse_speed", reverse_speed_);
   declare_parameter("reverse_duration", reverse_duration_);
   declare_parameter("a1_steer_gain", a1_steer_gain_);
@@ -81,6 +83,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   scan_topic_ = get_parameter("scan_topic").as_string();
   a1_threshold_ = get_parameter("a1_threshold").as_double();
   a2_threshold_ = get_parameter("a2_threshold").as_double();
+  a1_side_factor_ = get_parameter("a1_side_factor").as_double();
+  a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
   reverse_speed_ = get_parameter("reverse_speed").as_double();
   reverse_duration_ = get_parameter("reverse_duration").as_double();
   a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
@@ -234,24 +238,26 @@ void SimpleController::update_obstacle_distances()
 bool SimpleController::check_a1_zone()
 {
   if (!enable_collision_avoidance_ || !scan_received_) {
+    is_in_a1_zone_ = false;
     return false;
   }
   
   // 장애물 거리는 control_loop에서 미리 업데이트됨
+  double side_threshold = a1_threshold_ * a1_side_factor_;
   
   // A1 범위 내에 장애물이 있는지 확인
-  bool in_a1 = (last_obstacle_front_dist_ < a1_threshold_) ||
-               (last_obstacle_left_dist_ < a1_threshold_ * 0.8) ||
-               (last_obstacle_right_dist_ < a1_threshold_ * 0.8);
+  is_in_a1_zone_ = (last_obstacle_front_dist_ < a1_threshold_) ||
+                   (last_obstacle_left_dist_ < side_threshold) ||
+                   (last_obstacle_right_dist_ < side_threshold);
   
-  if (in_a1) {
+  if (is_in_a1_zone_) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                         "A1 Zone! Front: %.2fm, L: %.2fm, R: %.2fm (threshold: %.2fm)",
+                         "A1 Zone! Front: %.2fm, L: %.2fm, R: %.2fm (threshold: %.2fm, side: %.2fm)",
                          last_obstacle_front_dist_, last_obstacle_left_dist_, 
-                         last_obstacle_right_dist_, a1_threshold_);
+                         last_obstacle_right_dist_, a1_threshold_, side_threshold);
   }
   
-  return in_a1;
+  return is_in_a1_zone_;
 }
 
 /**
@@ -348,8 +354,8 @@ double SimpleController::compute_avoidance_steering()
     }
   }
   
-  // 조향 각도 제한
-  double max_avoidance = max_steer_angle_ * 0.5;  // 회피 시 최대 조향 제한
+  // 조향 각도 제한 (파라미터 사용)
+  double max_avoidance = max_steer_angle_ * a2_max_steer_ratio_;
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
   RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
@@ -647,9 +653,9 @@ void SimpleController::control_loop()
   double steering_angle = delta_pp + delta_pid + delta_stanley + delta_ff;
   
   // 6) A2 범위 기반 회피 조향 추가 (후진 없이 조향만)
-  // 주의: A1 범위가 아닐 때만 A2 체크
+  // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
-  if (!check_a1_zone() && check_a2_zone()) {
+  if (!is_in_a1_zone_ && check_a2_zone()) {
     delta_a2_avoidance = compute_avoidance_steering();
     steering_angle += delta_a2_avoidance;
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
@@ -684,8 +690,9 @@ void SimpleController::control_loop()
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
   
-  // A2 회피 중이면 속도 추가 감소
-  if (std::abs(delta_a2_avoidance) > 0.05) {
+  // A2 회피 중이면 속도 추가 감소 (delta_a2_avoidance가 유의미하면)
+  constexpr double A2_AVOIDANCE_ACTIVE_THRESHOLD = 0.02;  // 2% 이상이면 활성화로 판단
+  if (std::abs(delta_a2_avoidance) > A2_AVOIDANCE_ACTIVE_THRESHOLD) {
     speed_factor *= 0.7;  // 30% 감속
   }
   
