@@ -217,8 +217,12 @@ NMPC(Nonlinear Model Predictive Control)는 고성능 자율 주행에 권장되
 nmpc_engine_node:
   ros__parameters:
     # 예측 수평선 설정 (개선됨)
+    # ⚠️ 중요: dt = prediction_horizon / prediction_steps
+    # 예: 1.5s / 15 = 0.1s (100ms) 시간 해상도
+    # horizon 증가 → 더 먼 미래 예측 (코너 미리 인지)
+    # steps 증가 → 더 세밀한 시간 해상도 (계산 비용 증가)
     prediction_horizon: 1.5      # 예측 구간 (초) - 높으면 미리 계획, 낮으면 반응적 (1.0->1.5 증가)
-    prediction_steps: 15         # 예측 단계 수 (10->15 증가)
+    prediction_steps: 15         # 예측 단계 수 (10->15 증가) - dt=0.1s 유지
     control_rate_hz: 50.0        # 제어 루프 주파수 (Hz)
     nominal_speed: 2.5           # 목표 속도 (m/s) (2.0->2.5 증가)
     

@@ -503,9 +503,10 @@ private:
       alpha_f = std::clamp(alpha_f, -0.5, 0.5);
       alpha_r = std::clamp(alpha_r, -0.5, 0.5);
       
-      // Simplified Pacejka tire forces (linear approximation for small slip)
+      // Pacejka Magic Formula for tire lateral forces
       // F_y = D * sin(C * atan(B * alpha))
-      // For small alpha: F_y ≈ D * C * B * alpha (linear region)
+      // This is the simplified (no E parameter) Magic Formula that captures
+      // tire nonlinear behavior including saturation at large slip angles.
       double Fy_f = config_.tire_Df * std::sin(config_.tire_Cf * std::atan(config_.tire_Bf * alpha_f));
       double Fy_r = config_.tire_Dr * std::sin(config_.tire_Cr * std::atan(config_.tire_Br * alpha_r));
       
@@ -800,53 +801,6 @@ private:
     }
     
     return total_step;
-  }
-  
-  /**
-   * @brief Update controls using gradient descent
-   */
-  void updateControls(
-    const VehicleState& current_state,
-    const std::vector<VehicleState>& predicted_states,
-    std::vector<ControlInput>& controls,
-    const std::vector<ReferencePoint>& reference)
-  {
-    // Increased learning rates for faster convergence
-    const double learning_rate_steer = 0.2;   // Increased from 0.1
-    const double learning_rate_accel = 0.15;  // Increased from 0.05
-    const double epsilon = 1e-4;
-    
-    for (size_t i = 0; i < controls.size(); ++i) {
-      // Numerical gradient for steering
-      std::vector<ControlInput> u_plus = controls;
-      std::vector<ControlInput> u_minus = controls;
-      u_plus[i].steering += epsilon;
-      u_minus[i].steering -= epsilon;
-      
-      auto states_plus = forwardSimulate(current_state, u_plus);
-      auto states_minus = forwardSimulate(current_state, u_minus);
-      
-      double cost_plus = computeCost(states_plus, u_plus, reference);
-      double cost_minus = computeCost(states_minus, u_minus, reference);
-      double grad_steer = (cost_plus - cost_minus) / (2.0 * epsilon);
-      
-      // Numerical gradient for acceleration
-      u_plus = controls;
-      u_minus = controls;
-      u_plus[i].acceleration += epsilon;
-      u_minus[i].acceleration -= epsilon;
-      
-      states_plus = forwardSimulate(current_state, u_plus);
-      states_minus = forwardSimulate(current_state, u_minus);
-      
-      cost_plus = computeCost(states_plus, u_plus, reference);
-      cost_minus = computeCost(states_minus, u_minus, reference);
-      double grad_accel = (cost_plus - cost_minus) / (2.0 * epsilon);
-      
-      // Gradient descent update
-      controls[i].steering -= learning_rate_steer * grad_steer;
-      controls[i].acceleration -= learning_rate_accel * grad_accel;
-    }
   }
   
   /**
