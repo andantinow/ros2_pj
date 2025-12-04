@@ -2,11 +2,20 @@
  * @file nmpc_engine_node.cpp
  * @brief Nonlinear Model Predictive Controller (NMPC) for autonomous racing
  * 
- * This implementation uses a bicycle kinematic model for prediction and
+ * This implementation uses a bicycle kinematic/dynamic model for prediction and
  * solves the optimization problem using iterative linearization (SQP-like approach).
+ * 
+ * Key Features (v2.0):
+ * - Levenberg-Marquardt regularization for numerical stability (Status 3 prevention)
+ * - Soft constraints with slack variables for infeasibility prevention (Status 4)
+ * - Dynamic bicycle model with Pacejka tire model for high-speed operation
+ * - Latency compensation for control delay handling
+ * - Lateral tolerance tube for optimal racing lines
  * 
  * State: [x, y, yaw, v]
  * Control: [steering_angle, acceleration]
+ * 
+ * Reference: ForzaETH autonomous racing stack architecture
  */
 
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
@@ -36,42 +45,63 @@ namespace nmpc
 // MPC Configuration
 struct MPCConfig
 {
-  double horizon_sec = 1.0;       // Prediction horizon in seconds
-  int prediction_steps = 10;      // Number of prediction steps (N)
-  double dt = 0.1;                // Time step for prediction
+  double horizon_sec = 1.5;       // Prediction horizon in seconds (increased from 1.0 for better planning)
+  int prediction_steps = 15;      // Number of prediction steps (N) (increased for finer resolution)
+  double dt = 0.1;                // Time step for prediction (NOTE: computed as horizon_sec/prediction_steps in initialize)
   double wheelbase = 0.33;        // Vehicle wheelbase [m]
+  
+  // Vehicle dynamics parameters (for Dynamic Bicycle Model at high speed)
+  double vehicle_mass = 3.5;      // Vehicle mass [kg] (F1TENTH typical)
+  double vehicle_inertia = 0.04;  // Yaw moment of inertia [kg*m^2]
+  double lf = 0.17;               // Front axle to CG distance [m]
+  double lr = 0.16;               // Rear axle to CG distance [m]
+  double tire_Bf = 2.5;           // Pacejka tire coefficient B (front)
+  double tire_Cf = 1.3;           // Pacejka tire coefficient C (front)
+  double tire_Df = 4.5;           // Pacejka tire coefficient D (front) - max lateral force
+  double tire_Br = 2.5;           // Pacejka tire coefficient B (rear)
+  double tire_Cr = 1.3;           // Pacejka tire coefficient C (rear)
+  double tire_Dr = 4.5;           // Pacejka tire coefficient D (rear)
+  double dynamic_model_threshold = 2.5;  // Speed threshold for switching to dynamic model [m/s]
   
   // Weights for cost function
   // Issue 3.1: Strengthen control rate (slew rate) penalty to prevent oscillation
   // The steering rate weight is critical for stability - must be significantly higher
   // than position/heading weights to prevent Bang-Bang control behavior
   double w_pos = 10.0;            // Position tracking weight (lateral error)
-  double w_yaw = 8.0;             // Heading tracking weight (increased for stability)
-  double w_vel = 2.0;             // Velocity tracking weight
+  double w_yaw = 10.0;            // Heading tracking weight (increased for stability)
+  double w_vel = 3.0;             // Velocity tracking weight (increased)
   double w_steer = 0.5;           // Steering effort weight (reduced to allow necessary steering)
   double w_accel = 0.3;           // Acceleration effort weight
-  double w_steer_rate = 500.0;    // Steering rate weight - CRITICAL for oscillation suppression
-  double w_accel_rate = 50.0;     // Acceleration rate weight (smoothness)
+  double w_steer_rate = 600.0;    // Steering rate weight - CRITICAL for oscillation suppression (increased)
+  double w_accel_rate = 60.0;     // Acceleration rate weight (smoothness)
   
   // Issue 5.1: Lateral error tube - allow deviation from centerline within bounds
   // This enables NMPC to find optimal racing lines within the tube
-  double lateral_tolerance = 0.3; // Allow ±0.3m deviation from reference (Frenet tube)
-  double w_terminal = 20.0;       // Terminal cost weight for better convergence
+  double lateral_tolerance = 0.25; // Allow ±0.25m deviation from reference (Frenet tube)
+  double w_terminal = 30.0;       // Terminal cost weight for better convergence (increased)
+  
+  // Soft Constraint settings (Issue 6.1: Prevent Status 4 - Infeasibility)
+  // Slack variable weights for constraint violations
+  double w_slack_track = 1000.0;  // High penalty for track boundary violations
+  double w_slack_speed = 500.0;   // Penalty for speed constraint violations
+  double track_boundary_margin = 0.05;  // Additional margin for track boundaries [m]
   
   // Constraints
   double max_steer = 0.436;       // Maximum steering angle [rad] (25 degrees)
-  double max_steer_rate = 1.5;    // Maximum steering rate [rad/s] (slightly increased)
-  double max_accel = 3.0;         // Maximum acceleration [m/s^2]
-  double min_accel = -5.0;        // Maximum deceleration [m/s^2]
-  double max_speed = 5.0;         // Maximum speed [m/s]
+  double max_steer_rate = 1.8;    // Maximum steering rate [rad/s] (increased for responsiveness)
+  double max_accel = 4.0;         // Maximum acceleration [m/s^2] (increased)
+  double min_accel = -6.0;        // Maximum deceleration [m/s^2] (increased for safety)
+  double max_speed = 6.0;         // Maximum speed [m/s] (increased)
   double min_speed = 0.0;         // Minimum speed [m/s]
   
-  // Solver settings
-  int max_iterations = 15;        // Maximum SQP iterations (increased for better convergence)
-  double convergence_tol = 1e-4;  // Tighter convergence tolerance
+  // Solver settings (Issue 3.1: Levenberg-Marquardt regularization)
+  int max_iterations = 20;        // Maximum SQP iterations (increased for better convergence)
+  double convergence_tol = 1e-5;  // Tighter convergence tolerance
+  double levenberg_marquardt = 1e-2;  // L-M regularization for Hessian stability (Status 3 fix)
+  double min_step_size = 1e-6;    // Minimum step size before declaring convergence
   
   // Issue 3.3: Latency compensation
-  double latency_compensation_sec = 0.02;  // Default 20ms computation delay for forward simulation
+  double latency_compensation_sec = 0.05;  // Default 50ms total system delay (increased for realistic compensation)
 };
 
 // Vehicle state
@@ -99,6 +129,16 @@ struct ReferencePoint
   double v = 0.0;
 };
 
+// Solver status codes (similar to acados)
+enum class SolverStatus
+{
+  SUCCESS = 0,           // Optimal solution found
+  MAX_ITER = 1,          // Maximum iterations reached
+  INFEASIBLE = 2,        // Infeasible problem (Status 4 in acados)
+  NUMERICAL_ERROR = 3,   // Numerical error (Status 3 in acados - NaN/singularity)
+  MIN_STEP = 4           // Minimum step size reached
+};
+
 // MPC Solution
 struct MPCSolution
 {
@@ -107,7 +147,9 @@ struct MPCSolution
   bool feasible = false;
   double cost = 0.0;
   int iterations = 0;
+  SolverStatus status = SolverStatus::SUCCESS;
   std::vector<VehicleState> predicted_trajectory;  // NMPC 예측 궤적 (시각화용)
+  double slack_violation = 0.0;  // Total soft constraint violation (for monitoring)
 };
 
 /**
@@ -137,6 +179,10 @@ public:
       u.acceleration = 1.0;  // Start with positive acceleration to get vehicle moving
     }
     
+    // Reset solver state
+    consecutive_failures_ = 0;
+    last_solve_status_ = SolverStatus::SUCCESS;
+    
     RCLCPP_INFO(logger, 
       "NMPC Solver initialized | horizon: %.2fs, steps: %d, dt: %.3fs, wheelbase: %.2fm",
       config_.horizon_sec, config_.prediction_steps, config_.dt, config_.wheelbase);
@@ -146,8 +192,27 @@ public:
     RCLCPP_INFO(logger,
       "Lateral tolerance tube: %.2fm, Terminal weight: %.1f",
       config_.lateral_tolerance, config_.w_terminal);
+    RCLCPP_INFO(logger,
+      "Solver settings | L-M regularization: %.1e, max_iter: %d, convergence_tol: %.1e",
+      config_.levenberg_marquardt, config_.max_iterations, config_.convergence_tol);
+    RCLCPP_INFO(logger,
+      "Dynamic model threshold: %.2f m/s, Latency compensation: %.3fs",
+      config_.dynamic_model_threshold, config_.latency_compensation_sec);
     
     return true;
+  }
+  
+  /**
+   * @brief Reset the solver state (call when solver fails repeatedly)
+   */
+  void resetSolver()
+  {
+    for (auto& u : u_prev_) {
+      u.steering = 0.0;
+      u.acceleration = 0.5;
+    }
+    consecutive_failures_ = 0;
+    last_solve_status_ = SolverStatus::SUCCESS;
   }
   
   /**
@@ -192,10 +257,12 @@ public:
   {
     MPCSolution solution;
     solution.feasible = false;
+    solution.status = SolverStatus::SUCCESS;
     
     if (reference.empty()) {
       RCLCPP_WARN_THROTTLE(logger, *rclcpp::Clock::make_shared(), 2000,
         "NMPC: Empty reference trajectory");
+      solution.status = SolverStatus::INFEASIBLE;
       return solution;
     }
     
@@ -211,31 +278,111 @@ public:
     // Initialize control sequence (warm start from previous solution)
     std::vector<ControlInput> u = u_prev_;
     
-    // Iterative optimization (simplified SQP)
+    // Resize if needed
+    while (u.size() < static_cast<size_t>(config_.prediction_steps)) {
+      u.push_back(ControlInput{0.0, 0.5});
+    }
+    while (u.size() > static_cast<size_t>(config_.prediction_steps)) {
+      u.pop_back();
+    }
+    
+    // Issue 3.1 Fix: Levenberg-Marquardt regularization and improved SQP
+    // Iterative optimization with adaptive step size and regularization
     double prev_cost = std::numeric_limits<double>::max();
+    double lambda = config_.levenberg_marquardt;  // Initial regularization
+    double step_size = 1.0;
+    bool numerical_error = false;
     
     for (int iter = 0; iter < config_.max_iterations; ++iter) {
       // Forward simulate with current control sequence (using compensated state)
-      std::vector<VehicleState> predicted_states = forwardSimulate(compensated_state, u);
+      // Use dynamic model for high speed, kinematic for low speed
+      std::vector<VehicleState> predicted_states = 
+        (compensated_state.v > config_.dynamic_model_threshold) ?
+        forwardSimulateDynamic(compensated_state, u) :
+        forwardSimulate(compensated_state, u);
       
-      // Compute cost
-      double cost = computeCost(predicted_states, u, ref);
+      // Check for NaN in predicted states (Status 3 prevention)
+      for (const auto& state : predicted_states) {
+        if (std::isnan(state.x) || std::isnan(state.y) || 
+            std::isnan(state.yaw) || std::isnan(state.v)) {
+          numerical_error = true;
+          break;
+        }
+      }
       
-      // Check convergence
-      if (std::abs(prev_cost - cost) < config_.convergence_tol) {
-        solution.iterations = iter + 1;
+      if (numerical_error) {
+        RCLCPP_WARN_THROTTLE(logger, *rclcpp::Clock::make_shared(), 500,
+          "NMPC: NaN detected in prediction, resetting solver");
+        solution.status = SolverStatus::NUMERICAL_ERROR;
+        resetSolver();
+        consecutive_failures_++;
         break;
       }
+      
+      // Compute cost with soft constraints
+      double cost = computeCostWithSoftConstraints(predicted_states, u, ref, solution.slack_violation);
+      
+      // Check for NaN cost
+      if (std::isnan(cost) || std::isinf(cost)) {
+        numerical_error = true;
+        solution.status = SolverStatus::NUMERICAL_ERROR;
+        lambda *= 10.0;  // Increase regularization
+        continue;
+      }
+      
+      // Check convergence
+      double cost_change = std::abs(prev_cost - cost);
+      if (cost_change < config_.convergence_tol) {
+        solution.iterations = iter + 1;
+        solution.status = SolverStatus::SUCCESS;
+        break;
+      }
+      
+      // Check minimum step size (Status 3/4 prevention)
+      if (step_size < config_.min_step_size) {
+        solution.iterations = iter + 1;
+        solution.status = SolverStatus::MIN_STEP;
+        RCLCPP_DEBUG_THROTTLE(logger, *rclcpp::Clock::make_shared(), 1000,
+          "NMPC: Minimum step size reached at iteration %d", iter);
+        break;
+      }
+      
       prev_cost = cost;
       solution.iterations = iter + 1;
       
-      // Compute gradients and update controls
-      updateControls(compensated_state, predicted_states, u, ref);
+      // Compute gradients and update controls with L-M regularization
+      step_size = updateControlsWithRegularization(
+        compensated_state, predicted_states, u, ref, lambda);
+      
+      // Adaptive regularization: increase if cost not decreasing well (use relative change)
+      double relative_change = (prev_cost > 1e-6) ? cost_change / prev_cost : 1.0;
+      if (relative_change < 0.1 && lambda < 1.0) {
+        lambda *= 2.0;  // Slow convergence: increase regularization
+      } else if (relative_change > 0.3 && lambda > 1e-4) {
+        lambda *= 0.5;  // Good convergence: decrease regularization
+      }
       
       solution.cost = cost;
     }
     
-    // Apply constraints
+    // Handle solver failures
+    if (numerical_error || solution.iterations >= config_.max_iterations) {
+      if (solution.iterations >= config_.max_iterations) {
+        solution.status = SolverStatus::MAX_ITER;
+      }
+      consecutive_failures_++;
+      
+      // If too many consecutive failures, reset the solver
+      if (consecutive_failures_ > 5) {
+        RCLCPP_WARN_THROTTLE(logger, *rclcpp::Clock::make_shared(), 1000,
+          "NMPC: %d consecutive failures, resetting solver", consecutive_failures_);
+        resetSolver();
+      }
+    } else {
+      consecutive_failures_ = 0;
+    }
+    
+    // Apply constraints (with soft constraint handling)
     applyConstraints(u);
     
     // Store predicted trajectory for visualization (NMPC 예측 궤적)
@@ -267,18 +414,24 @@ public:
       }
       
       solution.speed = std::clamp(computed_speed, config_.min_speed, config_.max_speed);
-      solution.feasible = true;
+      solution.feasible = (solution.status == SolverStatus::SUCCESS || 
+                           solution.status == SolverStatus::MAX_ITER ||
+                           solution.status == SolverStatus::MIN_STEP);
     }
     
+    last_solve_status_ = solution.status;
     return solution;
   }
 
 private:
   MPCConfig config_;
   std::vector<ControlInput> u_prev_;
+  int consecutive_failures_ = 0;
+  SolverStatus last_solve_status_ = SolverStatus::SUCCESS;
   
   /**
-   * @brief Forward simulate vehicle trajectory using bicycle model
+   * @brief Forward simulate vehicle trajectory using kinematic bicycle model
+   * Used for low-speed operation (v < dynamic_model_threshold)
    */
   std::vector<VehicleState> forwardSimulate(
     const VehicleState& initial_state,
@@ -294,7 +447,10 @@ private:
       // Bicycle kinematic model integration (Euler method)
       double cos_yaw = std::cos(state.yaw);
       double sin_yaw = std::sin(state.yaw);
-      double tan_steer = std::tan(u.steering);
+      
+      // Clamp steering to prevent numerical issues with tan()
+      double clamped_steer = std::clamp(u.steering, -config_.max_steer * 0.99, config_.max_steer * 0.99);
+      double tan_steer = std::tan(clamped_steer);
       
       // State update
       state.x += state.v * cos_yaw * config_.dt;
@@ -303,6 +459,93 @@ private:
       state.v += u.acceleration * config_.dt;
       
       // Normalize yaw to [-pi, pi]
+      state.yaw = normalizeAngle(state.yaw);
+      
+      // Enforce speed limits
+      state.v = std::clamp(state.v, config_.min_speed, config_.max_speed);
+      
+      states.push_back(state);
+    }
+    
+    return states;
+  }
+  
+  /**
+   * @brief Forward simulate using Dynamic Bicycle Model (for high-speed operation)
+   * 
+   * Accounts for tire slip angles using simplified Pacejka tire model.
+   * Used when v > dynamic_model_threshold to capture tire slip effects.
+   * 
+   * State: [x, y, yaw, v, yaw_rate, slip_angle]
+   * This simplified version integrates yaw_rate into the kinematic state.
+   */
+  std::vector<VehicleState> forwardSimulateDynamic(
+    const VehicleState& initial_state,
+    const std::vector<ControlInput>& controls) const
+  {
+    std::vector<VehicleState> states;
+    states.reserve(controls.size() + 1);
+    states.push_back(initial_state);
+    
+    VehicleState state = initial_state;
+    double yaw_rate = 0.0;  // Initial yaw rate
+    double slip_angle = 0.0;  // Vehicle slip angle (beta)
+    
+    const double& m = config_.vehicle_mass;
+    const double& Iz = config_.vehicle_inertia;
+    const double& lf = config_.lf;
+    const double& lr = config_.lr;
+    
+    for (const auto& u : controls) {
+      double v = std::max(state.v, 0.1);  // Avoid division by zero
+      
+      // Clamp steering for numerical stability
+      double delta = std::clamp(u.steering, -config_.max_steer * 0.99, config_.max_steer * 0.99);
+      
+      // Compute tire slip angles
+      // Front slip angle: alpha_f = delta - atan((v_y + lf * r) / v_x)
+      // Rear slip angle: alpha_r = -atan((v_y - lr * r) / v_x)
+      // Simplified: assume v_x ≈ v, v_y ≈ v * beta
+      double alpha_f = delta - std::atan2(v * slip_angle + lf * yaw_rate, v);
+      double alpha_r = -std::atan2(v * slip_angle - lr * yaw_rate, v);
+      
+      // Clamp slip angles to prevent extreme values
+      alpha_f = std::clamp(alpha_f, -0.5, 0.5);
+      alpha_r = std::clamp(alpha_r, -0.5, 0.5);
+      
+      // Pacejka Magic Formula for tire lateral forces
+      // F_y = D * sin(C * atan(B * alpha))
+      // This is the simplified (no E parameter) Magic Formula that captures
+      // tire nonlinear behavior including saturation at large slip angles.
+      double Fy_f = config_.tire_Df * std::sin(config_.tire_Cf * std::atan(config_.tire_Bf * alpha_f));
+      double Fy_r = config_.tire_Dr * std::sin(config_.tire_Cr * std::atan(config_.tire_Br * alpha_r));
+      
+      // Dynamic equations (simplified, assuming constant v_x for this step)
+      // m * a_y = F_yf + F_yr  (lateral acceleration)
+      // Iz * r_dot = lf * F_yf - lr * F_yr  (yaw moment)
+      
+      double a_y = (Fy_f + Fy_r) / m;
+      double r_dot = (lf * Fy_f - lr * Fy_r) / Iz;
+      
+      // Update slip angle (beta_dot = a_y/v - r)
+      double beta_dot = a_y / v - yaw_rate;
+      
+      // Integrate states
+      double cos_yaw_beta = std::cos(state.yaw + slip_angle);
+      double sin_yaw_beta = std::sin(state.yaw + slip_angle);
+      
+      state.x += v * cos_yaw_beta * config_.dt;
+      state.y += v * sin_yaw_beta * config_.dt;
+      state.yaw += yaw_rate * config_.dt;
+      state.v += u.acceleration * config_.dt;
+      yaw_rate += r_dot * config_.dt;
+      slip_angle += beta_dot * config_.dt;
+      
+      // Clamp yaw rate and slip angle
+      yaw_rate = std::clamp(yaw_rate, -3.0, 3.0);
+      slip_angle = std::clamp(slip_angle, -0.3, 0.3);
+      
+      // Normalize yaw
       state.yaw = normalizeAngle(state.yaw);
       
       // Enforce speed limits
@@ -406,50 +649,171 @@ private:
   }
   
   /**
-   * @brief Update controls using gradient descent
+   * @brief Compute cost with soft constraints (Issue 6.1: Status 4 prevention)
+   * 
+   * Instead of hard constraints that cause infeasibility, we use soft constraints
+   * with slack variables. Constraint violations are allowed but heavily penalized.
+   * This ensures the solver always finds a solution, even if the solution
+   * slightly violates constraints.
+   * 
+   * @param slack_violation Output: total slack violation for monitoring
    */
-  void updateControls(
-    const VehicleState& current_state,
-    const std::vector<VehicleState>& predicted_states,
-    std::vector<ControlInput>& controls,
-    const std::vector<ReferencePoint>& reference)
+  double computeCostWithSoftConstraints(
+    const std::vector<VehicleState>& states,
+    const std::vector<ControlInput>& controls,
+    const std::vector<ReferencePoint>& reference,
+    double& slack_violation) const
   {
-    // Increased learning rates for faster convergence
-    const double learning_rate_steer = 0.2;   // Increased from 0.1
-    const double learning_rate_accel = 0.15;  // Increased from 0.05
-    const double epsilon = 1e-4;
+    // Start with base cost
+    double cost = computeCost(states, controls, reference);
+    slack_violation = 0.0;
     
+    // Add soft constraint violations (slack penalties)
+    for (size_t i = 0; i < states.size(); ++i) {
+      // Speed constraint violations (soft)
+      double speed_excess_high = std::max(0.0, states[i].v - config_.max_speed);
+      double speed_excess_low = std::max(0.0, config_.min_speed - states[i].v);
+      double speed_slack = speed_excess_high + speed_excess_low;
+      
+      cost += config_.w_slack_speed * (speed_slack * speed_slack + 0.1 * speed_slack);
+      slack_violation += speed_slack;
+      
+      // Track boundary violations would go here if we had track boundary info
+      // For now, we use lateral tolerance as a soft constraint (already in base cost)
+    }
+    
+    // Steering constraint violations (soft)
+    for (size_t i = 0; i < controls.size(); ++i) {
+      double steer_excess = std::max(0.0, std::abs(controls[i].steering) - config_.max_steer);
+      cost += config_.w_slack_track * steer_excess * steer_excess;
+      slack_violation += steer_excess;
+      
+      // Acceleration constraint violations
+      double accel_excess_high = std::max(0.0, controls[i].acceleration - config_.max_accel);
+      double accel_excess_low = std::max(0.0, config_.min_accel - controls[i].acceleration);
+      double accel_slack = accel_excess_high + accel_excess_low;
+      cost += config_.w_slack_speed * accel_slack * accel_slack;
+      slack_violation += accel_slack;
+      
+      // Steering rate constraint violations (soft)
+      if (i > 0) {
+        double d_steer = std::abs(controls[i].steering - controls[i-1].steering);
+        double max_d_steer = config_.max_steer_rate * config_.dt;
+        double rate_excess = std::max(0.0, d_steer - max_d_steer);
+        cost += config_.w_slack_track * rate_excess * rate_excess;
+        slack_violation += rate_excess;
+      }
+    }
+    
+    return cost;
+  }
+  
+  /**
+   * @brief Update controls using gradient descent with Levenberg-Marquardt regularization
+   * 
+   * Issue 3.1 Fix: Levenberg-Marquardt regularization prevents numerical issues
+   * when the Hessian becomes ill-conditioned (near singularity).
+   * 
+   * H_reg = H + lambda * I
+   * 
+   * This ensures the update step is always well-defined.
+   * 
+   * @return Actual step size taken (for adaptive regularization)
+   */
+  double updateControlsWithRegularization(
+    const VehicleState& current_state,
+    const std::vector<VehicleState>& /* predicted_states */,
+    std::vector<ControlInput>& controls,
+    const std::vector<ReferencePoint>& reference,
+    double lambda)
+  {
+    // Base learning rates (can be tuned for different scenarios)
+    constexpr double BASE_LEARNING_RATE_STEER = 0.25;
+    constexpr double BASE_LEARNING_RATE_ACCEL = 0.20;
+    constexpr double GRADIENT_EPSILON = 1e-4;
+    constexpr double MAX_STEP_STEER = 0.1;
+    constexpr double MAX_STEP_ACCEL = 0.5;
+    
+    // Learning rates with L-M regularization factor
+    // As lambda increases, steps become smaller (more conservative)
+    double reg_factor = 1.0 / (1.0 + lambda);
+    double learning_rate_steer = BASE_LEARNING_RATE_STEER * reg_factor;
+    double learning_rate_accel = BASE_LEARNING_RATE_ACCEL * reg_factor;
+    
+    double total_step = 0.0;
+    
+    // Use batched gradient update for efficiency
+    std::vector<double> grad_steer(controls.size(), 0.0);
+    std::vector<double> grad_accel(controls.size(), 0.0);
+    
+    // Compute all gradients first
+    double slack_dummy = 0.0;
     for (size_t i = 0; i < controls.size(); ++i) {
       // Numerical gradient for steering
       std::vector<ControlInput> u_plus = controls;
       std::vector<ControlInput> u_minus = controls;
-      u_plus[i].steering += epsilon;
-      u_minus[i].steering -= epsilon;
+      u_plus[i].steering += GRADIENT_EPSILON;
+      u_minus[i].steering -= GRADIENT_EPSILON;
       
-      auto states_plus = forwardSimulate(current_state, u_plus);
-      auto states_minus = forwardSimulate(current_state, u_minus);
+      // Use dynamic model for high speed
+      std::vector<VehicleState> states_plus, states_minus;
+      if (current_state.v > config_.dynamic_model_threshold) {
+        states_plus = forwardSimulateDynamic(current_state, u_plus);
+        states_minus = forwardSimulateDynamic(current_state, u_minus);
+      } else {
+        states_plus = forwardSimulate(current_state, u_plus);
+        states_minus = forwardSimulate(current_state, u_minus);
+      }
       
-      double cost_plus = computeCost(states_plus, u_plus, reference);
-      double cost_minus = computeCost(states_minus, u_minus, reference);
-      double grad_steer = (cost_plus - cost_minus) / (2.0 * epsilon);
+      double cost_plus = computeCostWithSoftConstraints(states_plus, u_plus, reference, slack_dummy);
+      double cost_minus = computeCostWithSoftConstraints(states_minus, u_minus, reference, slack_dummy);
+      grad_steer[i] = (cost_plus - cost_minus) / (2.0 * GRADIENT_EPSILON);
+      
+      // Check for NaN gradient (numerical issue)
+      if (std::isnan(grad_steer[i]) || std::isinf(grad_steer[i])) {
+        grad_steer[i] = 0.0;
+      }
       
       // Numerical gradient for acceleration
       u_plus = controls;
       u_minus = controls;
-      u_plus[i].acceleration += epsilon;
-      u_minus[i].acceleration -= epsilon;
+      u_plus[i].acceleration += GRADIENT_EPSILON;
+      u_minus[i].acceleration -= GRADIENT_EPSILON;
       
-      states_plus = forwardSimulate(current_state, u_plus);
-      states_minus = forwardSimulate(current_state, u_minus);
+      if (current_state.v > config_.dynamic_model_threshold) {
+        states_plus = forwardSimulateDynamic(current_state, u_plus);
+        states_minus = forwardSimulateDynamic(current_state, u_minus);
+      } else {
+        states_plus = forwardSimulate(current_state, u_plus);
+        states_minus = forwardSimulate(current_state, u_minus);
+      }
       
-      cost_plus = computeCost(states_plus, u_plus, reference);
-      cost_minus = computeCost(states_minus, u_minus, reference);
-      double grad_accel = (cost_plus - cost_minus) / (2.0 * epsilon);
+      cost_plus = computeCostWithSoftConstraints(states_plus, u_plus, reference, slack_dummy);
+      cost_minus = computeCostWithSoftConstraints(states_minus, u_minus, reference, slack_dummy);
+      grad_accel[i] = (cost_plus - cost_minus) / (2.0 * GRADIENT_EPSILON);
       
-      // Gradient descent update
-      controls[i].steering -= learning_rate_steer * grad_steer;
-      controls[i].acceleration -= learning_rate_accel * grad_accel;
+      // Check for NaN gradient
+      if (std::isnan(grad_accel[i]) || std::isinf(grad_accel[i])) {
+        grad_accel[i] = 0.0;
+      }
     }
+    
+    // Apply gradient descent updates
+    for (size_t i = 0; i < controls.size(); ++i) {
+      double step_steer = learning_rate_steer * grad_steer[i];
+      double step_accel = learning_rate_accel * grad_accel[i];
+      
+      // Gradient clipping for stability
+      step_steer = std::clamp(step_steer, -MAX_STEP_STEER, MAX_STEP_STEER);
+      step_accel = std::clamp(step_accel, -MAX_STEP_ACCEL, MAX_STEP_ACCEL);
+      
+      controls[i].steering -= step_steer;
+      controls[i].acceleration -= step_accel;
+      
+      total_step += std::abs(step_steer) + std::abs(step_accel);
+    }
+    
+    return total_step;
   }
   
   /**
@@ -513,34 +877,43 @@ public:
   : Node("nmpc_engine_node")
   {
     // Declare parameters
-    declare_parameter("prediction_horizon", 1.0);
-    declare_parameter("prediction_steps", 10);
+    declare_parameter("prediction_horizon", 1.5);   // Increased for better planning
+    declare_parameter("prediction_steps", 15);      // Increased for finer resolution
     declare_parameter("control_rate_hz", 50.0);
-    declare_parameter("nominal_speed", 2.0);
+    declare_parameter("nominal_speed", 2.5);        // Slightly higher default
     declare_parameter("solver_wheelbase", 0.33);
     
     // MPC weights - Issue 3.1: steering rate is critical
     declare_parameter("w_pos", 10.0);
-    declare_parameter("w_yaw", 8.0);           // Increased for stability
-    declare_parameter("w_vel", 2.0);
+    declare_parameter("w_yaw", 10.0);          // Increased for stability
+    declare_parameter("w_vel", 3.0);           // Increased for better velocity tracking
     declare_parameter("w_steer", 0.5);         // Reduced to allow necessary steering
     declare_parameter("w_accel", 0.3);
-    declare_parameter("w_steer_rate", 500.0);  // CRITICAL: High value prevents oscillation
-    declare_parameter("w_accel_rate", 50.0);
-    declare_parameter("w_terminal", 20.0);     // Terminal cost for convergence
+    declare_parameter("w_steer_rate", 600.0);  // CRITICAL: Higher value prevents oscillation
+    declare_parameter("w_accel_rate", 60.0);
+    declare_parameter("w_terminal", 30.0);     // Terminal cost for convergence
     
     // Issue 5.1: Lateral tolerance tube
-    declare_parameter("lateral_tolerance", 0.3);  // Allow ±0.3m deviation from centerline
+    declare_parameter("lateral_tolerance", 0.25);  // Allow ±0.25m deviation from centerline
     
     // Issue 3.3: Latency compensation
-    declare_parameter("latency_compensation_sec", 0.02);  // 20ms default computation latency
+    declare_parameter("latency_compensation_sec", 0.05);  // 50ms total system delay
+    
+    // Solver parameters (Issue 3.1: Levenberg-Marquardt)
+    declare_parameter("levenberg_marquardt", 0.01);       // L-M regularization for Hessian stability
+    declare_parameter("max_solver_iterations", 20);       // Maximum iterations
+    
+    // Dynamic model parameters
+    declare_parameter("dynamic_model_threshold", 2.5);    // Speed for switching to dynamic model
+    declare_parameter("vehicle_mass", 3.5);               // Vehicle mass [kg]
+    declare_parameter("vehicle_inertia", 0.04);           // Yaw moment of inertia [kg*m^2]
     
     // Constraints
     declare_parameter("max_steer", 0.436);  // 25 degrees in radians
-    declare_parameter("max_steer_rate", 1.5);  // rad/s
-    declare_parameter("max_speed", 5.0);
-    declare_parameter("max_accel", 3.0);
-    declare_parameter("min_accel", -5.0);
+    declare_parameter("max_steer_rate", 1.8);  // rad/s (increased)
+    declare_parameter("max_speed", 6.0);       // Increased max speed
+    declare_parameter("max_accel", 4.0);       // Increased acceleration
+    declare_parameter("min_accel", -6.0);      // Increased deceleration
     
     // Topic parameters
     declare_parameter<std::string>("odom_topic", "/dual_ekf/global_odom");  // Use Dual EKF output
@@ -626,6 +999,15 @@ public:
     // Issue 3.3: Latency compensation
     cfg.latency_compensation_sec = get_parameter("latency_compensation_sec").as_double();
     
+    // Solver settings (Issue 3.1: Levenberg-Marquardt)
+    cfg.levenberg_marquardt = get_parameter("levenberg_marquardt").as_double();
+    cfg.max_iterations = get_parameter("max_solver_iterations").as_int();
+    
+    // Dynamic model parameters
+    cfg.dynamic_model_threshold = get_parameter("dynamic_model_threshold").as_double();
+    cfg.vehicle_mass = get_parameter("vehicle_mass").as_double();
+    cfg.vehicle_inertia = get_parameter("vehicle_inertia").as_double();
+    
     // Constraints
     cfg.max_steer = get_parameter("max_steer").as_double();
     cfg.max_steer_rate = get_parameter("max_steer_rate").as_double();
@@ -639,6 +1021,8 @@ public:
     RCLCPP_INFO(get_logger(), "  - Steering rate weight: %.1f (Issue 3.1: oscillation suppression)", cfg.w_steer_rate);
     RCLCPP_INFO(get_logger(), "  - Lateral tolerance: %.2fm (Issue 5.1: racing line tube)", cfg.lateral_tolerance);
     RCLCPP_INFO(get_logger(), "  - Latency compensation: %.3fs (Issue 3.3: delay handling)", cfg.latency_compensation_sec);
+    RCLCPP_INFO(get_logger(), "  - L-M regularization: %.1e (Status 3 prevention)", cfg.levenberg_marquardt);
+    RCLCPP_INFO(get_logger(), "  - Dynamic model threshold: %.2f m/s", cfg.dynamic_model_threshold);
 
     // Setup subscribers
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -770,6 +1154,21 @@ private:
     // Solve MPC
     auto solution = solver_.solve(current_state, reference, get_logger());
     
+    // Log solver status for debugging (Status 3/4 monitoring)
+    if (solution.status != nmpc::SolverStatus::SUCCESS) {
+      const char* status_str = "UNKNOWN";
+      switch (solution.status) {
+        case nmpc::SolverStatus::MAX_ITER: status_str = "MAX_ITER"; break;
+        case nmpc::SolverStatus::INFEASIBLE: status_str = "INFEASIBLE (Status 4)"; break;
+        case nmpc::SolverStatus::NUMERICAL_ERROR: status_str = "NUMERICAL_ERROR (Status 3)"; break;
+        case nmpc::SolverStatus::MIN_STEP: status_str = "MIN_STEP"; break;
+        default: break;
+      }
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+        "NMPC Solver: %s after %d iterations, slack_violation=%.4f",
+        status_str, solution.iterations, solution.slack_violation);
+    }
+    
     // Track steering for collision recovery (before A2 modifications)
     if (!is_reversing_) {
       last_steering_before_collision_ = solution.steering;
@@ -810,10 +1209,11 @@ private:
     publishDriveCommand(solution);
     
     // Debug logging using RCLCPP_INFO_THROTTLE for thread safety
+    const char* model_type = (current_state.v > 2.5) ? "DYN" : "KIN";
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,  // Every 1 second
-      "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f, horizon=%.2fs]",
-      current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
-      solution.steering, solution.speed, solution.iterations, solution.cost, prediction_horizon_);
+      "MPC[%s]: state(%.2f, %.2f, %.1f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.1f]",
+      model_type, current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
+      solution.steering, solution.speed, solution.iterations, solution.cost);
   }
   
   /**
