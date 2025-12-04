@@ -903,13 +903,25 @@ void SimpleController::control_loop()
 
 double SimpleController::compute_adaptive_lookahead(double speed)
 {
-  // Adaptive lookahead: increases with speed (Pure Pursuit optimization)
-  // Formula: L = clamp(L_min + speed_gain * v, L_min, L_max)
-  // Range: 0.8m (low speed) ~ 2.0m (high speed)
-  // - Low speed: close lookahead for precise cornering, prevents cutting corners
-  // - High speed: far lookahead for smooth stability
-  double adaptive = min_lookahead_ + lookahead_speed_gain_ * speed;
-  return std::max(min_lookahead_, std::min(max_lookahead_, adaptive));
+  // Adaptive lookahead: uses lookahead_distance_ as the base value
+  // Formula: L = clamp(base + speed_gain * v, L_min, L_max)
+  // - lookahead_distance_: base lookahead distance (user-configurable via parameter)
+  // - lookahead_speed_gain_: how much lookahead increases with speed
+  // - Low speed: lookahead close to lookahead_distance_ for precise cornering
+  // - High speed: lookahead increases for smooth stability
+  double base_lookahead = std::max(min_lookahead_, lookahead_distance_);
+  double adaptive = base_lookahead + lookahead_speed_gain_ * speed;
+  double result = std::max(min_lookahead_, std::min(max_lookahead_, adaptive));
+  
+  // Log lookahead changes for debugging (every 50 calls = ~1 second at 20ms timer)
+  static int lookahead_log_count = 0;
+  if (lookahead_log_count++ % 50 == 0) {
+    RCLCPP_INFO(this->get_logger(), 
+                "Lookahead: base=%.2f, speed=%.2f, adaptive=%.2f (min=%.2f, max=%.2f, gain=%.2f)",
+                base_lookahead, speed, result, min_lookahead_, max_lookahead_, lookahead_speed_gain_);
+  }
+  
+  return result;
 }
 
 double SimpleController::compute_lateral_error(double current_x, double current_y, double current_yaw, 
