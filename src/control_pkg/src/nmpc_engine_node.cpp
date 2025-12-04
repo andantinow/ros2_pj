@@ -1002,28 +1002,29 @@ private:
     
     double best_gap_center = lookahead_angle;
     double best_gap_score = -1.0;
-    int gap_start_idx = -1;
+    ssize_t gap_start_idx = -1;
     
     for (size_t i = 0; i < rays.size(); ++i) {
       if (!rays[i].is_obstacle) {
         if (gap_start_idx < 0) {
-          gap_start_idx = i;
+          gap_start_idx = static_cast<ssize_t>(i);
         }
       } else {
         if (gap_start_idx >= 0) {
-          int gap_end_idx = i - 1;
-          double gap_start_angle = rays[gap_start_idx].angle;
+          size_t gap_end_idx = i - 1;
+          size_t gap_start = static_cast<size_t>(gap_start_idx);
+          double gap_start_angle = rays[gap_start].angle;
           double gap_end_angle = rays[gap_end_idx].angle;
           double gap_width = gap_end_angle - gap_start_angle;
           double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
           
           double avg_range = 0.0;
-          int count = 0;
-          for (int j = gap_start_idx; j <= gap_end_idx; ++j) {
+          size_t count = 0;
+          for (size_t j = gap_start; j <= gap_end_idx; ++j) {
             avg_range += rays[j].range;
             count++;
           }
-          avg_range = count > 0 ? avg_range / count : 0.0;
+          avg_range = count > 0 ? avg_range / static_cast<double>(count) : 0.0;
           
           double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
           double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
@@ -1039,19 +1040,20 @@ private:
     }
     
     if (gap_start_idx >= 0) {
-      int gap_end_idx = rays.size() - 1;
-      double gap_start_angle = rays[gap_start_idx].angle;
+      size_t gap_end_idx = rays.size() - 1;
+      size_t gap_start = static_cast<size_t>(gap_start_idx);
+      double gap_start_angle = rays[gap_start].angle;
       double gap_end_angle = rays[gap_end_idx].angle;
       double gap_width = gap_end_angle - gap_start_angle;
       double gap_center = (gap_start_angle + gap_end_angle) / 2.0;
       
       double avg_range = 0.0;
-      int count = 0;
-      for (size_t j = gap_start_idx; j <= static_cast<size_t>(gap_end_idx); ++j) {
+      size_t count = 0;
+      for (size_t j = gap_start; j <= gap_end_idx; ++j) {
         avg_range += rays[j].range;
         count++;
       }
-      avg_range = count > 0 ? avg_range / count : 0.0;
+      avg_range = count > 0 ? avg_range / static_cast<double>(count) : 0.0;
       
       double direction_bonus = 1.0 - std::abs(gap_center - lookahead_angle) / SEARCH_HALF_ANGLE;
       double score = gap_width * avg_range * (0.5 + 0.5 * direction_bonus);
