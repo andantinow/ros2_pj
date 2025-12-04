@@ -10,6 +10,7 @@ find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # Simple Controller Node
@@ -32,6 +33,7 @@ ament_target_dependencies(simple_controller_node
   geometry_msgs
   tf2_geometry_msgs
   sensor_msgs
+  visualization_msgs
 )
 
 target_link_libraries(simple_controller_node
@@ -55,6 +57,7 @@ ament_target_dependencies(nmpc_engine_node
   ackermann_msgs
   geometry_msgs
   sensor_msgs
+  visualization_msgs
 )
 
 target_link_libraries(nmpc_engine_node

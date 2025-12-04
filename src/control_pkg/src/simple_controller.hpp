@@ -7,6 +7,7 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 #include <tf2/utils.h>
 #include <vector>
 #include <string>
@@ -21,6 +22,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   nav_msgs::msg::Odometry current_odom_;
@@ -111,5 +113,6 @@ private:
   double compute_reverse_steering();        // 후진 시 조향 계산 (A1)
   double compute_avoidance_steering();      // 회피 조향 계산 (A2)
   void update_obstacle_distances();         // 장애물 거리 업데이트
+  void publish_lookahead_marker(double x, double y, double z);  // Lookahead 시각화
 };
 #endif

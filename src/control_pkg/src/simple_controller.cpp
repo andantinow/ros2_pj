@@ -6,7 +6,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 #include <rclcpp/qos.hpp>
-#include <rclcpp/qos.hpp>
+#include <visualization_msgs/msg/marker.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -119,10 +119,16 @@ SimpleController::SimpleController() : Node("simple_controller")
       drive_topic_,
       10);
   
+  // Lookahead point visualization marker publisher (빨간 점으로 표시)
+  lookahead_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+      "/pid_lookahead_point",
+      rclcpp::QoS(1));
+  
   RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, publishing to drive: %s", 
               odom_topic_.c_str(), path_topic_.c_str(), scan_topic_.c_str(), drive_topic_.c_str());
   RCLCPP_INFO(this->get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), reverse_speed=%.2fm/s",
               a1_threshold_, a2_threshold_, reverse_speed_);
+  RCLCPP_INFO(this->get_logger(), "Lookahead point visualization: /pid_lookahead_point (RED sphere)");
 
   timer_ = this->create_wall_timer(
       20ms, std::bind(&SimpleController::control_loop, this));
@@ -625,6 +631,9 @@ void SimpleController::control_loop()
 
   double target_x_global = target_pose.pose.position.x;
   double target_y_global = target_pose.pose.position.y;
+  
+  // Publish lookahead point visualization (빨간 점)
+  publish_lookahead_marker(target_x_global, target_y_global, 0.15);
 
   // Transform target to vehicle frame
   // Vehicle frame: x forward, y left, z up
@@ -955,4 +964,37 @@ double SimpleController::smooth_steering(double new_steering, double prev_steeri
 {
   // Exponential moving average filter
   return smoothing_factor_ * new_steering + (1.0 - smoothing_factor_) * prev_steering;
+}
+
+void SimpleController::publish_lookahead_marker(double x, double y, double z)
+{
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = "map";
+  marker.header.stamp = this->get_clock()->now();
+  marker.ns = "pid_lookahead";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::SPHERE;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  
+  marker.pose.position.x = x;
+  marker.pose.position.y = y;
+  marker.pose.position.z = z;
+  marker.pose.orientation.x = 0.0;
+  marker.pose.orientation.y = 0.0;
+  marker.pose.orientation.z = 0.0;
+  marker.pose.orientation.w = 1.0;
+  
+  // 빨간 점으로 표시 (크기 0.3m)
+  marker.scale.x = 0.3;
+  marker.scale.y = 0.3;
+  marker.scale.z = 0.3;
+  
+  marker.color.r = 1.0f;
+  marker.color.g = 0.0f;
+  marker.color.b = 0.0f;
+  marker.color.a = 1.0f;
+  
+  marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+  
+  lookahead_marker_pub_->publish(marker);
 }

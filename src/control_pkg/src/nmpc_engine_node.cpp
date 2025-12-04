@@ -14,6 +14,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <visualization_msgs/msg/marker.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <Eigen/Dense>
@@ -106,6 +107,7 @@ struct MPCSolution
   bool feasible = false;
   double cost = 0.0;
   int iterations = 0;
+  std::vector<VehicleState> predicted_trajectory;  // NMPC 예측 궤적 (시각화용)
 };
 
 /**
@@ -235,6 +237,10 @@ public:
     
     // Apply constraints
     applyConstraints(u);
+    
+    // Store predicted trajectory for visualization (NMPC 예측 궤적)
+    std::vector<VehicleState> final_predicted_states = forwardSimulate(compensated_state, u);
+    solution.predicted_trajectory = final_predicted_states;
     
     // Store for warm start
     u_prev_ = u;
@@ -659,6 +665,16 @@ public:
     // Setup publisher
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic, rclcpp::QoS(10));
+    
+    // NMPC 예측 궤적 시각화 publisher (녹색 라인으로 표시)
+    nmpc_trajectory_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+      "/nmpc_predicted_trajectory", rclcpp::QoS(1));
+    
+    // NMPC 레퍼런스 포인트 시각화 publisher (파란 점으로 표시)
+    nmpc_reference_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+      "/nmpc_reference_points", rclcpp::QoS(1));
+    
+    RCLCPP_INFO(get_logger(), "NMPC visualization: /nmpc_predicted_trajectory (GREEN), /nmpc_reference_points (BLUE)");
 
     // Setup control timer
     const double period_s = 1.0 / std::max(1.0, control_rate_hz_);
@@ -767,6 +783,9 @@ private:
         "A2 Zone: adding avoidance steer=%.3f, slowdown=%.1f%%", 
         delta_a2_avoidance, slowdown_factor * 100.0);
     }
+    
+    // Publish NMPC visualization (예측 궤적 + 레퍼런스)
+    publishNMPCVisualization(solution.predicted_trajectory, reference);
     
     // Publish result
     publishDriveCommand(solution);
@@ -1170,12 +1189,90 @@ private:
     
     drive_pub_->publish(cmd);
   }
+  
+  /**
+   * @brief Publish NMPC visualization (예측 궤적 + 레퍼런스 포인트)
+   * 예측 궤적: 녹색 LINE_STRIP
+   * 레퍼런스 포인트: 파란 SPHERE_LIST
+   */
+  void publishNMPCVisualization(
+    const std::vector<nmpc::VehicleState>& predicted_trajectory,
+    const std::vector<nmpc::ReferencePoint>& reference)
+  {
+    rclcpp::Time current_time = now();
+    
+    // 1. NMPC 예측 궤적 (녹색 라인)
+    if (!predicted_trajectory.empty()) {
+      visualization_msgs::msg::Marker traj_marker;
+      traj_marker.header.frame_id = "map";
+      traj_marker.header.stamp = current_time;
+      traj_marker.ns = "nmpc_prediction";
+      traj_marker.id = 0;
+      traj_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+      traj_marker.action = visualization_msgs::msg::Marker::ADD;
+      
+      traj_marker.scale.x = 0.08;  // 라인 두께
+      
+      traj_marker.color.r = 0.0f;
+      traj_marker.color.g = 1.0f;
+      traj_marker.color.b = 0.0f;
+      traj_marker.color.a = 1.0f;
+      
+      traj_marker.pose.orientation.w = 1.0;
+      
+      for (const auto& state : predicted_trajectory) {
+        geometry_msgs::msg::Point p;
+        p.x = state.x;
+        p.y = state.y;
+        p.z = 0.1;
+        traj_marker.points.push_back(p);
+      }
+      
+      traj_marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+      nmpc_trajectory_pub_->publish(traj_marker);
+    }
+    
+    // 2. NMPC 레퍼런스 포인트 (파란 점들)
+    if (!reference.empty()) {
+      visualization_msgs::msg::Marker ref_marker;
+      ref_marker.header.frame_id = "map";
+      ref_marker.header.stamp = current_time;
+      ref_marker.ns = "nmpc_reference";
+      ref_marker.id = 0;
+      ref_marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+      ref_marker.action = visualization_msgs::msg::Marker::ADD;
+      
+      ref_marker.scale.x = 0.15;
+      ref_marker.scale.y = 0.15;
+      ref_marker.scale.z = 0.15;
+      
+      ref_marker.color.r = 0.0f;
+      ref_marker.color.g = 0.0f;
+      ref_marker.color.b = 1.0f;
+      ref_marker.color.a = 0.7f;
+      
+      ref_marker.pose.orientation.w = 1.0;
+      
+      for (const auto& ref_pt : reference) {
+        geometry_msgs::msg::Point p;
+        p.x = ref_pt.x;
+        p.y = ref_pt.y;
+        p.z = 0.05;
+        ref_marker.points.push_back(p);
+      }
+      
+      ref_marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+      nmpc_reference_pub_->publish(ref_marker);
+    }
+  }
 
   // ROS2 interfaces
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nmpc_trajectory_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nmpc_reference_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // State
