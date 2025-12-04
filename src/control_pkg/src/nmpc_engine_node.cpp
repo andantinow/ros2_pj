@@ -847,6 +847,15 @@ private:
    */
   std::vector<nmpc::ReferencePoint> buildReference(const nmpc::VehicleState& current_state) const
   {
+    // Constants for reference trajectory building
+    constexpr size_t MAX_SEARCH_ITERATIONS = 10;    // Max iterations when searching for point ahead
+    constexpr double MIN_AHEAD_DISTANCE = 0.1;      // Minimum distance ahead to consider (meters)
+    constexpr double BEHIND_PENALTY = 2.0;          // Weight penalty for points behind vehicle
+    constexpr double MIN_SPEED_FOR_LOOKAHEAD = 0.5; // Minimum speed for lookahead calculation (m/s)
+    constexpr double LOOKAHEAD_TIME_FACTOR = 0.15;  // Time factor for lookahead (~seconds per point)
+    constexpr double MIN_POINT_SPACING = 0.05;      // Minimum assumed point spacing (meters)
+    constexpr int NUM_REF_POINTS = 15;              // Number of reference points for MPC horizon
+    
     std::vector<nmpc::ReferencePoint> reference;
     
     if (!latest_path_ || latest_path_->poses.empty()) {
@@ -856,36 +865,40 @@ private:
     const auto& poses = latest_path_->poses;
     const size_t num_poses = poses.size();
     
-    // Find closest point on path that is ahead of the vehicle
+    // Find closest point on path, preferring points ahead of the vehicle
     size_t closest_idx = 0;
     double min_dist = std::numeric_limits<double>::max();
+    double cos_yaw = std::cos(current_state.yaw);
+    double sin_yaw = std::sin(current_state.yaw);
     
     for (size_t i = 0; i < num_poses; ++i) {
       double dx = poses[i].pose.position.x - current_state.x;
       double dy = poses[i].pose.position.y - current_state.y;
       double dist = dx * dx + dy * dy;
       
-      // Check if point is ahead of vehicle
-      double cos_yaw = std::cos(current_state.yaw);
-      double sin_yaw = std::sin(current_state.yaw);
-      double ahead = dx * cos_yaw + dy * sin_yaw;  // Positive if ahead
+      // Check if point is ahead of vehicle (positive dot product)
+      double ahead = dx * cos_yaw + dy * sin_yaw;
       
-      if (dist < min_dist) {
-        min_dist = dist;
+      // Prefer points ahead by weighting points behind with a penalty
+      double weighted_dist = dist;
+      if (ahead < 0.0) {
+        weighted_dist *= BEHIND_PENALTY;
+      }
+      
+      if (weighted_dist < min_dist) {
+        min_dist = weighted_dist;
         closest_idx = i;
       }
     }
     
     // Skip the closest point if it's behind us, move to a point ahead
     size_t start_idx = closest_idx;
-    for (size_t i = 0; i < 10 && start_idx < num_poses; ++i) {
+    for (size_t i = 0; i < MAX_SEARCH_ITERATIONS && start_idx < num_poses; ++i) {
       double dx = poses[start_idx].pose.position.x - current_state.x;
       double dy = poses[start_idx].pose.position.y - current_state.y;
-      double cos_yaw = std::cos(current_state.yaw);
-      double sin_yaw = std::sin(current_state.yaw);
       double ahead = dx * cos_yaw + dy * sin_yaw;
       
-      if (ahead > 0.1) {  // Point is at least 0.1m ahead
+      if (ahead > MIN_AHEAD_DISTANCE) {
         break;
       }
       start_idx = (start_idx + 1) % num_poses;
@@ -893,8 +906,8 @@ private:
     
     // Adaptive lookahead based on speed
     // Higher speed = look further ahead, sample fewer points but at greater distances
-    double speed = std::max(0.5, current_state.v);  // Minimum 0.5 m/s for lookahead calculation
-    double lookahead_per_point = speed * 0.15;      // ~0.15 seconds worth of distance per point
+    double speed = std::max(MIN_SPEED_FOR_LOOKAHEAD, current_state.v);
+    double lookahead_per_point = speed * LOOKAHEAD_TIME_FACTOR;
     
     // Calculate stride based on path resolution and desired lookahead
     // Assume path points are roughly evenly spaced
@@ -904,15 +917,13 @@ private:
       double dy = poses[i + 1].pose.position.y - poses[i].pose.position.y;
       total_path_length += std::sqrt(dx * dx + dy * dy);
     }
-    double avg_point_spacing = total_path_length / std::max<size_t>(1, num_poses - 1);
+    double avg_point_spacing = std::max(MIN_POINT_SPACING, total_path_length / std::max<size_t>(1, num_poses - 1));
     
-    // Compute stride - minimum 1 point, maximum depends on path density
-    size_t stride = std::max<size_t>(1, static_cast<size_t>(lookahead_per_point / std::max(0.01, avg_point_spacing)));
-    stride = std::min(stride, num_poses / 10);  // Don't skip more than 10% of path per step
+    // Compute stride - bounded between 1 and reasonable max to prevent issues with dense/sparse paths
+    size_t stride = static_cast<size_t>(lookahead_per_point / avg_point_spacing);
+    stride = std::max<size_t>(1, std::min(stride, std::max<size_t>(1, num_poses / 10)));
     
     // Build reference from the start point forward
-    constexpr int NUM_REF_POINTS = 15;  // Number of reference points for MPC horizon
-    
     for (int i = 0; i < NUM_REF_POINTS; ++i) {
       size_t idx = (start_idx + i * stride) % num_poses;
       

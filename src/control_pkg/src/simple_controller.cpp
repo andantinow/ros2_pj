@@ -333,38 +333,45 @@ double SimpleController::compute_avoidance_steering()
   double right_dist = std::min(last_obstacle_right_dist_, 5.0);
   double front_dist = std::min(last_obstacle_front_dist_, 5.0);
   
-  // 거리가 가까울수록 더 강한 회피 - 가장 가까운 장애물 기준
-  double min_dist = std::min(left_dist, std::min(right_dist, front_dist));
-  double urgency = 1.0 - (min_dist / a2_threshold_);
-  urgency = std::clamp(urgency, 0.0, 1.0);
-  
-  // 증가된 조향 강도 - 긴급할수록 더 강하게
-  double effective_gain = a2_steer_gain_ * (1.0 + urgency);
+  // 방향별 긴급도 계산 - 각 방향의 거리에 따라 다름
+  constexpr double URGENCY_BOOST = 0.5;  // Boost factor for urgency-based steering
   
   if (left_dist < right_dist) {
     // 왼쪽에 장애물이 더 가까움 -> 오른쪽으로 급격히 조향 (음수)
     double left_urgency = 1.0 - (left_dist / a2_threshold_);
     left_urgency = std::clamp(left_urgency, 0.0, 1.0);
+    // 긴급도가 높을수록 조향 강도 증가
+    double effective_gain = a2_steer_gain_ * (1.0 + left_urgency * URGENCY_BOOST);
     avoidance_steer = -max_steer_angle_ * effective_gain * left_urgency;
   } else if (right_dist < left_dist) {
     // 오른쪽에 장애물이 더 가까움 -> 왼쪽으로 급격히 조향 (양수)
     double right_urgency = 1.0 - (right_dist / a2_threshold_);
     right_urgency = std::clamp(right_urgency, 0.0, 1.0);
+    // 긴급도가 높을수록 조향 강도 증가
+    double effective_gain = a2_steer_gain_ * (1.0 + right_urgency * URGENCY_BOOST);
     avoidance_steer = max_steer_angle_ * effective_gain * right_urgency;
   } else {
     // 전방 장애물 각도 기반
+    double front_urgency = 1.0 - (front_dist / a2_threshold_);
+    front_urgency = std::clamp(front_urgency, 0.0, 1.0);
     if (std::abs(last_obstacle_angle_) > 0.05) {
-      avoidance_steer = -last_obstacle_angle_ * effective_gain * urgency;
+      double effective_gain = a2_steer_gain_ * (1.0 + front_urgency * URGENCY_BOOST);
+      avoidance_steer = -last_obstacle_angle_ * effective_gain;
     }
   }
   
+  // 가장 가까운 장애물 기준으로 최대 조향 각도 제한 조정
+  double min_dist = std::min(left_dist, std::min(right_dist, front_dist));
+  double min_urgency = 1.0 - (min_dist / a2_threshold_);
+  min_urgency = std::clamp(min_urgency, 0.0, 1.0);
+  
   // 급격한 회피 허용 - 긴급시 최대 조향까지
-  double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + urgency * 0.5);
+  double max_avoidance = max_steer_angle_ * std::min(1.0, a2_max_steer_ratio_ + min_urgency * URGENCY_BOOST);
   avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
   
   RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
                "A2 Avoidance steer: %.3f (L:%.2f, R:%.2f, F:%.2f, urgency:%.2f)",
-               avoidance_steer, left_dist, right_dist, front_dist, urgency);
+               avoidance_steer, left_dist, right_dist, front_dist, min_urgency);
   
   return avoidance_steer;
 }
