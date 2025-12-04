@@ -234,6 +234,32 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /global_raceline
       Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: NMPC Predicted Trajectory
+      Namespaces:
+        nmpc_prediction: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nmpc_predicted_trajectory
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: NMPC Reference Points
+      Namespaces:
+        nmpc_reference: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nmpc_reference_points
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

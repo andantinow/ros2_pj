@@ -550,14 +550,14 @@ public:
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
     // A1/A2 collision avoidance parameters (Issue 6: soft constraints via cost)
-    declare_parameter("a1_threshold", 0.01);           // A1 range: reverse trigger distance (meters) - very close collision
-    declare_parameter("a2_threshold", 0.4);            // A2 range: side steering avoidance distance (meters)
+    declare_parameter("a1_threshold", 0.3);            // A1 range: reverse trigger distance (meters) - 30cm for safety
+    declare_parameter("a2_threshold", 0.8);            // A2 range: side steering avoidance distance (meters) - 80cm
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
-    declare_parameter("a2_max_steer_ratio", 0.5);     // A2 max steering ratio
+    declare_parameter("a2_max_steer_ratio", 0.7);     // A2 max steering ratio - increased for sharper avoidance
     declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
     declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
     declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
-    declare_parameter("a2_steer_gain", 0.4);          // A2 avoidance steering gain
+    declare_parameter("a2_steer_gain", 0.6);          // A2 avoidance steering gain - increased for stronger response
     declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
 
     // Get parameters
@@ -1289,14 +1289,14 @@ private:
   double prediction_horizon_{1.0};  // Store prediction horizon for reference building
   
   // A1/A2 Collision avoidance parameters
-  double a1_threshold_{0.01};   // Reverse trigger at very close collision (0.01m)
-  double a2_threshold_{0.4};    // Side avoidance threshold (0.4m)
+  double a1_threshold_{0.3};    // Reverse trigger at 30cm for safety
+  double a2_threshold_{0.8};    // Side avoidance threshold (80cm)
   double a1_side_factor_{0.8};
-  double a2_max_steer_ratio_{0.5};
+  double a2_max_steer_ratio_{0.7};
   double reverse_speed_{0.5};
   double reverse_duration_{0.8};
   double a1_steer_gain_{0.8};
-  double a2_steer_gain_{0.4};
+  double a2_steer_gain_{0.6};
   bool enable_collision_avoidance_{true};
   
   // Collision avoidance state
