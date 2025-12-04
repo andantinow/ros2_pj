@@ -13,6 +13,7 @@
 #include <geometry_msgs/msg/pose.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <Eigen/Dense>
@@ -57,7 +58,7 @@ struct MPCConfig
   double min_speed = 0.0;         // Minimum speed [m/s]
   
   // Solver settings
-  int max_iterations = 5;         // Maximum SQP iterations
+  int max_iterations = 10;        // Maximum SQP iterations (increased from 5)
   double convergence_tol = 1e-3;  // Convergence tolerance
 };
 
@@ -116,11 +117,11 @@ public:
     config_ = config;
     config_.dt = config_.horizon_sec / std::max(1, config_.prediction_steps);
     
-    // Initialize control sequence with zeros
+    // Initialize control sequence with moderate acceleration to get moving
     u_prev_.resize(config_.prediction_steps);
     for (auto& u : u_prev_) {
       u.steering = 0.0;
-      u.acceleration = 0.0;
+      u.acceleration = 1.0;  // Start with positive acceleration to get vehicle moving
     }
     
     RCLCPP_INFO(logger, 
@@ -194,10 +195,20 @@ public:
     // Extract first control input
     if (!u.empty()) {
       solution.steering = u[0].steering;
-      // Convert acceleration to speed command
-      solution.speed = std::clamp(
-        current_state.v + u[0].acceleration * config_.dt,
-        config_.min_speed, config_.max_speed);
+      
+      // Compute speed command with minimum speed boost for initial acceleration
+      double computed_speed = current_state.v + u[0].acceleration * config_.dt;
+      
+      // If vehicle is nearly stopped and we have a valid reference, apply minimum speed boost
+      constexpr double MIN_OPERATING_SPEED = 0.5;  // Minimum speed to get moving
+      constexpr double LOW_SPEED_THRESHOLD = 0.3;  // Below this, apply boost
+      
+      if (current_state.v < LOW_SPEED_THRESHOLD && computed_speed < MIN_OPERATING_SPEED) {
+        // Apply initial speed boost to overcome static friction / get vehicle moving
+        computed_speed = MIN_OPERATING_SPEED;
+      }
+      
+      solution.speed = std::clamp(computed_speed, config_.min_speed, config_.max_speed);
       solution.feasible = true;
     }
     
@@ -293,8 +304,9 @@ private:
     std::vector<ControlInput>& controls,
     const std::vector<ReferencePoint>& reference)
   {
-    const double learning_rate_steer = 0.1;
-    const double learning_rate_accel = 0.05;
+    // Increased learning rates for faster convergence
+    const double learning_rate_steer = 0.2;   // Increased from 0.1
+    const double learning_rate_accel = 0.15;  // Increased from 0.05
     const double epsilon = 1e-4;
     
     for (size_t i = 0; i < controls.size(); ++i) {
@@ -374,6 +386,7 @@ private:
  * 
  * Subscribes to odometry and path, runs MPC optimization, publishes drive commands.
  * Can use either Dual EKF output or ground truth odometry.
+ * Includes A1/A2 range-based collision avoidance using LiDAR.
  */
 class NMPCEngineNode : public rclcpp::Node
 {
@@ -405,18 +418,43 @@ public:
     declare_parameter<std::string>("odom_topic", "/dual_ekf/global_odom");  // Use Dual EKF output
     declare_parameter<std::string>("path_topic", "/global_raceline");
     declare_parameter<std::string>("drive_topic", "/drive");
+    declare_parameter<std::string>("scan_topic", "/scan");  // LiDAR topic
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
+    
+    // A1/A2 collision avoidance parameters
+    declare_parameter("a1_threshold", 0.3);           // A1 range: reverse trigger distance (meters)
+    declare_parameter("a2_threshold", 0.8);           // A2 range: steering avoidance distance (meters)
+    declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
+    declare_parameter("a2_max_steer_ratio", 0.5);     // A2 max steering ratio
+    declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
+    declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
+    declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
+    declare_parameter("a2_steer_gain", 0.4);          // A2 avoidance steering gain
+    declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
     int prediction_steps = get_parameter("prediction_steps").as_int();
     control_rate_hz_ = get_parameter("control_rate_hz").as_double();
     nominal_speed_ = get_parameter("nominal_speed").as_double();
+    max_steer_ = get_parameter("max_steer").as_double();
     
     std::string odom_topic = get_parameter("odom_topic").as_string();
     std::string path_topic = get_parameter("path_topic").as_string();
     std::string drive_topic = get_parameter("drive_topic").as_string();
+    std::string scan_topic = get_parameter("scan_topic").as_string();
     use_dual_ekf_ = get_parameter("use_dual_ekf").as_bool();
+    
+    // Get collision avoidance parameters
+    a1_threshold_ = get_parameter("a1_threshold").as_double();
+    a2_threshold_ = get_parameter("a2_threshold").as_double();
+    a1_side_factor_ = get_parameter("a1_side_factor").as_double();
+    a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
+    reverse_speed_ = get_parameter("reverse_speed").as_double();
+    reverse_duration_ = get_parameter("reverse_duration").as_double();
+    a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
+    a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
+    enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
     
     // If not using Dual EKF, use ground truth
     if (!use_dual_ekf_) {
@@ -428,6 +466,8 @@ public:
     RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
     RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
+    RCLCPP_INFO(get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), enabled=%s",
+                a1_threshold_, a2_threshold_, enable_collision_avoidance_ ? "true" : "false");
 
     // Configure MPC solver
     nmpc::MPCConfig cfg;
@@ -461,6 +501,18 @@ public:
           RCLCPP_INFO_ONCE(get_logger(), "Received path with %zu points", msg->poses.size());
         }
       });
+    
+    // LiDAR subscription for collision avoidance
+    scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+      scan_topic, rclcpp::SensorDataQoS(),
+      [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+        latest_scan_ = msg;
+        if (!scan_received_) {
+          RCLCPP_INFO(get_logger(), "Received first scan message. Ranges: %zu, angle: [%.2f, %.2f]",
+                      msg->ranges.size(), msg->angle_min, msg->angle_max);
+          scan_received_ = true;
+        }
+      });
 
     // Setup publisher
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
@@ -471,6 +523,8 @@ public:
     control_timer_ = create_wall_timer(
       std::chrono::duration<double>(period_s),
       std::bind(&NMPCEngineNode::controlCycle, this));
+    
+    reverse_start_time_ = now();
     
     RCLCPP_INFO(get_logger(), "NMPC control loop running at %.1f Hz", control_rate_hz_);
   }
@@ -491,6 +545,51 @@ private:
         "Waiting for reference path...");
       return;
     }
+    
+    rclcpp::Time current_time = now();
+    
+    // === A1/A2 Range-based Collision Avoidance ===
+    // Update obstacle distances from LiDAR
+    updateObstacleDistances();
+    
+    // A1 zone check: need to reverse
+    if (checkA1Zone()) {
+      // Start or continue reversing
+      if (!is_reversing_) {
+        is_reversing_ = true;
+        reverse_start_time_ = current_time;
+        RCLCPP_WARN(get_logger(), "A1 Zone! Starting reverse with opposite steering");
+      }
+      
+      double elapsed = (current_time - reverse_start_time_).seconds();
+      if (elapsed < reverse_duration_) {
+        // Continue reversing
+        double reverse_steer = computeReverseSteering();
+        
+        ackermann_msgs::msg::AckermannDriveStamped cmd;
+        cmd.header.stamp = current_time;
+        cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
+        cmd.drive.speed = -reverse_speed_;
+        cmd.drive.steering_angle = reverse_steer;
+        
+        drive_pub_->publish(cmd);
+        
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+          "A1 REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
+          -reverse_speed_, reverse_steer, elapsed, reverse_duration_);
+        return;
+      } else {
+        // Reverse complete
+        is_reversing_ = false;
+        RCLCPP_INFO(get_logger(), "A1 Reverse complete, resuming forward");
+      }
+    } else {
+      // Not in A1 zone, stop reversing if we were
+      if (is_reversing_) {
+        is_reversing_ = false;
+        RCLCPP_INFO(get_logger(), "Left A1 zone, stopping reverse");
+      }
+    }
 
     // Extract current state from odometry
     nmpc::VehicleState current_state = extractState(latest_odom_);
@@ -507,6 +606,18 @@ private:
     // Solve MPC
     auto solution = solver_.solve(current_state, reference, get_logger());
     
+    // A2 zone: apply steering avoidance (without reversing)
+    double delta_a2_avoidance = 0.0;
+    if (!is_in_a1_zone_ && checkA2Zone()) {
+      delta_a2_avoidance = computeAvoidanceSteering();
+      solution.steering += delta_a2_avoidance;
+      solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
+      // Also reduce speed in A2 zone
+      solution.speed *= 0.7;
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
+        "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
+    }
+    
     // Publish result
     publishDriveCommand(solution);
     
@@ -515,6 +626,171 @@ private:
       "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f]",
       current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
       solution.steering, solution.speed, solution.iterations, solution.cost);
+  }
+  
+  /**
+   * @brief Update obstacle distances from LiDAR scan
+   */
+  void updateObstacleDistances()
+  {
+    if (!enable_collision_avoidance_ || !scan_received_ || !latest_scan_) {
+      last_obstacle_front_dist_ = 10.0;
+      last_obstacle_left_dist_ = 10.0;
+      last_obstacle_right_dist_ = 10.0;
+      last_obstacle_angle_ = 0.0;
+      return;
+    }
+    
+    constexpr double FRONT_SECTOR_HALF_ANGLE = M_PI / 3.0;   // 60 degrees
+    constexpr double SIDE_INNER = M_PI / 6.0;               // 30 degrees
+    constexpr double SIDE_OUTER = M_PI / 2.0;               // 90 degrees
+    constexpr double MIN_VALID_RANGE = 0.03;
+    
+    double angle_min = latest_scan_->angle_min;
+    double angle_inc = latest_scan_->angle_increment;
+    int num_ranges = latest_scan_->ranges.size();
+    
+    double min_front = std::numeric_limits<double>::max();
+    double min_left = std::numeric_limits<double>::max();
+    double min_right = std::numeric_limits<double>::max();
+    double front_angle = 0.0;
+    
+    for (int i = 0; i < num_ranges; ++i) {
+      double angle = angle_min + i * angle_inc;
+      double range = latest_scan_->ranges[i];
+      
+      if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
+        continue;
+      }
+      
+      // Front sector (-60° ~ +60°)
+      if (angle >= -FRONT_SECTOR_HALF_ANGLE && angle <= FRONT_SECTOR_HALF_ANGLE) {
+        if (range < min_front) {
+          min_front = range;
+          front_angle = angle;
+        }
+      }
+      
+      // Left sector (30° ~ 90°)
+      if (angle >= SIDE_INNER && angle <= SIDE_OUTER) {
+        if (range < min_left) {
+          min_left = range;
+        }
+      }
+      
+      // Right sector (-90° ~ -30°)
+      if (angle >= -SIDE_OUTER && angle <= -SIDE_INNER) {
+        if (range < min_right) {
+          min_right = range;
+        }
+      }
+    }
+    
+    last_obstacle_front_dist_ = min_front;
+    last_obstacle_left_dist_ = min_left;
+    last_obstacle_right_dist_ = min_right;
+    last_obstacle_angle_ = front_angle;
+  }
+  
+  /**
+   * @brief Check if in A1 zone (need to reverse)
+   */
+  bool checkA1Zone()
+  {
+    if (!enable_collision_avoidance_ || !scan_received_) {
+      is_in_a1_zone_ = false;
+      return false;
+    }
+    
+    double side_threshold = a1_threshold_ * a1_side_factor_;
+    
+    is_in_a1_zone_ = (last_obstacle_front_dist_ < a1_threshold_) ||
+                     (last_obstacle_left_dist_ < side_threshold) ||
+                     (last_obstacle_right_dist_ < side_threshold);
+    
+    if (is_in_a1_zone_) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+        "A1 Zone! Front: %.2fm, L: %.2fm, R: %.2fm (threshold: %.2fm, side: %.2fm)",
+        last_obstacle_front_dist_, last_obstacle_left_dist_, 
+        last_obstacle_right_dist_, a1_threshold_, side_threshold);
+    }
+    
+    return is_in_a1_zone_;
+  }
+  
+  /**
+   * @brief Check if in A2 zone (steering avoidance needed)
+   */
+  bool checkA2Zone()
+  {
+    if (!enable_collision_avoidance_ || !scan_received_) {
+      return false;
+    }
+    
+    bool in_a2 = (last_obstacle_front_dist_ < a2_threshold_) ||
+                 (last_obstacle_left_dist_ < a2_threshold_) ||
+                 (last_obstacle_right_dist_ < a2_threshold_);
+    
+    return in_a2;
+  }
+  
+  /**
+   * @brief Compute steering angle for reverse (A1 zone)
+   */
+  double computeReverseSteering()
+  {
+    double reverse_steer = 0.0;
+    
+    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+    
+    double dist_diff = right_dist - left_dist;
+    
+    if (std::abs(dist_diff) > 0.05) {
+      reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_ * a1_steer_gain_;
+    } else {
+      if (std::abs(last_obstacle_angle_) > 0.1) {
+        reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
+      }
+    }
+    
+    reverse_steer = std::clamp(reverse_steer, -max_steer_, max_steer_);
+    
+    return reverse_steer;
+  }
+  
+  /**
+   * @brief Compute avoidance steering (A2 zone)
+   */
+  double computeAvoidanceSteering()
+  {
+    double avoidance_steer = 0.0;
+    
+    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+    double front_dist = std::min(last_obstacle_front_dist_, 5.0);
+    
+    double urgency = 1.0 - (front_dist / a2_threshold_);
+    urgency = std::clamp(urgency, 0.0, 1.0);
+    
+    if (left_dist < right_dist) {
+      double left_urgency = 1.0 - (left_dist / a2_threshold_);
+      left_urgency = std::clamp(left_urgency, 0.0, 1.0);
+      avoidance_steer = -max_steer_ * a2_steer_gain_ * left_urgency;
+    } else if (right_dist < left_dist) {
+      double right_urgency = 1.0 - (right_dist / a2_threshold_);
+      right_urgency = std::clamp(right_urgency, 0.0, 1.0);
+      avoidance_steer = max_steer_ * a2_steer_gain_ * right_urgency;
+    } else {
+      if (std::abs(last_obstacle_angle_) > 0.05) {
+        avoidance_steer = -last_obstacle_angle_ * a2_steer_gain_ * urgency;
+      }
+    }
+    
+    double max_avoidance = max_steer_ * a2_max_steer_ratio_;
+    avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
+    
+    return avoidance_steer;
   }
   
   /**
@@ -624,17 +900,41 @@ private:
   // ROS2 interfaces
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // State
   nav_msgs::msg::Odometry::SharedPtr latest_odom_;
   nav_msgs::msg::Path::SharedPtr latest_path_;
+  sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
+  bool scan_received_{false};
 
   // Parameters
   double control_rate_hz_{50.0};
   double nominal_speed_{2.0};
   bool use_dual_ekf_{true};
+  double max_steer_{0.5};
+  
+  // A1/A2 Collision avoidance parameters
+  double a1_threshold_{0.3};
+  double a2_threshold_{0.8};
+  double a1_side_factor_{0.8};
+  double a2_max_steer_ratio_{0.5};
+  double reverse_speed_{0.5};
+  double reverse_duration_{0.8};
+  double a1_steer_gain_{0.8};
+  double a2_steer_gain_{0.4};
+  bool enable_collision_avoidance_{true};
+  
+  // Collision avoidance state
+  bool is_reversing_{false};
+  bool is_in_a1_zone_{false};
+  rclcpp::Time reverse_start_time_;
+  double last_obstacle_left_dist_{10.0};
+  double last_obstacle_right_dist_{10.0};
+  double last_obstacle_front_dist_{10.0};
+  double last_obstacle_angle_{0.0};
 
   // MPC Solver
   nmpc::BicycleMPCSolver solver_;

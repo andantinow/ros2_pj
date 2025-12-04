@@ -5,19 +5,19 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 3.0           # Reduced for safer driving
-    lookahead_distance: 2.0    # Increased for earlier corner detection (1.5 -> 2.0)
-    min_lookahead: 1.5         # Increased to look further ahead and avoid extreme angles (1.0 -> 1.5)
-    max_lookahead: 4.0         # Increased for more look-ahead on straights (3.0 -> 4.0)
-    lookahead_speed_gain: 0.6  # Increased for more responsive lookahead on straights (0.5 -> 0.6)
-    lookahead_error_gain: 1.5  # Reduced for less aggressive lateral error correction (2.0 -> 1.5)
+    speed_limit: 5.0           # Increased for faster driving (3.0 -> 5.0)
+    lookahead_distance: 3.5    # Significantly increased for earlier corner detection (2.0 -> 3.5)
+    min_lookahead: 2.5         # Significantly increased to look further ahead (1.5 -> 2.5)
+    max_lookahead: 6.0         # Significantly increased for more look-ahead on straights (4.0 -> 6.0)
+    lookahead_speed_gain: 0.8  # Increased for more responsive lookahead at high speed (0.6 -> 0.8)
+    lookahead_error_gain: 1.2  # Reduced for smoother lateral error correction (1.5 -> 1.2)
     use_vref: true
     # Topic remappings
     odom_topic: '/car_state/odom_GT'
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
-    target_speed: 1.5          # Increased for faster driving (0.6 -> 1.5)
+    target_speed: 3.0          # Significantly increased for faster driving (1.5 -> 3.0)
     max_steer_angle: 0.40      # Reduced max steering angle for smoother entry (0.55 -> 0.40)
     max_steer_rate: 4.0        # Slightly reduced for smoother steering response (5.0 -> 4.0)
     lateral_error_gain: 1.5    # Reduced for less aggressive lateral correction (2.0 -> 1.5)

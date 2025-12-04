@@ -54,6 +54,7 @@ ament_target_dependencies(nmpc_engine_node
   nav_msgs
   ackermann_msgs
   geometry_msgs
+  sensor_msgs
 )
 
 target_link_libraries(nmpc_engine_node
