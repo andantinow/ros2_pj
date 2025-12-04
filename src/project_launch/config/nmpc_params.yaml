@@ -10,7 +10,8 @@
 #
 # NOTE: These parameter values match the optimized defaults in nmpc_engine_node.cpp
 # which were tuned based on ForzaETH reference architecture recommendations.
-# Previous inline parameters in the launch file deviated from these optimal values.
+# The previous inline parameters in main.launch.py were experimental values that
+# deviated from these optimal settings and may have caused suboptimal performance.
 #
 # Reference: https://github.com/ForzaETH/race_stack
 # =============================================================================
