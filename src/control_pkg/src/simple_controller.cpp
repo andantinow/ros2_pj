@@ -994,7 +994,7 @@ void SimpleController::publish_lookahead_marker(double x, double y, double z)
   marker.color.b = 0.0f;
   marker.color.a = 1.0f;
   
-  marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+  marker.lifetime = rclcpp::Duration::from_seconds(0.2);  // 200ms lifetime for stable visualization
   
   lookahead_marker_pub_->publish(marker);
 }

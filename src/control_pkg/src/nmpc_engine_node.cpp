@@ -239,8 +239,8 @@ public:
     applyConstraints(u);
     
     // Store predicted trajectory for visualization (NMPC 예측 궤적)
-    std::vector<VehicleState> final_predicted_states = forwardSimulate(compensated_state, u);
-    solution.predicted_trajectory = final_predicted_states;
+    // Note: Re-simulation required after applyConstraints() modifies controls
+    solution.predicted_trajectory = forwardSimulate(compensated_state, u);
     
     // Store for warm start
     u_prev_ = u;
@@ -1228,7 +1228,7 @@ private:
         traj_marker.points.push_back(p);
       }
       
-      traj_marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+      traj_marker.lifetime = rclcpp::Duration::from_seconds(0.2);  // 200ms lifetime for stable visualization
       nmpc_trajectory_pub_->publish(traj_marker);
     }
     
@@ -1261,7 +1261,7 @@ private:
         ref_marker.points.push_back(p);
       }
       
-      ref_marker.lifetime = rclcpp::Duration::from_seconds(0.1);  // 100ms lifetime
+      ref_marker.lifetime = rclcpp::Duration::from_seconds(0.2);  // 200ms lifetime for stable visualization
       nmpc_reference_pub_->publish(ref_marker);
     }
   }
