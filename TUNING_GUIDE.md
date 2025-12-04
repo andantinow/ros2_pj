@@ -216,46 +216,68 @@ NMPC(Nonlinear Model Predictive Control)는 고성능 자율 주행에 권장되
 ```yaml
 nmpc_engine_node:
   ros__parameters:
-    # 예측 수평선 설정
-    prediction_horizon: 1.0      # 예측 구간 (초) - 높으면 미리 계획, 낮으면 반응적
-    prediction_steps: 10         # 예측 단계 수
+    # 예측 수평선 설정 (개선됨)
+    prediction_horizon: 1.5      # 예측 구간 (초) - 높으면 미리 계획, 낮으면 반응적 (1.0->1.5 증가)
+    prediction_steps: 15         # 예측 단계 수 (10->15 증가)
     control_rate_hz: 50.0        # 제어 루프 주파수 (Hz)
-    nominal_speed: 2.0           # 목표 속도 (m/s)
+    nominal_speed: 2.5           # 목표 속도 (m/s) (2.0->2.5 증가)
     
     # 비용 함수 가중치 (Issue 3.1 해결: 조향 변화율 페널티)
     w_pos: 10.0                  # 위치 추적 가중치
-    w_yaw: 8.0                   # 헤딩 추적 가중치 (안정성 위해 증가)
-    w_vel: 2.0                   # 속도 추적 가중치
+    w_yaw: 10.0                  # 헤딩 추적 가중치 (안정성 위해 8->10 증가)
+    w_vel: 3.0                   # 속도 추적 가중치 (2.0->3.0 증가)
     w_steer: 0.5                 # 조향 입력 가중치
     w_accel: 0.3                 # 가속도 입력 가중치
-    w_steer_rate: 500.0          # ⚠️ 조향 변화율 가중치 - 진동 억제에 핵심!
-    w_accel_rate: 50.0           # 가속도 변화율 가중치
-    w_terminal: 20.0             # 종단 비용 가중치
+    w_steer_rate: 600.0          # ⚠️ 조향 변화율 가중치 - 진동 억제에 핵심! (500->600 증가)
+    w_accel_rate: 60.0           # 가속도 변화율 가중치
+    w_terminal: 30.0             # 종단 비용 가중치 (20->30 증가)
     
     # 횡방향 허용 튜브 (Issue 5.1: 최적 레이싱 라인 허용)
-    lateral_tolerance: 0.3       # 중심선에서 ±0.3m 이탈 허용
+    lateral_tolerance: 0.25      # 중심선에서 ±0.25m 이탈 허용 (0.3->0.25 감소)
     
     # 지연 보상 (Issue 3.3: 계산 지연 보상)
-    latency_compensation_sec: 0.02  # 20ms 계산 지연 보상
+    latency_compensation_sec: 0.05  # 50ms 전체 시스템 지연 보상 (0.02->0.05 증가)
     
-    # 제약 조건
+    # 솔버 안정성 (NEW: Issue 3.1 해결)
+    levenberg_marquardt: 0.01    # L-M 정칙화 - Status 3 오류 방지 (헤시안 특이점 해결)
+    max_solver_iterations: 20    # 최대 반복 횟수 (15->20 증가)
+    
+    # 동역학 모델 (NEW: 고속 주행 지원)
+    dynamic_model_threshold: 2.5 # 동역학 모델 전환 속도 [m/s] (이 속도 이상에서 타이어 슬립 고려)
+    vehicle_mass: 3.5            # 차량 질량 [kg]
+    vehicle_inertia: 0.04        # 요 관성 모멘트 [kg*m²]
+    
+    # 제약 조건 (개선됨)
     max_steer: 0.436             # 최대 조향각 [rad] (25도)
-    max_steer_rate: 1.5          # 최대 조향 변화율 [rad/s]
-    max_speed: 5.0               # 최대 속도 [m/s]
-    max_accel: 3.0               # 최대 가속도 [m/s²]
-    min_accel: -5.0              # 최대 감속도 [m/s²]
+    max_steer_rate: 1.8          # 최대 조향 변화율 [rad/s] (1.5->1.8 증가)
+    max_speed: 6.0               # 최대 속도 [m/s] (5.0->6.0 증가)
+    max_accel: 4.0               # 최대 가속도 [m/s²] (3.0->4.0 증가)
+    min_accel: -6.0              # 최대 감속도 [m/s²] (-5.0->-6.0 증가)
 ```
+
+**NMPC 개선 사항 (v2.0):**
+
+| 개선 사항 | 설명 | 효과 |
+|----------|------|------|
+| **Levenberg-Marquardt 정칙화** | 헤시안 행렬에 λI 추가 | Status 3 오류 (수치적 특이점) 방지 |
+| **Soft Constraints** | 슬랙 변수로 제약 조건 완화 | Status 4 오류 (Infeasibility) 방지 |
+| **동역학 모델 전환** | 속도 2.5m/s 이상에서 자동 전환 | 고속에서 타이어 슬립 고려 |
+| **지연 보상 강화** | 50ms 시스템 지연 예측 | 고속 주행 시 위상 지연 보상 |
+| **터미널 비용 강화** | 예측 끝단 가중치 증가 | 코너 직진 현상 방지 |
 
 **NMPC 튜닝 가이드:**
 
 | 증상 | 원인 | 조치 |
 |------|------|------|
-| 직진 시 좌우 진동 (Snaking) | `w_steer_rate` 너무 낮음 | `w_steer_rate`를 500 이상으로 증가 |
-| 코너에서 반응 느림 | `w_steer_rate` 너무 높음 | `w_steer_rate`를 200~300으로 감소 |
-| 중심선 과도 추종 | `lateral_tolerance` 없음 | `lateral_tolerance`를 0.2~0.5로 설정 |
-| 고속에서 불안정 | 지연 보상 없음 | `latency_compensation_sec` 증가 |
-| 코너 오버슈트 | `w_yaw` 너무 낮음 | `w_yaw`를 8~15로 증가 |
+| 직진 시 좌우 진동 (Snaking) | `w_steer_rate` 너무 낮음 | `w_steer_rate`를 600 이상으로 증가 |
+| 코너에서 반응 느림 | `w_steer_rate` 너무 높음 | `w_steer_rate`를 300~400으로 감소 |
+| 중심선 과도 추종 | `lateral_tolerance` 없음 | `lateral_tolerance`를 0.2~0.3으로 설정 |
+| 고속에서 불안정 | 지연 보상 부족 | `latency_compensation_sec` 0.05~0.1 |
+| 코너 오버슈트 | `w_yaw` 너무 낮음 | `w_yaw`를 10~15로 증가 |
 | 속도 유지 안됨 | `w_vel` 너무 낮음 | `w_vel`를 3~5로 증가 |
+| Status 3 오류 (NaN) | 헤시안 특이점 | `levenberg_marquardt` 0.01~0.1 |
+| Status 4 오류 (Infeasible) | 제약 조건 불만족 | Soft constraint가 자동 처리됨 |
+| 고속 코너링 언더스티어 | 기구학 모델 한계 | `dynamic_model_threshold` 낮추기 |
 
 ### Pure Pursuit 파라미터 (백업 제어기)
 
