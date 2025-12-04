@@ -241,6 +241,9 @@ private:
             std::bind(&DualEkfNode::imuCallback, this, std::placeholders::_1));
         
         // Subscribe to PoseWithCovarianceStamped format if topic is configured
+        // Note: Both PoseStamped and PoseWithCovarianceStamped can be configured,
+        // and if both receive data, the most recent update will be used.
+        // In practice, typically only one source is active.
         if (!global_pose_topic.empty()) {
             global_pose_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
                 global_pose_topic, 10,
@@ -255,9 +258,16 @@ private:
                 std::bind(&DualEkfNode::amclPoseCallback, this, std::placeholders::_1));
         }
         
-        RCLCPP_INFO(get_logger(), "Subscribing to odom: %s, imu: %s, global_pose: %s",
-                    odom_topic.c_str(), imu_topic.c_str(), 
-                    (!pose_stamped_topic.empty() ? pose_stamped_topic : global_pose_topic).c_str());
+        RCLCPP_INFO(get_logger(), "Subscribing to odom: %s, imu: %s", odom_topic.c_str(), imu_topic.c_str());
+        if (!global_pose_topic.empty()) {
+            RCLCPP_INFO(get_logger(), "  Global pose (PoseWithCovarianceStamped): %s", global_pose_topic.c_str());
+        }
+        if (!pose_stamped_topic.empty()) {
+            RCLCPP_INFO(get_logger(), "  Global pose (PoseStamped): %s", pose_stamped_topic.c_str());
+        }
+        if (global_pose_topic.empty() && pose_stamped_topic.empty()) {
+            RCLCPP_WARN(get_logger(), "  No global pose topic configured - EKF will rely on odometry dead-reckoning");
+        }
     }
     
     /**
