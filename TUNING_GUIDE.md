@@ -203,13 +203,17 @@ imu_covariance: [0.0, 0.0, 0.0]  # 선형가속도, 각속도, 방향
 
 | 용도 | 파일 경로 |
 |------|-----------|
+| **NMPC 파라미터 (권장)** | `src/project_launch/config/nmpc_params.yaml` |
 | **Pure Pursuit 파라미터** | `src/planning_pkg/config/pure_pursuit_params.yaml` |
+| **Simple Controller 파라미터** | `src/project_launch/config/control_params.yaml` |
 | **NMPC 엔진 코드** | `src/control_pkg/src/nmpc_engine_node.cpp` |
 | **Simple Controller 코드** | `src/control_pkg/src/simple_controller.cpp` |
 
 ### NMPC 파라미터 (권장 제어기)
 
 NMPC(Nonlinear Model Predictive Control)는 고성능 자율 주행에 권장되는 제어기입니다.
+
+> **📌 설정 파일**: `src/project_launch/config/nmpc_params.yaml`
 
 **핵심 파라미터 (ROS2 파라미터로 설정):**
 

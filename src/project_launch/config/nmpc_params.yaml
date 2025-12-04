@@ -1,0 +1,137 @@
+# =============================================================================
+# NMPC (Nonlinear Model Predictive Control) Configuration for F1TENTH Racing
+# =============================================================================
+# This configuration file contains all tunable parameters for the NMPC controller.
+# Based on ForzaETH autonomous racing stack architecture and recommendations from:
+# - Issue 3.1: Levenberg-Marquardt regularization (Status 3 prevention)
+# - Issue 3.3: Latency compensation
+# - Issue 5.1: Lateral tolerance tube
+# - Issue 6.1: Soft constraints (Status 4 prevention)
+#
+# Reference: https://github.com/ForzaETH/race_stack
+# =============================================================================
+
+nmpc_engine_node:
+  ros__parameters:
+    # =========================================================================
+    # PREDICTION HORIZON SETTINGS
+    # =========================================================================
+    # Tp = prediction_horizon / prediction_steps determines time resolution
+    # Example: 1.5s / 15 = 0.1s (100ms) per step
+    # 
+    # Too short horizon: Cannot anticipate upcoming corners, late braking
+    # Too long horizon: High computational cost, real-time violation risk
+    # Recommended for F1TENTH: 1.0-2.0 seconds
+    prediction_horizon: 1.5      # [seconds] Prediction horizon length
+    prediction_steps: 15         # Number of discretization steps (N)
+    control_rate_hz: 50.0        # [Hz] Control loop frequency
+    
+    # =========================================================================
+    # TARGET SPEED AND VEHICLE PARAMETERS
+    # =========================================================================
+    nominal_speed: 3.0           # [m/s] Target racing speed
+    solver_wheelbase: 0.33       # [m] F1TENTH wheelbase
+    
+    # =========================================================================
+    # STATE ESTIMATION SOURCE
+    # =========================================================================
+    use_dual_ekf: true           # Use Dual EKF output (recommended)
+    odom_topic: '/dual_ekf/global_odom'
+    path_topic: '/global_raceline'
+    drive_topic: '/drive'
+    scan_topic: '/scan'
+    
+    # =========================================================================
+    # COST FUNCTION WEIGHTS (Q, R matrices)
+    # =========================================================================
+    # These weights define the optimization objective:
+    # J = sum(w_pos*e_pos^2 + w_yaw*e_yaw^2 + w_vel*e_vel^2 + ...)
+    #
+    # Higher weight = stronger tracking of that objective
+    # Lower weight = more flexibility in that dimension
+    
+    # State tracking weights
+    w_pos: 10.0                  # Position tracking weight (lateral error)
+    w_yaw: 10.0                  # Heading tracking weight
+    w_vel: 3.0                   # Velocity tracking weight
+    
+    # Control effort weights
+    w_steer: 0.5                 # Steering angle magnitude penalty
+    w_accel: 0.3                 # Acceleration magnitude penalty
+    
+    # CRITICAL: Control rate (slew rate) weights
+    # Issue 3.1: High steering rate weight prevents oscillation on straights
+    # This is the single most important tuning parameter for stability
+    w_steer_rate: 600.0          # Steering rate penalty - CRITICAL FOR STABILITY
+    w_accel_rate: 60.0           # Acceleration rate penalty
+    
+    # Terminal cost weight (Issue 7.2: convergence improvement)
+    w_terminal: 30.0             # Weight on final state in horizon
+    
+    # =========================================================================
+    # LATERAL TOLERANCE TUBE (Issue 5.1)
+    # =========================================================================
+    # Allows deviation from reference within a "tube" around the path
+    # Enables NMPC to find optimal racing lines within track boundaries
+    # Set to 0.0 for exact path tracking
+    lateral_tolerance: 0.25      # [m] Allowed deviation from centerline (±)
+    
+    # =========================================================================
+    # LATENCY COMPENSATION (Issue 3.3)
+    # =========================================================================
+    # Compensates for system delay (sensor -> computation -> actuator)
+    # Forward simulates state by this amount before solving
+    # Typical F1TENTH latency: 30-100ms
+    latency_compensation_sec: 0.05  # [seconds] Total system delay
+    
+    # =========================================================================
+    # SOLVER SETTINGS (Issue 3.1: Status 3 Prevention)
+    # =========================================================================
+    # Levenberg-Marquardt regularization prevents numerical issues
+    # when Hessian becomes singular (e.g., at zero velocity)
+    # H_regularized = H + lambda * I
+    levenberg_marquardt: 0.01    # L-M regularization factor (1e-3 to 1e-1)
+    max_solver_iterations: 20    # Maximum SQP iterations per solve
+    
+    # =========================================================================
+    # DYNAMIC MODEL PARAMETERS (High-speed Pacejka tire model)
+    # =========================================================================
+    # Below threshold: Kinematic bicycle model (simple, stable)
+    # Above threshold: Dynamic bicycle model with tire slip
+    dynamic_model_threshold: 2.5 # [m/s] Speed for model switching
+    vehicle_mass: 3.5            # [kg] Vehicle mass
+    vehicle_inertia: 0.04        # [kg*m^2] Yaw moment of inertia
+    
+    # =========================================================================
+    # PHYSICAL CONSTRAINTS
+    # =========================================================================
+    # Hard limits on vehicle actuators
+    max_steer: 0.436             # [rad] Maximum steering angle (~25 degrees)
+    max_steer_rate: 1.8          # [rad/s] Maximum steering rate
+    max_speed: 6.0               # [m/s] Maximum forward speed
+    max_accel: 4.0               # [m/s^2] Maximum acceleration
+    min_accel: -6.0              # [m/s^2] Maximum deceleration (negative)
+    
+    # =========================================================================
+    # A1/A2 COLLISION AVOIDANCE SYSTEM
+    # =========================================================================
+    # A1 Zone: Very close obstacle - triggers reverse + opposite steering
+    # A2 Zone: Close obstacle - triggers steering avoidance + slowdown
+    # A2 Urgent: Within 0.4m - maximum steering for emergency avoidance
+    
+    enable_collision_avoidance: true
+    
+    # A1 Zone parameters (reverse trigger)
+    a1_threshold: 0.3            # [m] Distance triggering reverse (front)
+    a1_side_factor: 0.8          # Side distance = a1_threshold * factor
+    reverse_speed: 0.5           # [m/s] Reverse driving speed
+    reverse_duration: 0.8        # [s] Duration of reverse maneuver
+    a1_steer_gain: 0.8           # Steering gain during reverse
+    
+    # A2 Zone parameters (steering avoidance)
+    a2_threshold: 0.8            # [m] Distance triggering side avoidance
+    a2_urgent_threshold: 0.4     # [m] Distance for urgent avoidance
+    a2_max_steer_ratio: 0.7      # Max steering ratio (normal A2)
+    a2_urgent_steer_ratio: 1.0   # Max steering ratio (urgent, full allowed)
+    a2_steer_gain: 0.6           # Steering gain for normal avoidance
+    a2_urgent_steer_gain: 1.5    # Steering gain for urgent avoidance (1.5x)
