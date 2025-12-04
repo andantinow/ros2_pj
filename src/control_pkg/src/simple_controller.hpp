@@ -33,9 +33,9 @@ private:
   bool scan_received_ = false;
 
   double lookahead_distance_ = 0.0;
-  double min_lookahead_ = 1.5;         // Increased to look further ahead (1.0 -> 1.5)
-  double max_lookahead_ = 4.0;         // Increased for more look-ahead on straights (3.0 -> 4.0)
-  double lookahead_speed_gain_ = 0.6;  // Decreased for smoother look-ahead (0.8 -> 0.6)
+  double min_lookahead_ = 0.8;         // Reduced for closer lookahead at low speed (1.5 -> 0.8)
+  double max_lookahead_ = 2.5;         // Reduced for tighter corner tracking (4.0 -> 2.5)
+  double lookahead_speed_gain_ = 0.5;  // Reduced for less aggressive speed-based lookahead
   double lookahead_error_gain_ = 0.0;
   double target_speed_ = 2.0;
   double max_speed_ = 2.0;
