@@ -31,27 +31,27 @@ private:
   bool scan_received_ = false;
 
   double lookahead_distance_ = 0.0;
-  double min_lookahead_ = 0.8;
-  double max_lookahead_ = 2.0;
-  double lookahead_speed_gain_ = 0.8;
+  double min_lookahead_ = 1.5;         // Increased to look further ahead (1.0 -> 1.5)
+  double max_lookahead_ = 4.0;         // Increased for more look-ahead on straights (3.0 -> 4.0)
+  double lookahead_speed_gain_ = 0.6;  // Decreased for smoother look-ahead (0.8 -> 0.6)
   double lookahead_error_gain_ = 0.0;
   double target_speed_ = 2.0;
   double max_speed_ = 2.0;
   double wheelbase_ = 0.33;
-  double max_steer_angle_ = 0.52;  // Physical steering limit [rad]
-  double max_steer_rate_ = 1.0;  // rad/s
-  double lateral_error_gain_ = 0.5;  // Lateral error compensation gain
-  double heading_error_gain_ = 1.0;  // Heading error compensation gain (Stanley term)
-  double curvature_feedforward_gain_ = 1.2;  // Curvature feedforward gain
-  double smoothing_factor_ = 0.3;  // Steering angle smoothing (0-1, lower = more smoothing)
+  double max_steer_angle_ = 0.40;  // Reduced max steering limit (0.52 -> 0.40) [rad]
+  double max_steer_rate_ = 4.0;  // Increased for faster steering response (1.0 -> 4.0) rad/s
+  double lateral_error_gain_ = 1.5;  // Increased lateral error compensation gain (0.5 -> 1.5)
+  double heading_error_gain_ = 0.8;  // Reduced heading error compensation gain (1.0 -> 0.8)
+  double curvature_feedforward_gain_ = 1.2;  // Reduced curvature feedforward gain
+  double smoothing_factor_ = 0.6;  // Increased for smoother response (0.3 -> 0.6)
   double steering_sign_ = 1.0;  // Steering angle sign (1.0 or -1.0, for coordinate system correction)
   double direct_correction_gain_ = 0.0;
   double direct_correction_limit_ = 0.0;
   
-  // PID control for lateral error
-  double pid_kp_ = 1.5;
-  double pid_ki_ = 0.05;
-  double pid_kd_ = 0.5;
+  // PID control for lateral error (reduced gains for smoother control)
+  double pid_kp_ = 0.7;    // Reduced (1.5 -> 0.7)
+  double pid_ki_ = 0.03;   // Reduced (0.05 -> 0.03)
+  double pid_kd_ = 0.2;    // Reduced (0.5 -> 0.2)
   double pid_integral_limit_ = 0.0;
   double lateral_error_integral_ = 0.0;
   double prev_lateral_error_ = 0.0;
@@ -60,11 +60,11 @@ private:
   bool use_path_interpolation_ = true;
   
   // Collision avoidance and reverse parameters
-  // 센서 범위 축소 - 더 가까운 거리에서만 반응
-  double collision_threshold_ = 0.5;      // Distance to trigger reverse (meters) - front collision
+  // 센서 범위 더 축소 - 더 가까운 거리에서만 반응
+  double collision_threshold_ = 0.4;      // Distance to trigger reverse (meters) - front collision (reduced)
   double reverse_speed_ = 0.5;            // Gentle reverse speed (m/s)
   double reverse_duration_ = 1.0;         // How long to reverse (seconds)
-  double side_collision_threshold_ = 0.4; // Side obstacle threshold (meters) - reduced range
+  double side_collision_threshold_ = 0.3; // Side obstacle threshold (meters) - reduced range (0.4 -> 0.3)
   bool is_reversing_ = false;             // Current reverse state
   rclcpp::Time reverse_start_time_;       // When reverse started
   double last_steering_before_reverse_ = 0.0;  // Steering angle before reversing
@@ -76,7 +76,7 @@ private:
   double last_obstacle_angle_ = 0.0;        // 가장 가까운 전방 장애물 각도
   
   // 측면 센서 기반 회피 조향 (벽 회피용)
-  double side_avoidance_gain_ = 0.5;        // 측면 회피 강도 (축소된 범위에 맞게 조정)
+  double side_avoidance_gain_ = 0.3;        // 측면 회피 강도 감소 (0.5 -> 0.3)
   bool enable_side_avoidance_ = true;       // 측면 회피 활성화
   
   std::string odom_topic_{"/odom"};
