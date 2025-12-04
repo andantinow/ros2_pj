@@ -811,9 +811,9 @@ private:
     
     // Debug logging using RCLCPP_INFO_THROTTLE for thread safety
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,  // Every 1 second
-      "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f]",
+      "MPC: state(%.2f, %.2f, %.2f°, %.2f m/s) -> cmd(steer=%.3f, speed=%.2f) [%d iters, cost=%.2f, horizon=%.2fs]",
       current_state.x, current_state.y, current_state.yaw * 180.0 / M_PI, current_state.v,
-      solution.steering, solution.speed, solution.iterations, solution.cost);
+      solution.steering, solution.speed, solution.iterations, solution.cost, prediction_horizon_);
   }
   
   /**
