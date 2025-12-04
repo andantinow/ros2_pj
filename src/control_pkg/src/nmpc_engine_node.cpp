@@ -70,7 +70,7 @@ struct MPCConfig
   double convergence_tol = 1e-4;  // Tighter convergence tolerance
   
   // Issue 3.3: Latency compensation
-  double latency_compensation_sec = 0.0;  // Estimated computation delay for forward simulation
+  double latency_compensation_sec = 0.02;  // Default 20ms computation delay for forward simulation
 };
 
 // Vehicle state
@@ -556,6 +556,7 @@ public:
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
+    prediction_horizon_ = prediction_horizon;  // Store for reference trajectory building
     int prediction_steps = get_parameter("prediction_steps").as_int();
     control_rate_hz_ = get_parameter("control_rate_hz").as_double();
     nominal_speed_ = get_parameter("nominal_speed").as_double();
@@ -1019,9 +1020,9 @@ private:
     double min_dist = std::numeric_limits<double>::max();
     
     // Search in a local window for efficiency (wrap around for closed loops)
-    static size_t last_closest_idx = 0;
-    size_t search_start = (last_closest_idx > 50) ? last_closest_idx - 50 : 0;
-    size_t search_end = std::min(num_poses, last_closest_idx + 100);
+    // Using member variable last_closest_idx_ instead of static for thread safety
+    size_t search_start = (last_closest_idx_ > 50) ? last_closest_idx_ - 50 : 0;
+    size_t search_end = std::min(num_poses, last_closest_idx_ + 100);
     
     // First pass: search near last known position
     for (size_t i = search_start; i < search_end; ++i) {
@@ -1060,7 +1061,7 @@ private:
       }
     }
     
-    last_closest_idx = closest_idx;
+    last_closest_idx_ = closest_idx;
     
     // Advance to first point that is clearly ahead
     size_t start_idx = closest_idx;
@@ -1078,9 +1079,9 @@ private:
     // Issue 4.1: Time-based reference spacing (NOT Pure Pursuit Ld)
     // Compute spacing based on prediction horizon and vehicle speed
     // This ensures NMPC sees the full trajectory it needs for optimization
-    double horizon_sec = 1.0;  // Should match solver config
+    // Using member variable prediction_horizon_ for consistency with solver config
     double speed = std::max(0.5, current_state.v);
-    double total_lookahead_dist = speed * horizon_sec;
+    double total_lookahead_dist = speed * prediction_horizon_;
     
     // Calculate path resolution
     double total_path_length = 0.0;
@@ -1125,8 +1126,11 @@ private:
         double next_qw = poses[next_idx].pose.orientation.w;
         double next_yaw = std::atan2(2.0 * next_qw * next_qz, 1.0 - 2.0 * next_qz * next_qz);
         
-        double dyaw = std::abs(next_yaw - ref.yaw);
-        while (dyaw > M_PI) dyaw = 2.0 * M_PI - dyaw;
+        // Proper angle normalization for dyaw
+        double dyaw = next_yaw - ref.yaw;
+        while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
+        while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
+        dyaw = std::abs(dyaw);
         
         double seg_dist = std::sqrt(dx * dx + dy * dy);
         if (seg_dist > 0.01) {
@@ -1185,6 +1189,7 @@ private:
   double nominal_speed_{2.0};
   bool use_dual_ekf_{true};
   double max_steer_{0.436};  // 25 degrees in radians
+  double prediction_horizon_{1.0};  // Store prediction horizon for reference building
   
   // A1/A2 Collision avoidance parameters
   double a1_threshold_{0.01};   // Reverse trigger at very close collision (0.01m)
@@ -1206,6 +1211,9 @@ private:
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
   double last_steering_before_collision_{0.0};  // Track last steering direction before collision
+  
+  // Reference trajectory state (moved from static to member)
+  mutable size_t last_closest_idx_{0};
 
   // MPC Solver
   nmpc::BicycleMPCSolver solver_;
