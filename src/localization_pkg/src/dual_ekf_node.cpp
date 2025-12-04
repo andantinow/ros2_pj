@@ -133,6 +133,7 @@ private:
         declare_parameter<std::string>("odom_topic", "/odom");
         declare_parameter<std::string>("imu_topic", "/sensors/imu/raw");
         declare_parameter<std::string>("global_pose_topic", "/amcl_pose");
+        declare_parameter<std::string>("global_pose_stamped_topic", "");  // Optional: for PoseStamped format
         declare_parameter<std::string>("local_odom_output", "/dual_ekf/local_odom");
         declare_parameter<std::string>("global_odom_output", "/dual_ekf/global_odom");
         declare_parameter<std::string>("global_pose_output", "/dual_ekf/pose");
@@ -229,6 +230,7 @@ private:
         std::string odom_topic = get_parameter("odom_topic").as_string();
         std::string imu_topic = get_parameter("imu_topic").as_string();
         std::string global_pose_topic = get_parameter("global_pose_topic").as_string();
+        std::string pose_stamped_topic = get_parameter("global_pose_stamped_topic").as_string();
         
         odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
             odom_topic, 20,
@@ -238,18 +240,24 @@ private:
             imu_topic, 50,
             std::bind(&DualEkfNode::imuCallback, this, std::placeholders::_1));
         
-        global_pose_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-            global_pose_topic, 10,
-            std::bind(&DualEkfNode::globalPoseCallback, this, std::placeholders::_1));
+        // Subscribe to PoseWithCovarianceStamped format if topic is configured
+        if (!global_pose_topic.empty()) {
+            global_pose_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+                global_pose_topic, 10,
+                std::bind(&DualEkfNode::globalPoseCallback, this, std::placeholders::_1));
+        }
         
-        // Also subscribe to PoseStamped format (e.g., from gym_bridge or particle filter)
-        // This handles global_pose_topic if it publishes PoseStamped instead of PoseWithCovarianceStamped
-        amcl_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-            global_pose_topic, 10,
-            std::bind(&DualEkfNode::amclPoseCallback, this, std::placeholders::_1));
+        // Subscribe to PoseStamped format if topic is configured
+        // This is useful when the global pose source (e.g., gym_bridge) uses PoseStamped
+        if (!pose_stamped_topic.empty()) {
+            amcl_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+                pose_stamped_topic, 10,
+                std::bind(&DualEkfNode::amclPoseCallback, this, std::placeholders::_1));
+        }
         
         RCLCPP_INFO(get_logger(), "Subscribing to odom: %s, imu: %s, global_pose: %s",
-                    odom_topic.c_str(), imu_topic.c_str(), global_pose_topic.c_str());
+                    odom_topic.c_str(), imu_topic.c_str(), 
+                    (!pose_stamped_topic.empty() ? pose_stamped_topic : global_pose_topic).c_str());
     }
     
     /**
