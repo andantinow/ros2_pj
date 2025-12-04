@@ -913,13 +913,10 @@ double SimpleController::compute_adaptive_lookahead(double speed)
   double adaptive = base_lookahead + lookahead_speed_gain_ * speed;
   double result = std::max(min_lookahead_, std::min(max_lookahead_, adaptive));
   
-  // Log lookahead changes for debugging (every 50 calls = ~1 second at 20ms timer)
-  static int lookahead_log_count = 0;
-  if (lookahead_log_count++ % 50 == 0) {
-    RCLCPP_INFO(this->get_logger(), 
-                "Lookahead: base=%.2f, speed=%.2f, adaptive=%.2f (min=%.2f, max=%.2f, gain=%.2f)",
-                base_lookahead, speed, result, min_lookahead_, max_lookahead_, lookahead_speed_gain_);
-  }
+  // Log lookahead changes for debugging using ROS2 throttled logging (~1 second interval)
+  RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+              "Lookahead: base=%.2f, speed=%.2f, adaptive=%.2f (min=%.2f, max=%.2f, gain=%.2f)",
+              base_lookahead, speed, result, min_lookahead_, max_lookahead_, lookahead_speed_gain_);
   
   return result;
 }
