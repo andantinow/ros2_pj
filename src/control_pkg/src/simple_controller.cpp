@@ -773,9 +773,10 @@ double SimpleController::compute_opponent_following_speed(double base_speed)
     
     if (!can_overtake || !has_valid_overtake_plan_) {
       // 추월 불가 (유효한 추월 경로가 없음) -> Following 모드
+      // Note: Following 상태는 is_following_opponent_ 플래그로 별도 추적
+      // CRSM 상태는 충돌 복구용이므로 Following과 독립적
       if (!is_following_opponent_) {
         is_following_opponent_ = true;
-        crsm_state_ = CRSMState::ST_NORMAL;  // 정상 상태 (Following)
         RCLCPP_INFO(this->get_logger(), 
                     "FOLLOWING START (ACC): No safe overtake path. front=%.2fm, target_gap=%.2fm",
                     front_dist, target_follow_gap_);
@@ -2747,14 +2748,14 @@ void SimpleController::update_opponent_velocity_estimate()
     // 거리 변화율 = 상대 속도 - 자차 속도
     // 상대 속도 = 거리 변화율 + 자차 속도
     double relative_vel = dist_change / dt;
-    estimated_opponent_velocity_ = ego_speed + relative_vel;
+    double raw_opponent_vel = ego_speed + relative_vel;
     
     // 음수 속도는 0으로 클램프 (상대방이 후진하지 않는다고 가정)
-    estimated_opponent_velocity_ = std::max(0.0, estimated_opponent_velocity_);
+    raw_opponent_vel = std::max(0.0, raw_opponent_vel);
     
-    // 스무딩 적용
+    // 스무딩 적용 (이전 값 70% + 새 값 30%)
     estimated_opponent_velocity_ = 0.7 * estimated_opponent_velocity_ + 
-                                   0.3 * (ego_speed + relative_vel);
+                                   0.3 * raw_opponent_vel;
   }
   
   prev_opponent_distance_ = last_obstacle_front_dist_;
