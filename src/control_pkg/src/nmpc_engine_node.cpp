@@ -12,6 +12,12 @@
  * - Latency compensation for control delay handling
  * - Lateral tolerance tube for optimal racing lines
  * 
+ * Key Features (v3.0) - Overtaking and Collision System:
+ * - Simplified collision handling: stop -> wait -> straight reverse (no spinning)
+ * - Opponent detection and following with speed limiting
+ * - Global overtaking path generation with visualization
+ * - Overtaking decision and commitment system
+ * 
  * State: [x, y, yaw, v]
  * Control: [steering_angle, acceleration]
  * 
@@ -24,6 +30,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <Eigen/Dense>
@@ -922,20 +929,31 @@ public:
     declare_parameter<std::string>("scan_topic", "/scan");  // LiDAR topic
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
-    // A1/A2 collision avoidance parameters
-    // A1: STRONG SHORT BURST reverse when hitting front obstacle
-    // A2: Steering avoidance only (NO SLOWDOWN per user request)
-    declare_parameter("a1_threshold", 0.3);            // [m] Front obstacle distance to trigger reverse
-    declare_parameter("a2_threshold", 0.4);            // [m] Distance to trigger steering avoidance
+    // Simplified Collision Avoidance System (v3.0)
+    // When hitting wall/obstacle:
+    // 1. STOP immediately
+    // 2. Wait briefly
+    // 3. Reverse straight back (no complex steering - fixes spinning issue)
+    declare_parameter("a1_threshold", 0.3);            // [m] Front obstacle distance to trigger collision
+    declare_parameter("a2_threshold", 0.4);            // [m] Distance to trigger avoidance steering
     declare_parameter("a2_urgent_threshold", 0.25);    // [m] Distance for urgent avoidance
     declare_parameter("a2_max_steer_ratio", 1.0);      // Full steering allowed
     declare_parameter("a2_urgent_steer_ratio", 1.0);   // Full steering in urgent mode
-    declare_parameter("reverse_speed", 2.5);           // [m/s] STRONG reverse speed
-    declare_parameter("reverse_duration", 0.15);       // [s] VERY SHORT burst duration
-    declare_parameter("a1_steer_gain", 1.0);           // Full steering during reverse
+    declare_parameter("reverse_speed", 1.5);           // [m/s] Reverse speed (reduced for safety)
+    declare_parameter("reverse_duration", 0.5);        // [s] Reverse duration
+    declare_parameter("stop_duration", 0.3);           // [s] Stop duration before reversing
+    declare_parameter("a1_steer_gain", 1.0);           // Steering during reverse (unused in simplified mode)
     declare_parameter("a2_steer_gain", 1.5);           // High repulsive force gain
     declare_parameter("a2_urgent_steer_gain", 2.0);    // Very high urgent gain
     declare_parameter("enable_collision_avoidance", true);
+    
+    // Opponent Following and Overtaking System
+    declare_parameter("opponent_detection_range", 3.0);    // [m] Range to detect opponent ahead
+    declare_parameter("opponent_following_distance", 1.0); // [m] Safe following distance
+    declare_parameter("overtake_path_width", 0.8);         // [m] Lateral offset for overtaking
+    declare_parameter("overtake_decision_distance", 2.5);  // [m] Distance to start considering overtake
+    declare_parameter("enable_overtaking", true);          // Enable/disable overtaking system
+    declare_parameter("opponent_speed_tracking_gain", 0.8);// Speed limiting when following (0.8 = 80% of opponent speed)
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
@@ -959,10 +977,19 @@ public:
     a2_urgent_steer_ratio_ = get_parameter("a2_urgent_steer_ratio").as_double();
     reverse_speed_ = get_parameter("reverse_speed").as_double();
     reverse_duration_ = get_parameter("reverse_duration").as_double();
+    stop_duration_ = get_parameter("stop_duration").as_double();
     a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
     a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
     a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
     enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
+    
+    // Get opponent following and overtaking parameters
+    opponent_detection_range_ = get_parameter("opponent_detection_range").as_double();
+    opponent_following_distance_ = get_parameter("opponent_following_distance").as_double();
+    overtake_path_width_ = get_parameter("overtake_path_width").as_double();
+    overtake_decision_distance_ = get_parameter("overtake_decision_distance").as_double();
+    enable_overtaking_ = get_parameter("enable_overtaking").as_bool();
+    opponent_speed_tracking_gain_ = get_parameter("opponent_speed_tracking_gain").as_double();
     
     // Calculate recovery cooldown as 2x the reverse duration
     // This prevents immediate re-triggering of reverse after completion
@@ -978,8 +1005,11 @@ public:
     RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
     RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
-    RCLCPP_INFO(get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (repulsive force), enabled=%s",
-                a1_threshold_, a2_threshold_, enable_collision_avoidance_ ? "true" : "false");
+    RCLCPP_INFO(get_logger(), "Collision System: A1=%.2fm (stop+reverse), A2=%.2fm (avoid), stop=%.2fs, reverse=%.2fs",
+                a1_threshold_, a2_threshold_, stop_duration_, reverse_duration_);
+    RCLCPP_INFO(get_logger(), "Overtaking System: range=%.2fm, follow_dist=%.2fm, path_width=%.2fm, enabled=%s",
+                opponent_detection_range_, opponent_following_distance_, overtake_path_width_,
+                enable_overtaking_ ? "true" : "false");
 
     // Configure MPC solver with all Issue fixes
     nmpc::MPCConfig cfg;
@@ -1068,7 +1098,23 @@ public:
     nmpc_reference_pub_ = create_publisher<visualization_msgs::msg::Marker>(
       "/nmpc_reference_points", rclcpp::QoS(1));
     
+    // Overtaking paths visualization publisher (MAGENTA for left, CYAN for right)
+    overtake_path_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+      "/overtake_paths", rclcpp::QoS(1).transient_local());
+    
+    // Opponent detection marker publisher (RED sphere)
+    opponent_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+      "/detected_opponent", rclcpp::QoS(1));
+    
+    // Subscribe to opponent odometry for speed tracking
+    opponent_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/opp_racecar/odom", rclcpp::QoS(10).best_effort(),
+      [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
+        latest_opponent_odom_ = msg;
+      });
+    
     RCLCPP_INFO(get_logger(), "NMPC visualization: /nmpc_predicted_trajectory (GREEN), /nmpc_reference_points (BLUE)");
+    RCLCPP_INFO(get_logger(), "Overtaking visualization: /overtake_paths (MAGENTA/CYAN), /detected_opponent (RED)");
 
     // Setup control timer
     const double period_s = 1.0 / std::max(1.0, control_rate_hz_);
@@ -1076,15 +1122,36 @@ public:
       std::chrono::duration<double>(period_s),
       std::bind(&NMPCEngineNode::controlCycle, this));
     
-    reverse_start_time_ = now();
-    recovery_cooldown_start_time_ = now();
+    // Initialize time stamps
+    collision_state_start_time_ = now();
+    overtake_start_time_ = now();
     
     RCLCPP_INFO(get_logger(), "NMPC control loop running at %.1f Hz", control_rate_hz_);
   }
 
 private:
   /**
+   * @brief Collision state machine states
+   */
+  enum class CollisionState {
+    NORMAL,           // Normal driving
+    STOPPING,         // Detected collision, stopping
+    WAITING,          // Stopped, waiting before reverse
+    REVERSING,        // Reversing straight back
+    COOLDOWN          // Recovery cooldown period
+  };
+  
+  /**
    * @brief Main control cycle - called at control_rate_hz
+   * 
+   * Implements simplified collision handling:
+   * 1. NORMAL: Regular NMPC control
+   * 2. STOPPING: Stop when hitting wall (speed = 0)
+   * 3. WAITING: Wait briefly (no movement)
+   * 4. REVERSING: Reverse straight back (steer = 0, speed < 0)
+   * 5. COOLDOWN: Brief cooldown before returning to normal
+   * 
+   * Also implements opponent following and overtaking logic.
    */
   void controlCycle()
   {
@@ -1101,93 +1168,112 @@ private:
     
     rclcpp::Time current_time = now();
     
-    // === A1/A2 Range-based Collision Avoidance ===
     // Update obstacle distances from LiDAR
     updateObstacleDistances();
     
-    // Check if we're in recovery cooldown period (prevent immediate re-reverse)
-    bool in_recovery_cooldown = is_in_recovery_cooldown_ && 
-      (current_time - recovery_cooldown_start_time_).seconds() < recovery_cooldown_duration_;
+    // Detect opponent ahead and get opponent info
+    OpponentInfo opponent = detectOpponent();
     
-    if (in_recovery_cooldown) {
-      // During cooldown, don't re-trigger reverse, just do normal control with extra caution
-      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 100,
-        "Recovery cooldown: %.2fs remaining",
-        recovery_cooldown_duration_ - (current_time - recovery_cooldown_start_time_).seconds());
+    // Publish opponent visualization
+    publishOpponentVisualization(opponent);
+    
+    // Generate and publish overtaking paths if enabled
+    if (enable_overtaking_ && latest_path_) {
+      generateAndPublishOvertakePaths();
     }
     
-    // A1 zone check: STRONG SHORT BURST reverse when hitting front obstacle
-    // Skip if in recovery cooldown (prevents oscillation)
-    if (!in_recovery_cooldown && checkA1Zone()) {
-      // Start or continue reversing
-      if (!is_reversing_) {
-        is_reversing_ = true;
-        reverse_start_time_ = current_time;
-        consecutive_reverse_count_++;
-        
-        // If we've reversed too many times in quick succession, use longer reverse
-        double effective_duration = reverse_duration_;
-        if (consecutive_reverse_count_ > 3) {
-          effective_duration = reverse_duration_ * 2.0;  // Double duration after 3 consecutive reverses
+    // ========================================
+    // SIMPLIFIED COLLISION STATE MACHINE
+    // ========================================
+    // States: NORMAL -> STOPPING -> WAITING -> REVERSING -> COOLDOWN -> NORMAL
+    // This removes all complex steering during collision, fixing the spinning issue
+    
+    double elapsed = (current_time - collision_state_start_time_).seconds();
+    
+    switch (collision_state_) {
+      case CollisionState::NORMAL:
+        // Check for front collision
+        if (enable_collision_avoidance_ && last_obstacle_front_dist_ < a1_threshold_) {
+          collision_state_ = CollisionState::STOPPING;
+          collision_state_start_time_ = current_time;
           RCLCPP_WARN(get_logger(), 
-            "Multiple collisions (%d)! Using extended reverse duration: %.2fs",
-            consecutive_reverse_count_, effective_duration);
+            "COLLISION DETECTED! Front=%.2fm < %.2fm -> STOPPING",
+            last_obstacle_front_dist_, a1_threshold_);
         }
-        current_reverse_duration_ = effective_duration;
+        break;
         
-        // Store current steering to find best escape direction
-        findBestEscapeDirection();
+      case CollisionState::STOPPING:
+        {
+          // Publish STOP command
+          ackermann_msgs::msg::AckermannDriveStamped cmd;
+          cmd.header.stamp = current_time;
+          cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
+          cmd.drive.speed = 0.0;
+          cmd.drive.steering_angle = 0.0;
+          drive_pub_->publish(cmd);
+          
+          // After brief stop, transition to waiting
+          if (elapsed > 0.1) {  // 100ms stop
+            collision_state_ = CollisionState::WAITING;
+            collision_state_start_time_ = current_time;
+            RCLCPP_INFO(get_logger(), "Stopped. Waiting %.2fs before reverse...", stop_duration_);
+          }
+          return;
+        }
         
-        RCLCPP_WARN(get_logger(), 
-          "A1 COLLISION! Front=%.2fm < %.2fm -> BURST REVERSE (speed=%.1f, duration=%.2fs)",
-          last_obstacle_front_dist_, a1_threshold_, reverse_speed_, current_reverse_duration_);
-      }
-      
-      double elapsed = (current_time - reverse_start_time_).seconds();
-      if (elapsed < current_reverse_duration_) {
-        // STRONG SHORT BURST: Apply maximum reverse force
-        double reverse_steer = computeReverseSteering();
+      case CollisionState::WAITING:
+        {
+          // Publish STOP command (maintain stopped state)
+          ackermann_msgs::msg::AckermannDriveStamped cmd;
+          cmd.header.stamp = current_time;
+          cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
+          cmd.drive.speed = 0.0;
+          cmd.drive.steering_angle = 0.0;
+          drive_pub_->publish(cmd);
+          
+          if (elapsed > stop_duration_) {
+            collision_state_ = CollisionState::REVERSING;
+            collision_state_start_time_ = current_time;
+            RCLCPP_INFO(get_logger(), "Wait complete. Reversing straight back for %.2fs...", reverse_duration_);
+          }
+          return;
+        }
         
-        ackermann_msgs::msg::AckermannDriveStamped cmd;
-        cmd.header.stamp = current_time;
-        cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
-        cmd.drive.speed = -reverse_speed_;  // Strong negative speed
-        cmd.drive.steering_angle = reverse_steer;
+      case CollisionState::REVERSING:
+        {
+          // SIMPLE STRAIGHT REVERSE - no complex steering (fixes spinning issue)
+          ackermann_msgs::msg::AckermannDriveStamped cmd;
+          cmd.header.stamp = current_time;
+          cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
+          cmd.drive.speed = -reverse_speed_;
+          cmd.drive.steering_angle = 0.0;  // STRAIGHT BACK - no steering
+          drive_pub_->publish(cmd);
+          
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 200,
+            "REVERSING: speed=%.2f, steer=0.0 (straight), %.0f%%",
+            -reverse_speed_, (elapsed / reverse_duration_) * 100.0);
+          
+          if (elapsed > reverse_duration_) {
+            collision_state_ = CollisionState::COOLDOWN;
+            collision_state_start_time_ = current_time;
+            RCLCPP_INFO(get_logger(), "Reverse complete. Cooldown for %.2fs...", recovery_cooldown_duration_);
+          }
+          return;
+        }
         
-        drive_pub_->publish(cmd);
-        
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 50,  // Log every 50ms for short burst
-          "BURST REVERSE: speed=%.2f, steer=%.3f, %.0f%%",
-          -reverse_speed_, reverse_steer, (elapsed / current_reverse_duration_) * 100.0);
-        return;
-      } else {
-        // Burst complete - start recovery cooldown
-        is_reversing_ = false;
-        is_in_recovery_cooldown_ = true;
-        recovery_cooldown_start_time_ = current_time;
-        RCLCPP_INFO(get_logger(), "Burst reverse complete, entering recovery cooldown (%.2fs)", 
-          recovery_cooldown_duration_);
-      }
-    } else {
-      // Not in A1 zone (or in cooldown), stop reversing if we were
-      if (is_reversing_) {
-        is_reversing_ = false;
-        is_in_recovery_cooldown_ = true;
-        recovery_cooldown_start_time_ = current_time;
-        RCLCPP_INFO(get_logger(), "Left A1 zone, entering recovery cooldown");
-      }
-      
-      // Reset consecutive reverse count immediately when out of A1 zone and cooldown complete
-      // This allows fresh collision handling at new locations
-      if (!in_recovery_cooldown && !checkA1Zone()) {
-        consecutive_reverse_count_ = 0;
-      }
-      
-      // Clear recovery cooldown flag when cooldown period ends
-      if (is_in_recovery_cooldown_ && !in_recovery_cooldown) {
-        is_in_recovery_cooldown_ = false;
-        RCLCPP_INFO(get_logger(), "Recovery cooldown complete, normal operation resumed");
-      }
+      case CollisionState::COOLDOWN:
+        {
+          if (elapsed > recovery_cooldown_duration_) {
+            collision_state_ = CollisionState::NORMAL;
+            RCLCPP_INFO(get_logger(), "Cooldown complete. Resuming normal operation.");
+          } else {
+            // During cooldown, allow normal driving but don't re-trigger collision
+            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
+              "Recovery cooldown: %.1fs remaining",
+              recovery_cooldown_duration_ - elapsed);
+          }
+        }
+        break;
     }
 
     // Extract current state from odometry
@@ -1220,35 +1306,96 @@ private:
         status_str, solution.iterations, solution.slack_violation);
     }
     
-    // Track steering for collision recovery (before A2 modifications)
-    if (!is_reversing_) {
-      last_steering_before_collision_ = solution.steering;
-    }
+    // ========================================
+    // OPPONENT FOLLOWING AND OVERTAKING LOGIC
+    // ========================================
     
-    // A2 zone: apply steering avoidance - lookahead 방향 기준 gap following
-    double delta_a2_avoidance = 0.0;
-    if (!is_in_a1_zone_ && checkA2Zone()) {
-      // lookahead 방향 = 현재 위치에서 첫 번째 reference point 방향
-      double lookahead_angle = 0.0;
-      if (!reference.empty()) {
-        double dx = reference[0].x - current_state.x;
-        double dy = reference[0].y - current_state.y;
-        // 차량 프레임으로 변환
-        double cos_yaw = std::cos(-current_state.yaw);
-        double sin_yaw = std::sin(-current_state.yaw);
-        double dx_vehicle = dx * cos_yaw - dy * sin_yaw;
-        double dy_vehicle = dx * sin_yaw + dy * cos_yaw;
-        lookahead_angle = std::atan2(dy_vehicle, dx_vehicle);
+    // Apply speed limiting when following opponent
+    if (opponent.is_detected && opponent.is_ahead) {
+      double distance_to_opponent = opponent.distance;
+      
+      // When close to opponent, limit our speed to opponent's speed
+      if (distance_to_opponent < opponent_following_distance_) {
+        // Match opponent speed with safety margin
+        double limited_speed = opponent.speed * opponent_speed_tracking_gain_;
+        if (solution.speed > limited_speed) {
+          solution.speed = std::max(0.3, limited_speed);  // Minimum creep speed
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "FOLLOWING: Distance=%.2fm, limiting speed to %.2f (opponent=%.2f)",
+            distance_to_opponent, solution.speed, opponent.speed);
+        }
       }
       
-      delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
-      solution.steering += delta_a2_avoidance;
-      solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-      // Note: Speed slowdown in A2 zone removed per user request
-      // Side obstacles should not cause speed reduction
-      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
-        "A2 Zone: adding avoidance steer=%.3f (no slowdown)", 
-        delta_a2_avoidance);
+      // Check if overtaking is feasible
+      if (enable_overtaking_ && is_overtaking_) {
+        // Commit to overtaking - use higher speed and overtake path
+        if (!overtake_left_path_.empty() || !overtake_right_path_.empty()) {
+          // Choose best overtaking path (prefer left in most cases)
+          bool use_left = canOvertakeOnSide(true);
+          bool use_right = !use_left && canOvertakeOnSide(false);
+          
+          if (use_left || use_right) {
+            // Apply lateral offset for overtaking
+            double lateral_offset = use_left ? overtake_path_width_ : -overtake_path_width_;
+            
+            // Modify reference trajectory for overtaking
+            for (auto& ref : reference) {
+              double cos_yaw = std::cos(ref.yaw);
+              double sin_yaw = std::sin(ref.yaw);
+              ref.x += lateral_offset * (-sin_yaw);
+              ref.y += lateral_offset * cos_yaw;
+            }
+            
+            // Increase speed during overtake
+            solution.speed = std::min(solution.speed * 1.2, nominal_speed_ * 1.3);
+            
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
+              "OVERTAKING %s: offset=%.2fm, speed=%.2f",
+              use_left ? "LEFT" : "RIGHT", lateral_offset, solution.speed);
+          }
+        }
+      } else if (enable_overtaking_ && canStartOvertake(opponent)) {
+        // Start overtaking
+        is_overtaking_ = true;
+        overtake_start_time_ = now();
+        RCLCPP_WARN(get_logger(), "STARTING OVERTAKE! Distance=%.2fm, clearance OK", 
+          distance_to_opponent);
+      }
+    } else {
+      // No opponent ahead, end overtaking if active
+      if (is_overtaking_) {
+        double overtake_elapsed = (now() - overtake_start_time_).seconds();
+        if (overtake_elapsed > 2.0) {  // Overtake complete after 2 seconds without opponent
+          is_overtaking_ = false;
+          RCLCPP_INFO(get_logger(), "Overtake complete (no opponent ahead for %.1fs)", overtake_elapsed);
+        }
+      }
+    }
+    
+    // A2 zone: apply steering avoidance (collision avoidance state must be NORMAL or COOLDOWN)
+    if (collision_state_ == CollisionState::NORMAL || collision_state_ == CollisionState::COOLDOWN) {
+      double delta_a2_avoidance = 0.0;
+      if (checkA2Zone()) {
+        // lookahead 방향 = 현재 위치에서 첫 번째 reference point 방향
+        double lookahead_angle = 0.0;
+        if (!reference.empty()) {
+          double dx = reference[0].x - current_state.x;
+          double dy = reference[0].y - current_state.y;
+          // 차량 프레임으로 변환
+          double cos_yaw = std::cos(-current_state.yaw);
+          double sin_yaw = std::sin(-current_state.yaw);
+          double dx_vehicle = dx * cos_yaw - dy * sin_yaw;
+          double dy_vehicle = dx * sin_yaw + dy * cos_yaw;
+          lookahead_angle = std::atan2(dy_vehicle, dx_vehicle);
+        }
+        
+        delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
+        solution.steering += delta_a2_avoidance;
+        solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
+        // Note: Speed slowdown in A2 zone removed per user request
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
+          "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
+      }
     }
     
     // Publish NMPC visualization (예측 궤적 + 레퍼런스)
@@ -1369,117 +1516,229 @@ private:
   }
   
   /**
-   * @brief Find best escape direction when hitting obstacle
-   * Scans LiDAR to find the widest gap in the rear hemisphere
-   * and stores the direction for reverse steering
+   * @brief Information about detected opponent vehicle
    */
-  void findBestEscapeDirection()
+  struct OpponentInfo {
+    bool is_detected = false;
+    bool is_ahead = false;
+    double distance = 10.0;    // Distance to opponent [m]
+    double speed = 0.0;        // Opponent speed [m/s]
+    double x = 0.0;            // Opponent position x
+    double y = 0.0;            // Opponent position y
+    double relative_angle = 0.0; // Angle to opponent from vehicle heading
+  };
+  
+  /**
+   * @brief Detect opponent vehicle using LiDAR and opponent odometry
+   * 
+   * Combines:
+   * 1. LiDAR-based obstacle detection in front
+   * 2. Known opponent position from odometry (if available)
+   */
+  OpponentInfo detectOpponent()
   {
-    if (!scan_received_ || !latest_scan_ || latest_scan_->ranges.empty()) {
-      best_escape_angle_ = 0.0;
-      return;
-    }
+    OpponentInfo opponent;
     
-    double angle_min = latest_scan_->angle_min;
-    double angle_inc = latest_scan_->angle_increment;
-    int num_ranges = latest_scan_->ranges.size();
-    
-    // Search in rear hemisphere: both left-rear (+90° to +180°) and right-rear (-90° to -180°)
-    constexpr double REAR_SEARCH_MIN = M_PI / 2.0;   // 90 degrees
-    constexpr double MIN_VALID_RANGE = 0.05;
-    constexpr double ESCAPE_STEER_RATIO = 0.8;       // 80% of max steer for escape
-    constexpr double SIDE_ESCAPE_STEER_RATIO = 0.6;  // 60% of max steer for side-based escape
-    
-    double best_angle = 0.0;
-    double max_range = 0.0;
-    
-    // Find the direction with maximum clearance in rear hemisphere
-    // Check both left-rear (angle > 90°) and right-rear (angle < -90°)
-    for (int i = 0; i < num_ranges; ++i) {
-      double angle = angle_min + i * angle_inc;
-      double range = latest_scan_->ranges[i];
+    // Method 1: Use opponent odometry if available (most accurate)
+    if (latest_opponent_odom_ && latest_odom_) {
+      double ego_x = latest_odom_->pose.pose.position.x;
+      double ego_y = latest_odom_->pose.pose.position.y;
+      double ego_qz = latest_odom_->pose.pose.orientation.z;
+      double ego_qw = latest_odom_->pose.pose.orientation.w;
+      double ego_yaw = std::atan2(2.0 * ego_qw * ego_qz, 1.0 - 2.0 * ego_qz * ego_qz);
       
-      if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
-        continue;
-      }
+      opponent.x = latest_opponent_odom_->pose.pose.position.x;
+      opponent.y = latest_opponent_odom_->pose.pose.position.y;
       
-      // Check if in rear hemisphere: angle > +90° or angle < -90°
-      // This correctly covers both left-rear and right-rear quadrants
-      bool in_left_rear = (angle >= REAR_SEARCH_MIN);   // +90° to +180° (or beyond)
-      bool in_right_rear = (angle <= -REAR_SEARCH_MIN); // -90° to -180° (or beyond)
+      double dx = opponent.x - ego_x;
+      double dy = opponent.y - ego_y;
+      opponent.distance = std::sqrt(dx * dx + dy * dy);
       
-      if (in_left_rear || in_right_rear) {
-        if (range > max_range) {
-          max_range = range;
-          // Convert to steering angle for reverse:
-          // If best clearance is on left-rear (angle > 0), steer right when reversing (negative)
-          // If best clearance is on right-rear (angle < 0), steer left when reversing (positive)
-          best_angle = -std::copysign(1.0, angle) * max_steer_ * ESCAPE_STEER_RATIO;
-        }
+      // Check if within detection range
+      if (opponent.distance < opponent_detection_range_) {
+        opponent.is_detected = true;
+        
+        // Calculate relative angle (in vehicle frame)
+        double cos_yaw = std::cos(-ego_yaw);
+        double sin_yaw = std::sin(-ego_yaw);
+        double dx_vehicle = dx * cos_yaw - dy * sin_yaw;
+        double dy_vehicle = dx * sin_yaw + dy * cos_yaw;
+        opponent.relative_angle = std::atan2(dy_vehicle, dx_vehicle);
+        
+        // Is opponent ahead? (within ±45 degrees of front)
+        opponent.is_ahead = (dx_vehicle > 0 && std::abs(opponent.relative_angle) < M_PI / 4.0);
+        
+        // Get opponent speed
+        double vx = latest_opponent_odom_->twist.twist.linear.x;
+        double vy = latest_opponent_odom_->twist.twist.linear.y;
+        opponent.speed = std::sqrt(vx * vx + vy * vy);
       }
     }
     
-    // Also consider side clearances for escape direction
-    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
-    double side_diff = right_dist - left_dist;
-    
-    // If side difference is significant and no good rear gap found
-    if (max_range < 0.5 && std::abs(side_diff) > 0.1) {
-      // Steer toward the side with more clearance when reversing
-      // If right side clearer (side_diff > 0), steer left when reversing (positive)
-      // If left side clearer (side_diff < 0), steer right when reversing (negative)
-      best_angle = std::copysign(max_steer_ * SIDE_ESCAPE_STEER_RATIO, side_diff);
+    // Method 2: If no opponent odometry, use LiDAR-based detection
+    // Detect moving obstacles in front (simple heuristic)
+    if (!opponent.is_detected && scan_received_ && latest_scan_) {
+      // Check for large obstacle in front (could be opponent)
+      if (last_obstacle_front_dist_ < opponent_detection_range_ && 
+          last_obstacle_front_dist_ > a1_threshold_) {
+        opponent.is_detected = true;
+        opponent.is_ahead = true;
+        opponent.distance = last_obstacle_front_dist_;
+        opponent.relative_angle = last_obstacle_angle_;
+        opponent.speed = 0.5;  // Assume slow-moving obstacle
+      }
     }
     
-    best_escape_angle_ = best_angle;
-    
-    RCLCPP_DEBUG(get_logger(), 
-      "Escape direction: angle=%.3f, max_rear_range=%.2f, L=%.2f, R=%.2f",
-      best_escape_angle_, max_range, left_dist, right_dist);
+    return opponent;
   }
   
   /**
-   * @brief Compute steering angle for reverse (A1 zone)
-   * Uses pre-computed best escape direction to avoid spinning in circles
+   * @brief Publish opponent visualization marker
    */
-  double computeReverseSteering()
+  void publishOpponentVisualization(const OpponentInfo& opponent)
   {
-    // Steering ratio constants for different scenarios
-    constexpr double CLEARANCE_STEER_RATIO = 0.7;   // 70% of max steer for clearance-based
-    constexpr double OBSTACLE_STEER_RATIO = 0.5;    // 50% of max steer for obstacle angle-based
-    constexpr double DEFAULT_STEER_RATIO = 0.4;     // 40% of max steer for symmetry breaking
-    
-    // Use pre-computed escape direction (found at start of reverse)
-    double reverse_steer = best_escape_angle_;
-    
-    // If no good escape direction was found, use fallback logic
-    if (std::abs(reverse_steer) < 0.01) {
-      double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-      double right_dist = std::min(last_obstacle_right_dist_, 5.0);
-      
-      // Steer toward the side with more clearance
-      double dist_diff = right_dist - left_dist;
-      
-      if (std::abs(dist_diff) > 0.05) {
-        // If right side clearer, steer left when reversing (positive)
-        // If left side clearer, steer right when reversing (negative)
-        reverse_steer = std::copysign(max_steer_ * CLEARANCE_STEER_RATIO, dist_diff);
-      } else if (std::abs(last_obstacle_angle_) > 0.1) {
-        // Obstacle is at an angle - steer away from it
-        // If obstacle is on left (positive angle), steer right when reversing (negative)
-        reverse_steer = -std::copysign(max_steer_ * OBSTACLE_STEER_RATIO, last_obstacle_angle_);
-      } else {
-        // Default: small steering to break symmetry
-        // Alternate based on consecutive reverse count to avoid repeated spinning
-        reverse_steer = (consecutive_reverse_count_ % 2 == 0) ? 
-          max_steer_ * DEFAULT_STEER_RATIO : -max_steer_ * DEFAULT_STEER_RATIO;
-      }
+    if (!opponent.is_detected) {
+      return;
     }
     
-    reverse_steer = std::clamp(reverse_steer, -max_steer_, max_steer_);
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = now();
+    marker.ns = "opponent";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.action = visualization_msgs::msg::Marker::ADD;
     
-    return reverse_steer;
+    marker.pose.position.x = opponent.x;
+    marker.pose.position.y = opponent.y;
+    marker.pose.position.z = 0.3;
+    marker.pose.orientation.w = 1.0;
+    
+    marker.scale.x = 0.4;
+    marker.scale.y = 0.4;
+    marker.scale.z = 0.4;
+    
+    // RED for opponent
+    marker.color.r = 1.0f;
+    marker.color.g = 0.0f;
+    marker.color.b = 0.0f;
+    marker.color.a = 0.8f;
+    
+    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+    
+    opponent_marker_pub_->publish(marker);
+  }
+  
+  /**
+   * @brief Generate and publish overtaking paths
+   * Creates left and right overtaking paths based on current raceline
+   */
+  void generateAndPublishOvertakePaths()
+  {
+    if (!latest_path_ || latest_path_->poses.empty()) {
+      return;
+    }
+    
+    visualization_msgs::msg::MarkerArray marker_array;
+    
+    // Generate left overtaking path (MAGENTA)
+    visualization_msgs::msg::Marker left_path;
+    left_path.header.frame_id = "map";
+    left_path.header.stamp = now();
+    left_path.ns = "overtake_left";
+    left_path.id = 0;
+    left_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    left_path.action = visualization_msgs::msg::Marker::ADD;
+    left_path.scale.x = 0.05;
+    left_path.color.r = 1.0f;
+    left_path.color.g = 0.0f;
+    left_path.color.b = 1.0f;  // Magenta
+    left_path.color.a = 0.7f;
+    left_path.pose.orientation.w = 1.0;
+    
+    // Generate right overtaking path (CYAN)
+    visualization_msgs::msg::Marker right_path;
+    right_path.header.frame_id = "map";
+    right_path.header.stamp = now();
+    right_path.ns = "overtake_right";
+    right_path.id = 1;
+    right_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    right_path.action = visualization_msgs::msg::Marker::ADD;
+    right_path.scale.x = 0.05;
+    right_path.color.r = 0.0f;
+    right_path.color.g = 1.0f;
+    right_path.color.b = 1.0f;  // Cyan
+    right_path.color.a = 0.7f;
+    right_path.pose.orientation.w = 1.0;
+    
+    overtake_left_path_.clear();
+    overtake_right_path_.clear();
+    
+    for (const auto& pose : latest_path_->poses) {
+      double x = pose.pose.position.x;
+      double y = pose.pose.position.y;
+      double qz = pose.pose.orientation.z;
+      double qw = pose.pose.orientation.w;
+      double yaw = std::atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz);
+      
+      // Calculate perpendicular offset
+      double cos_yaw = std::cos(yaw);
+      double sin_yaw = std::sin(yaw);
+      
+      // Left path (positive lateral offset)
+      geometry_msgs::msg::Point left_pt;
+      left_pt.x = x + overtake_path_width_ * (-sin_yaw);
+      left_pt.y = y + overtake_path_width_ * cos_yaw;
+      left_pt.z = 0.05;
+      left_path.points.push_back(left_pt);
+      overtake_left_path_.push_back(left_pt);
+      
+      // Right path (negative lateral offset)
+      geometry_msgs::msg::Point right_pt;
+      right_pt.x = x - overtake_path_width_ * (-sin_yaw);
+      right_pt.y = y - overtake_path_width_ * cos_yaw;
+      right_pt.z = 0.05;
+      right_path.points.push_back(right_pt);
+      overtake_right_path_.push_back(right_pt);
+    }
+    
+    left_path.lifetime = rclcpp::Duration::from_seconds(2.0);
+    right_path.lifetime = rclcpp::Duration::from_seconds(2.0);
+    
+    marker_array.markers.push_back(left_path);
+    marker_array.markers.push_back(right_path);
+    
+    overtake_path_pub_->publish(marker_array);
+  }
+  
+  /**
+   * @brief Check if overtaking can be started
+   */
+  bool canStartOvertake(const OpponentInfo& opponent)
+  {
+    if (!enable_overtaking_ || !opponent.is_detected || !opponent.is_ahead) {
+      return false;
+    }
+    
+    // Check distance - must be within decision range
+    if (opponent.distance > overtake_decision_distance_) {
+      return false;
+    }
+    
+    // Check if we have room on at least one side
+    bool left_clear = last_obstacle_left_dist_ > overtake_path_width_ + 0.3;
+    bool right_clear = last_obstacle_right_dist_ > overtake_path_width_ + 0.3;
+    
+    return left_clear || right_clear;
+  }
+  
+  /**
+   * @brief Check if we can overtake on specified side
+   */
+  bool canOvertakeOnSide(bool left_side)
+  {
+    double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
+    return clearance > overtake_path_width_ + 0.3;
   }
   
   /**
@@ -1973,13 +2232,17 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr opponent_odom_sub_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nmpc_trajectory_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nmpc_reference_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr overtake_path_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr opponent_marker_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   // State
   nav_msgs::msg::Odometry::SharedPtr latest_odom_;
+  nav_msgs::msg::Odometry::SharedPtr latest_opponent_odom_;
   nav_msgs::msg::Path::SharedPtr latest_path_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
   bool scan_received_{false};
@@ -1991,36 +2254,45 @@ private:
   double max_steer_{0.436};  // 25 degrees in radians
   double prediction_horizon_{1.0};  // Store prediction horizon for reference building
   
-  // A1/A2 Collision avoidance parameters
-  double a1_threshold_{0.3};          // [m] Front obstacle reverse trigger
+  // Simplified Collision parameters
+  double a1_threshold_{0.3};          // [m] Front obstacle collision trigger
   double a2_threshold_{0.4};          // [m] Steering avoidance threshold
   double a2_urgent_threshold_{0.25};  // [m] Urgent avoidance threshold
   double a2_max_steer_ratio_{1.0};    // Full steering allowed
   double a2_urgent_steer_ratio_{1.0}; // Full steering in urgent mode
-  double reverse_speed_{2.5};         // [m/s] Strong burst reverse
-  double reverse_duration_{0.15};     // [s] Short burst duration
-  double a1_steer_gain_{1.0};         // Full steering during reverse
+  double reverse_speed_{1.5};         // [m/s] Reverse speed
+  double reverse_duration_{0.5};      // [s] Reverse duration
+  double stop_duration_{0.3};         // [s] Stop duration before reversing
+  double a1_steer_gain_{1.0};         // Not used in simplified mode
   double a2_steer_gain_{1.5};         // High repulsive force gain
   double a2_urgent_steer_gain_{2.0};  // Very high urgent gain
   bool enable_collision_avoidance_{true};
   
-  // Collision avoidance state
-  bool is_reversing_{false};
+  // Opponent following and overtaking parameters
+  double opponent_detection_range_{3.0};
+  double opponent_following_distance_{1.0};
+  double overtake_path_width_{0.8};
+  double overtake_decision_distance_{2.5};
+  bool enable_overtaking_{true};
+  double opponent_speed_tracking_gain_{0.8};
+  
+  // Collision state machine
+  CollisionState collision_state_{CollisionState::NORMAL};
+  rclcpp::Time collision_state_start_time_;
+  
+  // Obstacle distances (updated each cycle)
   bool is_in_a1_zone_{false};
-  rclcpp::Time reverse_start_time_;
   double last_obstacle_left_dist_{10.0};
   double last_obstacle_right_dist_{10.0};
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
-  double last_steering_before_collision_{0.0};  // Track last steering direction before collision
+  double recovery_cooldown_duration_{0.3};
   
-  // Recovery cooldown state (prevents oscillation after reverse)
-  bool is_in_recovery_cooldown_{false};
-  rclcpp::Time recovery_cooldown_start_time_;
-  double recovery_cooldown_duration_{0.3};  // Default 300ms cooldown
-  int consecutive_reverse_count_{0};        // Count consecutive reverses
-  double current_reverse_duration_{0.15};   // Current effective reverse duration
-  double best_escape_angle_{0.0};           // Pre-computed best escape direction
+  // Overtaking state
+  bool is_overtaking_{false};
+  rclcpp::Time overtake_start_time_;
+  std::vector<geometry_msgs::msg::Point> overtake_left_path_;
+  std::vector<geometry_msgs::msg::Point> overtake_right_path_;
   
   // Reference trajectory state (moved from static to member)
   mutable size_t last_closest_idx_{0};
