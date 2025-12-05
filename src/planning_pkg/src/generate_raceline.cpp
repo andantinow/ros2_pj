@@ -274,13 +274,17 @@ int main(int argc,char** argv){
   }
   
   // For closed-loop tracks, iterate forward/backward passes multiple times
-  // to propagate speed limits across the loop boundary
+  // to propagate speed limits across the loop boundary.
+  // 3 iterations are typically sufficient because:
+  // - 1st iteration: propagates speed from straight sections into corners
+  // - 2nd iteration: refines the transition zones
+  // - 3rd iteration: ensures final convergence across the loop boundary
   constexpr int NUM_ITERATIONS = 3;
   
   for(int iter = 0; iter < NUM_ITERATIONS; ++iter) {
     // Step 2: Forward pass - apply acceleration limits with G-G diagram
     // For loop tracks, wrap around: use last point's speed for first point
-    if(iter > 0 && !vref.empty()) {
+    if(iter > 0 && vref.size() > 1) {
       // Propagate from last point to first point (loop connection)
       double v_prev = vref.back();
       double v_desired = vref[0];
@@ -316,7 +320,7 @@ int main(int argc,char** argv){
     
     // Step 3: Backward pass - apply deceleration limits with G-G diagram
     // For loop tracks, wrap around: use first point's speed for last point
-    if(!vref.empty()) {
+    if(vref.size() > 1) {
       double v_next = vref[0];
       double v_current = vref.back();
       double a_req = (v_next * v_next - v_current * v_current) / (2.0 * ds);
