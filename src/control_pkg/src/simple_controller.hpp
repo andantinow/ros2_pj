@@ -75,7 +75,12 @@ private:
   double overtake_lateral_offset_ = 0.5;     // 추월 시 횡방향 오프셋 (m)
   double return_to_line_distance_ = 2.0;     // 추월 후 라인 복귀 거리 (m)
   double min_overtake_gap_ = 1.0;            // 최소 추월 가능 간격 (m)
+  double overtake_speed_boost_ = 1.5;        // 추월 시 속도 증가 배율 (1.5x)
+  double post_overtake_speed_factor_ = 1.2;  // 추월 후 속도 유지 비율 (1.2x)
+  double post_overtake_duration_ = 2.0;      // 추월 후 고속 유지 시간 (seconds)
   rclcpp::Time overtake_start_time_ros_;     // 추월 시작 시간 (ROS Time)
+  rclcpp::Time overtake_end_time_ros_;       // 추월 종료 시간 (ROS Time)
+  bool is_post_overtake_ = false;            // 추월 직후 고속 유지 상태
   
   // 추월 경로 시각화
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr overtake_path_marker_pub_;
@@ -96,15 +101,15 @@ private:
   // A1 범위: 매우 좁은 범위 - 이 범위 안에 들어오면 후진 + 조향각 유지
   // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
   // 참고: A1 < A2 < wall_repulsion_threshold 순서로 설정해야 함
-  //       (8cm < 12cm < 20cm: 후진 < 급조향 < 반발조향)
-  double a1_threshold_ = 0.08;             // A1 범위: 후진 트리거 거리 (meters) - 8cm
+  //       (5cm < 12cm < 20cm: 후진 < 급조향 < 반발조향)
+  double a1_threshold_ = 0.05;             // A1 범위: 후진 트리거 거리 (meters) - 5cm (벽 충돌)
   double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
   double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율
   double reverse_speed_ = 1.0;             // 후진 속도 (m/s)
-  double reverse_duration_ = 0.6;          // 후진 지속 시간 (seconds) - 더 짧게
+  double reverse_duration_ = 1.0;          // 후진 지속 시간 (seconds) - 1초 가량
   double reverse_pause_duration_ = 0.3;    // 후진 후 정지 시간 (seconds) - 생각 시간
   double a1_steer_gain_ = 0.8;             // A1 범위에서 후진 시 조향 강도
   double a2_steer_gain_ = 1.0;             // A2 범위에서 회피 조향 강도
@@ -122,11 +127,13 @@ private:
   double wall_repulsion_threshold_ = 0.20; // 벽 반발 시작 거리 (20cm)
   double wall_repulsion_max_steer_ = 0.3;  // 최대 반발 조향각 (rad, ~17도)
   
-  // === 상대 차량 Following 시스템 ===
+  // === 상대 차량 Following 시스템 (거리 비례 속도 조절) ===
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
-  double follow_distance_threshold_ = 3.0; // following 시작 거리 (m)
-  double follow_min_distance_ = 1.5;       // 최소 유지 거리 (m)
-  double follow_speed_factor_ = 0.9;       // following 시 속도 비율 (상대 속도의 90%)
+  double follow_distance_threshold_ = 3.0; // following 시작 거리 (m) - 앞 차와의 거리 감지 시작
+  double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
+  double follow_speed_factor_ = 0.8;       // following 시 속도 비율 (상대 속도의 80%)
+  double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
+  double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
   
   // 장애물 위치 정보 (회피 방향 결정용)
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
@@ -168,6 +175,10 @@ private:
   void publish_lookahead_marker(double x, double y, double z);  // Lookahead 시각화
   double compute_wall_repulsion_steering(); // 벽 반발 조향 계산 (수식 기반)
   double compute_opponent_following_speed(double base_speed);  // 상대 차량 following 속도 계산
+  double smooth_speed_change(double target_speed, double current_speed);  // 속도 변화 스무딩
+  double compute_overtake_speed(double base_speed);  // 추월 시 속도 계산
+  void check_and_start_overtake();  // 추월 시작 조건 체크 및 시작
+  void update_overtake_state();  // 추월 상태 업데이트
   
   // === 새로운 기능들 ===
   bool load_wall_data(const std::string& csv_file);  // 벽 데이터 CSV 로드

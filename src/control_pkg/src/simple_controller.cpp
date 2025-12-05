@@ -79,6 +79,10 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("overtake_lateral_offset", overtake_lateral_offset_);
   declare_parameter("return_to_line_distance", return_to_line_distance_);
   declare_parameter("min_overtake_gap", min_overtake_gap_);
+  declare_parameter("overtake_speed_boost", overtake_speed_boost_);
+  declare_parameter("post_overtake_speed_factor", post_overtake_speed_factor_);
+  declare_parameter("post_overtake_duration", post_overtake_duration_);
+  declare_parameter("speed_smooth_factor", speed_smooth_factor_);
   // 벽 데이터 파일 경로
   declare_parameter<std::string>("wall_data_file", "");
 
@@ -140,6 +144,10 @@ SimpleController::SimpleController() : Node("simple_controller")
   overtake_lateral_offset_ = get_parameter("overtake_lateral_offset").as_double();
   return_to_line_distance_ = get_parameter("return_to_line_distance").as_double();
   min_overtake_gap_ = get_parameter("min_overtake_gap").as_double();
+  overtake_speed_boost_ = get_parameter("overtake_speed_boost").as_double();
+  post_overtake_speed_factor_ = get_parameter("post_overtake_speed_factor").as_double();
+  post_overtake_duration_ = get_parameter("post_overtake_duration").as_double();
+  speed_smooth_factor_ = get_parameter("speed_smooth_factor").as_double();
   
   // 벽 데이터 로드
   std::string wall_data_file = get_parameter("wall_data_file").as_string();
@@ -651,50 +659,53 @@ double SimpleController::compute_wall_repulsion_steering()
 }
 
 /**
- * @brief 상대 차량 Following 속도 계산
+ * @brief 상대 차량 Following 속도 계산 (거리 비례 속도 조절)
  * 
- * 전방에 상대 차량이 있고 추월이 불가능할 때,
- * 상대 차량과 안전 거리를 유지하며 따라가기
+ * 전방에 상대 차량이 있을 때:
+ * 1. 추월 불가능: 거리에 비례하여 속도 감소 (앞 차와 안 닿으려고 노력)
+ * 2. 추월 가능: 추월 시스템 활성화
  */
 double SimpleController::compute_opponent_following_speed(double base_speed)
 {
   double front_dist = last_obstacle_front_dist_;
   
   // 전방 장애물이 following 거리 이내이고, A1 zone 아닌 경우
-  // Note: A1 threshold 체크는 is_in_a1_zone_ 플래그와 중복되지만 안전을 위해 둘 다 체크
   if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
     // 추월 가능 여부 확인
     bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
     
     if (!can_overtake) {
-      // 추월 불가 -> Following 모드
+      // 추월 불가 -> Following 모드: 거리에 비례하여 속도 감소
       if (!is_following_opponent_) {
         is_following_opponent_ = true;
         RCLCPP_INFO(this->get_logger(), "Cannot overtake, starting FOLLOWING mode at %.2fm", front_dist);
       }
       
-      // 거리에 따른 속도 조절
-      // 가까울수록 더 느리게 (최소 거리 이하면 정지에 가깝게)
+      // 거리에 비례한 속도 조절 (부드러운 감속)
+      // front_dist가 follow_distance_threshold에 가까우면 base_speed 유지
+      // front_dist가 follow_min_distance에 가까우면 매우 느리게
       double range = follow_distance_threshold_ - follow_min_distance_;
       if (range < 0.01) {
         range = 0.01;  // Division by zero 방지
       }
       double distance_ratio = (front_dist - follow_min_distance_) / range;
-      distance_ratio = std::clamp(distance_ratio, 0.1, 1.0);
+      distance_ratio = std::clamp(distance_ratio, 0.05, 1.0);  // 최소 5% 속도 유지
       
+      // 거리 비례 속도 = 기본 속도 * following 팩터 * 거리 비율
       double following_speed = base_speed * follow_speed_factor_ * distance_ratio;
       
-      RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                             "FOLLOWING: front=%.2fm, ratio=%.2f, speed=%.2f/%.2f",
                             front_dist, distance_ratio, following_speed, base_speed);
       
       return following_speed;
     } else {
-      // 추월 가능 -> Following 해제
+      // 추월 가능 -> 추월 시작 준비
       if (is_following_opponent_) {
         is_following_opponent_ = false;
-        RCLCPP_INFO(this->get_logger(), "Can overtake, exiting FOLLOWING mode");
+        RCLCPP_INFO(this->get_logger(), "Overtake opportunity detected, exiting FOLLOWING mode");
       }
+      // 추월 시작은 check_and_start_overtake()에서 처리
     }
   } else {
     // Following 범위 밖
@@ -702,6 +713,127 @@ double SimpleController::compute_opponent_following_speed(double base_speed)
       is_following_opponent_ = false;
       RCLCPP_INFO(this->get_logger(), "Clear path, exiting FOLLOWING mode");
     }
+  }
+  
+  return base_speed;
+}
+
+/**
+ * @brief 속도 변화 스무딩 (급격한 속도 변화 방지)
+ * 
+ * 추월 시가 아닐 때 속도 변화를 부드럽게 만들어 안정적인 주행 제공
+ */
+double SimpleController::smooth_speed_change(double target_speed, double current_adjusted_speed)
+{
+  if (is_overtaking_ || is_post_overtake_) {
+    // 추월 중이면 스무딩 없이 빠르게 속도 변경
+    return target_speed;
+  }
+  
+  // 속도 변화 제한 (속도가 급격히 올라가지 않도록)
+  double speed_diff = target_speed - current_adjusted_speed;
+  double max_speed_change = speed_smooth_factor_ * target_speed_;  // 기본 속도의 10% 변화율
+  
+  if (std::abs(speed_diff) > max_speed_change) {
+    // 급격한 속도 변화 방지
+    return current_adjusted_speed + std::copysign(max_speed_change, speed_diff);
+  }
+  
+  return target_speed;
+}
+
+/**
+ * @brief 추월 시작 조건 체크 및 시작
+ * 
+ * 추월 가능한 경로가 있으면 추월 시작
+ */
+void SimpleController::check_and_start_overtake()
+{
+  if (is_overtaking_ || is_post_overtake_) {
+    return;  // 이미 추월 중
+  }
+  
+  double front_dist = last_obstacle_front_dist_;
+  
+  // 추월 조건: 전방에 장애물이 있고, 추월 가능한 경로가 있음
+  if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
+    bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
+    
+    if (can_overtake) {
+      is_overtaking_ = true;
+      is_following_opponent_ = false;
+      overtake_start_time_ros_ = this->get_clock()->now();
+      
+      // 추월 방향 결정 (더 넓은 쪽으로)
+      double left_space = last_obstacle_left_dist_;
+      double right_space = last_obstacle_right_dist_;
+      double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+      
+      RCLCPP_WARN(this->get_logger(), 
+                  "OVERTAKE START! front=%.2fm, direction=%s, L=%.2fm, R=%.2fm",
+                  front_dist, 
+                  overtake_direction > 0 ? "LEFT" : "RIGHT",
+                  left_space, right_space);
+      
+      // 추월 경로 시각화
+      publish_overtake_path(overtake_direction);
+    }
+  }
+}
+
+/**
+ * @brief 추월 상태 업데이트
+ * 
+ * 추월 완료 조건 체크 및 상태 전환
+ */
+void SimpleController::update_overtake_state()
+{
+  rclcpp::Time current_time = this->get_clock()->now();
+  
+  if (is_overtaking_) {
+    // 추월 완료 또는 타임아웃 체크
+    if (should_return_to_line()) {
+      is_overtaking_ = false;
+      is_post_overtake_ = true;
+      overtake_end_time_ros_ = current_time;
+      RCLCPP_INFO(this->get_logger(), "OVERTAKE COMPLETE, entering high-speed phase");
+    }
+  }
+  
+  if (is_post_overtake_) {
+    // 추월 후 고속 유지 시간 체크
+    double elapsed = (current_time - overtake_end_time_ros_).seconds();
+    if (elapsed > post_overtake_duration_) {
+      is_post_overtake_ = false;
+      RCLCPP_INFO(this->get_logger(), "Post-overtake phase ended, returning to normal speed");
+    }
+  }
+}
+
+/**
+ * @brief 추월 시 속도 계산
+ * 
+ * 추월 중: 속도 크게 증가 (overtake_speed_boost_)
+ * 추월 직후: 높은 속도 유지 (post_overtake_speed_factor_)
+ */
+double SimpleController::compute_overtake_speed(double base_speed)
+{
+  if (is_overtaking_) {
+    // 추월 중: 속도 크게 증가
+    double overtake_speed = base_speed * overtake_speed_boost_;
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "OVERTAKING: speed boost %.2f -> %.2f (%.1fx)",
+                          base_speed, overtake_speed, overtake_speed_boost_);
+    return overtake_speed;
+  }
+  
+  if (is_post_overtake_) {
+    // 추월 직후: 높은 속도 유지
+    double post_speed = base_speed * post_overtake_speed_factor_;
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "POST-OVERTAKE: maintaining speed %.2f -> %.2f",
+                          base_speed, post_speed);
+    return post_speed;
   }
   
   return base_speed;
@@ -1090,6 +1222,23 @@ void SimpleController::control_loop()
                 lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, steering_angle);
   }
 
+  // === 추월 시스템 업데이트 ===
+  // 추월 시작 조건 체크
+  check_and_start_overtake();
+  // 추월 상태 업데이트 (완료 체크)
+  update_overtake_state();
+  
+  // 추월 중이면 추월 경로 시각화 (계속 업데이트)
+  if (is_overtaking_) {
+    double left_space = last_obstacle_left_dist_;
+    double right_space = last_obstacle_right_dist_;
+    double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+    publish_overtake_path(overtake_direction);
+    
+    // 추월 중 조향각 조정 (신중하게)
+    steering_angle = compute_overtake_steering(steering_angle);
+  }
+
   // Speed control: Reduce speed based on path curvature (not amplified steering angle)
   // path_curvature 를 직접 사용하여 증폭된 조향각으로 인한 과도한 속도 감소 방지
   double speed_factor = 1.0 / (1.0 + 2.0 * std::abs(path_curvature));
@@ -1102,10 +1251,22 @@ void SimpleController::control_loop()
                           speed_factor, corner_speed_factor_);
   }
   
-  double adjusted_speed = target_speed_ * speed_factor;
+  double base_adjusted_speed = target_speed_ * speed_factor;
   
-  // Note: A2 zone opponent following speed reduction disabled
-  // Only A1 zone reverse functionality is active for collision handling
+  // === 추월 또는 Following에 따른 속도 조절 ===
+  double adjusted_speed = base_adjusted_speed;
+  
+  if (is_overtaking_ || is_post_overtake_) {
+    // 추월 중 또는 추월 직후: 속도 증가 (신중하게 하되 빠르게 추월)
+    adjusted_speed = compute_overtake_speed(base_adjusted_speed);
+  } else {
+    // 일반 모드: 전방 장애물에 따른 Following 속도 계산
+    adjusted_speed = compute_opponent_following_speed(base_adjusted_speed);
+  }
+  
+  // 속도 스무딩 (급격한 속도 변화 방지) - 추월 시에는 스무딩 안함
+  adjusted_speed = smooth_speed_change(adjusted_speed, last_adjusted_speed_);
+  last_adjusted_speed_ = adjusted_speed;
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
@@ -1119,8 +1280,11 @@ void SimpleController::control_loop()
   
   static int publish_count = 0;
   if (publish_count++ % 50 == 0) {  // Every 1 second at 20ms timer
-    RCLCPP_INFO(this->get_logger(), "Published drive command: speed=%.2f, steer=%.3f, target_idx=%d, lookahead=%.2f",
-                drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx, adaptive_lookahead);
+    RCLCPP_INFO(this->get_logger(), "Drive: speed=%.2f, steer=%.3f, idx=%d, LA=%.2f%s%s%s",
+                drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx, adaptive_lookahead,
+                is_overtaking_ ? " [OVERTAKING]" : "",
+                is_post_overtake_ ? " [POST-OT]" : "",
+                is_following_opponent_ ? " [FOLLOWING]" : "");
   }
 }
 
@@ -1616,21 +1780,42 @@ double SimpleController::compute_overtake_steering(double base_steering)
     return base_steering;
   }
   
-  // 추월 중일 때 추가 조향 계산
+  // 추월 중일 때 추가 조향 계산 (신중하게)
   double left_space = last_obstacle_left_dist_;
   double right_space = last_obstacle_right_dist_;
   
-  // 더 넓은 쪽으로 추월
+  // 더 넓은 쪽으로 추월 (신중한 판단)
   double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
   
+  // 추월 진행 시간에 따른 조향 강도 조절 (초반에 강하게, 후반에 약하게)
+  rclcpp::Time current_time = this->get_clock()->now();
+  double elapsed = (current_time - overtake_start_time_ros_).seconds();
+  double overtake_progress = std::min(1.0, elapsed / overtake_max_duration_);
+  
+  // 추월 조향 강도: 초반에 강하게 (0.25rad), 후반에 약하게 (0.1rad)
+  // 이렇게 하면 추월 시작시 빠르게 옆으로 빠지고, 완료 시점에 부드럽게 복귀
+  double steer_intensity = 0.25 * (1.0 - overtake_progress * 0.6);  // 0.25 -> 0.1
+  
+  // 벽까지 거리에 따른 안전 제어
+  double wall_dist = (overtake_direction > 0) ? left_space : right_space;
+  if (wall_dist < 0.5) {
+    // 벽에 너무 가까우면 조향 강도 줄임 (신중한 행동)
+    steer_intensity *= (wall_dist / 0.5);
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "OVERTAKE CAUTION: wall nearby %.2fm, reducing steer intensity",
+                          wall_dist);
+  }
+  
   // 추월 조향각 = 기본 조향 + 추월 오프셋
-  double overtake_steer = base_steering + overtake_direction * 0.2;  // 약 11도 추가 조향
+  double overtake_steer = base_steering + overtake_direction * steer_intensity;
   
-  // 최대 조향각 제한
-  overtake_steer = std::clamp(overtake_steer, -max_steer_angle_, max_steer_angle_);
+  // 최대 조향각 제한 (안전을 위해 80%로 제한)
+  double safe_max_steer = max_steer_angle_ * 0.8;
+  overtake_steer = std::clamp(overtake_steer, -safe_max_steer, safe_max_steer);
   
-  // 추월 경로 시각화
-  publish_overtake_path(overtake_direction);
+  RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+                        "OVERTAKE steer: base=%.3f, dir=%.0f, intensity=%.3f, final=%.3f",
+                        base_steering, overtake_direction, steer_intensity, overtake_steer);
   
   return overtake_steer;
 }
@@ -1693,13 +1878,13 @@ void SimpleController::publish_overtake_path(double offset_direction)
   marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
   marker.action = visualization_msgs::msg::Marker::ADD;
   
-  marker.scale.x = 0.1;  // 라인 두께
+  marker.scale.x = 0.15;  // 라인 두께 (더 두껍게)
   
-  // 녹색 라인
-  marker.color.r = 0.0f;
+  // 밝은 녹색 라인 (추월 경로 시각화)
+  marker.color.r = 0.2f;
   marker.color.g = 1.0f;
-  marker.color.b = 0.0f;
-  marker.color.a = 0.8f;
+  marker.color.b = 0.2f;
+  marker.color.a = 0.9f;
   
   marker.pose.orientation.w = 1.0;
   
@@ -1708,20 +1893,56 @@ void SimpleController::publish_overtake_path(double offset_direction)
   double current_y = current_odom_.pose.pose.position.y;
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
-  for (double dist = 0.0; dist < 3.0; dist += 0.2) {
+  // 더 긴 추월 경로 표시 (4m 전방까지)
+  for (double dist = 0.0; dist < 4.0; dist += 0.15) {
     geometry_msgs::msg::Point p;
-    // 추월 방향으로 오프셋된 경로
+    // 추월 방향으로 오프셋된 경로 (부드러운 S자 곡선)
+    // 진입 -> 최대 오프셋 -> 복귀
+    double t = dist / 4.0;  // 0 ~ 1
     double lateral_offset = offset_direction * overtake_lateral_offset_ * 
-                           std::sin(dist / 3.0 * M_PI);  // 부드러운 곡선
+                           std::sin(t * M_PI);  // 부드러운 곡선
     
     p.x = current_x + dist * std::cos(current_yaw) - lateral_offset * std::sin(current_yaw);
     p.y = current_y + dist * std::sin(current_yaw) + lateral_offset * std::cos(current_yaw);
-    p.z = 0.1;
+    p.z = 0.15;
     marker.points.push_back(p);
   }
   
-  marker.lifetime = rclcpp::Duration::from_seconds(0.3);
+  marker.lifetime = rclcpp::Duration::from_seconds(0.2);  // 더 짧은 lifetime으로 실시간 업데이트
   overtake_path_marker_pub_->publish(marker);
+  
+  // 추월 방향 화살표 표시
+  visualization_msgs::msg::Marker arrow_marker;
+  arrow_marker.header.frame_id = "map";
+  arrow_marker.header.stamp = this->get_clock()->now();
+  arrow_marker.ns = "overtake_arrow";
+  arrow_marker.id = 1;
+  arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
+  arrow_marker.action = visualization_msgs::msg::Marker::ADD;
+  
+  arrow_marker.scale.x = 0.8;  // 화살표 길이
+  arrow_marker.scale.y = 0.2;  // 화살표 너비
+  arrow_marker.scale.z = 0.2;
+  
+  // 노란색 화살표
+  arrow_marker.color.r = 1.0f;
+  arrow_marker.color.g = 1.0f;
+  arrow_marker.color.b = 0.0f;
+  arrow_marker.color.a = 0.9f;
+  
+  // 화살표 위치: 차량 전방 1m
+  double arrow_offset = offset_direction * 0.4;
+  arrow_marker.pose.position.x = current_x + 1.0 * std::cos(current_yaw) - arrow_offset * std::sin(current_yaw);
+  arrow_marker.pose.position.y = current_y + 1.0 * std::sin(current_yaw) + arrow_offset * std::cos(current_yaw);
+  arrow_marker.pose.position.z = 0.3;
+  
+  // 추월 방향으로 화살표 회전
+  double arrow_yaw = current_yaw + offset_direction * 0.3;  // 약간 추월 방향으로
+  arrow_marker.pose.orientation.z = std::sin(arrow_yaw / 2.0);
+  arrow_marker.pose.orientation.w = std::cos(arrow_yaw / 2.0);
+  
+  arrow_marker.lifetime = rclcpp::Duration::from_seconds(0.2);
+  overtake_path_marker_pub_->publish(arrow_marker);
 }
 
 void SimpleController::publish_wall_collision_indicator(bool is_colliding, double x, double y)
@@ -1739,21 +1960,31 @@ void SimpleController::publish_wall_collision_indicator(bool is_colliding, doubl
   marker.pose.position.z = 0.5;
   marker.pose.orientation.w = 1.0;
   
-  // 충돌 시 빨간색, 아니면 녹색
-  marker.scale.x = 0.5;
-  marker.scale.y = 0.5;
-  marker.scale.z = 0.5;
-  
+  // 충돌 시 빨간색 (크게), 아니면 녹색 (작게)
   if (is_colliding) {
+    // 충돌 상태: 큰 빨간 구 표시
+    marker.scale.x = 0.7;
+    marker.scale.y = 0.7;
+    marker.scale.z = 0.7;
     marker.color.r = 1.0f;
     marker.color.g = 0.0f;
     marker.color.b = 0.0f;
     marker.color.a = 1.0f;
+    
+    // 추가 로그 (벽 충돌 시 정보 표시)
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "WALL COLLISION DETECTED! pos=(%.2f, %.2f), F=%.3fm, L=%.3fm, R=%.3fm",
+                          x, y, last_obstacle_front_dist_, 
+                          last_obstacle_left_dist_, last_obstacle_right_dist_);
   } else {
+    // 정상 상태: 작은 녹색 구 표시
+    marker.scale.x = 0.3;
+    marker.scale.y = 0.3;
+    marker.scale.z = 0.3;
     marker.color.r = 0.0f;
     marker.color.g = 1.0f;
     marker.color.b = 0.0f;
-    marker.color.a = 0.5f;
+    marker.color.a = 0.4f;
   }
   
   marker.lifetime = rclcpp::Duration::from_seconds(0.2);
