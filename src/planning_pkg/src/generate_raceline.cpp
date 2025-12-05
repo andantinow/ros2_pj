@@ -273,47 +273,80 @@ int main(int argc,char** argv){
     vref[i] = std::min({v_kappa, v_gg, v_max});
   }
   
-  // Step 2: Forward pass - apply acceleration limits with G-G diagram
-  for(size_t i=1;i<vref.size();++i){
-    // Calculate required acceleration to reach next speed
-    double v_prev = vref[i-1];
-    double v_desired = vref[i];
-    
-    // Required acceleration: a = (v^2 - v_prev^2) / (2*ds)
-    double a_req = (v_desired * v_desired - v_prev * v_prev) / (2.0 * ds);
-    
-    // Limit by maximum acceleration
-    a_req = std::min(a_req, ax_max);
-    
-    // Check G-G diagram constraint
-    double a_lat = v_prev * v_prev * std::abs(kappa[i-1]);  // Lateral acceleration
-    double a_lon_max = gg_diagram.max_longitudinal_accel(a_lat);
-    a_req = std::min(a_req, a_lon_max);
-    
-    // Calculate new speed
-    double v_new = std::sqrt(std::max(0.0, v_prev * v_prev + 2.0 * a_req * ds));
-    vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
-  }
+  // For closed-loop tracks, iterate forward/backward passes multiple times
+  // to propagate speed limits across the loop boundary
+  constexpr int NUM_ITERATIONS = 3;
   
-  // Step 3: Backward pass - apply deceleration limits with G-G diagram
-  for(int i=(int)vref.size()-2;i>=0;--i){
-    double v_next = vref[i+1];
-    double v_current = vref[i];
+  for(int iter = 0; iter < NUM_ITERATIONS; ++iter) {
+    // Step 2: Forward pass - apply acceleration limits with G-G diagram
+    // For loop tracks, wrap around: use last point's speed for first point
+    if(iter > 0 && !vref.empty()) {
+      // Propagate from last point to first point (loop connection)
+      double v_prev = vref.back();
+      double v_desired = vref[0];
+      double a_req = (v_desired * v_desired - v_prev * v_prev) / (2.0 * ds);
+      a_req = std::min(a_req, ax_max);
+      double a_lat = v_prev * v_prev * std::abs(kappa.back());
+      double a_lon_max = gg_diagram.max_longitudinal_accel(a_lat);
+      a_req = std::min(a_req, a_lon_max);
+      double v_new = std::sqrt(std::max(0.0, v_prev * v_prev + 2.0 * a_req * ds));
+      vref[0] = std::min(v_new, vref[0]);
+    }
     
-    // Required deceleration: a = (v_next^2 - v_current^2) / (2*ds)
-    double a_req = (v_next * v_next - v_current * v_current) / (2.0 * ds);
+    for(size_t i=1;i<vref.size();++i){
+      // Calculate required acceleration to reach next speed
+      double v_prev = vref[i-1];
+      double v_desired = vref[i];
+      
+      // Required acceleration: a = (v^2 - v_prev^2) / (2*ds)
+      double a_req = (v_desired * v_desired - v_prev * v_prev) / (2.0 * ds);
+      
+      // Limit by maximum acceleration
+      a_req = std::min(a_req, ax_max);
+      
+      // Check G-G diagram constraint
+      double a_lat = v_prev * v_prev * std::abs(kappa[i-1]);  // Lateral acceleration
+      double a_lon_max = gg_diagram.max_longitudinal_accel(a_lat);
+      a_req = std::min(a_req, a_lon_max);
+      
+      // Calculate new speed
+      double v_new = std::sqrt(std::max(0.0, v_prev * v_prev + 2.0 * a_req * ds));
+      vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+    }
     
-    // Limit by maximum deceleration (negative)
-    a_req = std::max(a_req, ax_min);
+    // Step 3: Backward pass - apply deceleration limits with G-G diagram
+    // For loop tracks, wrap around: use first point's speed for last point
+    if(!vref.empty()) {
+      double v_next = vref[0];
+      double v_current = vref.back();
+      double a_req = (v_next * v_next - v_current * v_current) / (2.0 * ds);
+      a_req = std::max(a_req, ax_min);
+      double a_lat = v_current * v_current * std::abs(kappa.back());
+      double a_lon_min = -gg_diagram.max_longitudinal_accel(a_lat);
+      a_req = std::max(a_req, a_lon_min);
+      double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
+      vref.back() = std::min(v_new, vref.back());
+    }
     
-    // Check G-G diagram constraint
-    double a_lat = v_current * v_current * std::abs(kappa[i]);  // Lateral acceleration
-    double a_lon_min = -gg_diagram.max_longitudinal_accel(a_lat);  // Negative for braking
-    a_req = std::max(a_req, a_lon_min);
-    
-    // Calculate new speed
-    double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
-    vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+    for(int i=(int)vref.size()-2;i>=0;--i){
+      double v_next = vref[i+1];
+      double v_current = vref[i];
+      
+      // Required deceleration: a = (v_next^2 - v_current^2) / (2*ds)
+      double a_req = (v_next * v_next - v_current * v_current) / (2.0 * ds);
+      
+      // Limit by maximum deceleration (negative)
+      a_req = std::max(a_req, ax_min);
+      
+      // Check G-G diagram constraint
+      double a_lat = v_current * v_current * std::abs(kappa[i]);  // Lateral acceleration
+      double a_lon_min = -gg_diagram.max_longitudinal_accel(a_lat);  // Negative for braking
+      a_req = std::max(a_req, a_lon_min);
+      
+      // Calculate new speed
+      double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
+      vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+    }
   }
 
   std::ofstream out(out_csv);
