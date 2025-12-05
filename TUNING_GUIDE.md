@@ -686,14 +686,21 @@ vehicle_length: 0.5              # 차량 길이 (m)
 
 ## 데이터 및 파라미터 요약
 
+### 보고서 기반 권장 파라미터 (Research Report Specifications)
+
 | 파라미터 | 권장값 | 설명 |
 |----------|--------|------|
-| reverse_steering_mode | 0 | 조향 모드 (0=중립, 1=반전) |
+| **CRSM (충돌 복구)** | | |
+| reverse_steering_mode | 0 or 1 | 조향 모드 (0=중립-안전, 1=반전-빠른 탈출) |
 | a1_threshold | 0.18m | 후진 트리거 거리 |
-| reverse_speed | 0.8 m/s | 후진 속도 |
-| reverse_duration | 1.2s | 후진 지속 시간 |
+| reverse_speed | 1.5 m/s | 후진 속도 (강력한 토크) |
+| reverse_duration | 1.2~1.5s | 후진 지속 시간 |
+| IMU_CRASH_ACCEL_THRESHOLD | 9.5 m/s² | IMU 충돌 감지 임계값 |
+| **ACC (적응형 순항)** | | |
 | acc_kp | 0.5 | ACC 비례 게인 |
 | acc_kd | 0.2 | ACC 미분 게인 |
 | target_follow_gap | 1.5m | 목표 차간 거리 |
+| **추월 시스템** | | |
 | vehicle_width | 0.35m | 차량 폭 (F1TENTH) |
-| narrow_road_threshold | 2.0m | 좁은 도로 판단 기준 |
+| SAFETY_MARGIN | 0.15m | 안전 마진 |
+| narrow_road_threshold | 3.0m | 좁은 도로 판단 기준 (Max Lateral)
