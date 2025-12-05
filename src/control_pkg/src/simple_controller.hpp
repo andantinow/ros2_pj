@@ -104,8 +104,8 @@ private:
   // A1 범위: 매우 좁은 범위 - 이 범위 안에 들어오면 후진 + 조향각 유지
   // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
   // 참고: A1 < A2 < wall_repulsion_threshold 순서로 설정해야 함
-  //       (5cm < 12cm < 20cm: 후진 < 급조향 < 반발조향)
-  double a1_threshold_ = 0.05;             // A1 범위: 후진 트리거 거리 (meters) - 5cm (벽 충돌)
+  //       (12cm < wall_repulsion: 후진 < 반발조향)
+  double a1_threshold_ = 0.12;             // A1 범위: 후진 트리거 거리 (meters) - 12cm (0.05 -> 0.12로 변경)
   double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
   double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
@@ -134,10 +134,14 @@ private:
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
   double follow_distance_threshold_ = 3.0; // following 시작 거리 (m) - 앞 차와의 거리 감지 시작
   double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
-  double follow_speed_factor_ = 0.8;       // following 시 속도 비율 (상대 속도의 80%)
+  double follow_speed_factor_ = 0.2;       // following 시 속도 비율 (0.8 -> 0.2로 변경, 앞 차 있을 때 더 느리게)
   double follow_min_speed_ratio_ = 0.05;   // 최소 속도 비율 (5%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
+  
+  // === 추월 조건 체크용 파라미터 ===
+  double narrow_road_threshold_ = 1.5;     // 좁은 도로 판단 기준 (좌우 합계 m)
+  double min_visibility_angle_ = 0.5;      // 최소 시야 각도 (rad, 약 30도)
   
   // 장애물 위치 정보 (회피 방향 결정용)
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리

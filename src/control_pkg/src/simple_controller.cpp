@@ -87,6 +87,9 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("overtake_wall_caution_dist", overtake_wall_caution_dist_);
   declare_parameter("speed_smooth_factor", speed_smooth_factor_);
   declare_parameter("follow_min_speed_ratio", follow_min_speed_ratio_);
+  // 추월 조건 체크 파라미터
+  declare_parameter("narrow_road_threshold", narrow_road_threshold_);
+  declare_parameter("min_visibility_angle", min_visibility_angle_);
   // 벽 데이터 파일 경로
   declare_parameter<std::string>("wall_data_file", "");
 
@@ -156,6 +159,8 @@ SimpleController::SimpleController() : Node("simple_controller")
   overtake_wall_caution_dist_ = get_parameter("overtake_wall_caution_dist").as_double();
   speed_smooth_factor_ = get_parameter("speed_smooth_factor").as_double();
   follow_min_speed_ratio_ = get_parameter("follow_min_speed_ratio").as_double();
+  narrow_road_threshold_ = get_parameter("narrow_road_threshold").as_double();
+  min_visibility_angle_ = get_parameter("min_visibility_angle").as_double();
   
   // 벽 데이터 로드
   std::string wall_data_file = get_parameter("wall_data_file").as_string();
@@ -1256,11 +1261,11 @@ void SimpleController::control_loop()
   // path_curvature 를 직접 사용하여 증폭된 조향각으로 인한 과도한 속도 감소 방지
   double speed_factor = 1.0 / (1.0 + 2.0 * std::abs(path_curvature));
   
-  // 코너에서 추가 속도 감소 적용
-  if (is_corner) {
+  // 코너에서 추가 속도 감소 적용 (추월 중이 아닐 때만)
+  if (is_corner && !is_overtaking_) {
     speed_factor *= corner_speed_factor_;
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER speed reduction: factor=%.2f, corner_factor=%.2f",
+                          "CORNER speed reduction (not overtaking): factor=%.2f, corner_factor=%.2f",
                           speed_factor, corner_speed_factor_);
   }
   
@@ -1767,6 +1772,42 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   // 추월 가능한 간격이 있는지 확인
   double left_space = last_obstacle_left_dist_;
   double right_space = last_obstacle_right_dist_;
+  double total_space = left_space + right_space;
+  
+  // === 추월 금지 조건 체크 ===
+  // 1. 좁은 도로 체크 (좌우 공간 합계가 threshold 미만이면 추월 금지)
+  if (total_space < narrow_road_threshold_) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "FOLLOWING ONLY: Narrow road (L:%.2f + R:%.2f = %.2f < %.2f)",
+                          left_space, right_space, total_space, narrow_road_threshold_);
+    return false;
+  }
+  
+  // 2. 시야/각도 체크 (상대방 각도가 일정 이상이면 시야 확보 불가로 판단)
+  if (std::abs(opponent_angle) > min_visibility_angle_) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "FOLLOWING ONLY: Poor visibility (angle: %.2f > %.2f)",
+                          std::abs(opponent_angle), min_visibility_angle_);
+    return false;
+  }
+  
+  // 3. 코너 진입 중이면 추월 금지
+  double corner_direction = 0.0;
+  double current_x = current_odom_.pose.pose.position.x;
+  double current_y = current_odom_.pose.pose.position.y;
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  // 현재 위치에서 가장 가까운 경로 인덱스 찾기
+  static int last_closest_idx_overtake = 0;
+  int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, 
+                                                   current_path_, last_closest_idx_overtake);
+  last_closest_idx_overtake = closest_idx;
+  
+  if (detect_upcoming_corner(closest_idx, corner_direction)) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "FOLLOWING ONLY: Corner detected ahead (dir: %.1f)", corner_direction);
+    return false;
+  }
   
   // 최소 추월 간격 이상인 방향이 있어야 함
   bool can_overtake_left = left_space > min_overtake_gap_;
@@ -1774,9 +1815,6 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   
   // 벽 데이터가 있으면 추가 확인
   if (wall_data_loaded_) {
-    double current_x = current_odom_.pose.pose.position.x;
-    double current_y = current_odom_.pose.pose.position.y;
-    
     double wall_left = get_wall_distance_left(current_x, current_y);
     double wall_right = get_wall_distance_right(current_x, current_y);
     
