@@ -55,6 +55,28 @@ target_include_directories(generate_raceline PUBLIC
   $<INSTALL_INTERFACE:include>)
 install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
 
+# ============================================================================
+# Frenet Overtake Planner (Sampling-based path planner with visualization)
+# ============================================================================
+# Implements Frenet-frame based overtaking trajectory generation
+# Features: path sampling, cost-based selection, Rviz visualization
+# ============================================================================
+
+find_package(visualization_msgs REQUIRED)
+
+add_executable(frenet_overtake_planner src/frenet_overtake_planner.cpp)
+ament_target_dependencies(frenet_overtake_planner
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  std_msgs
+  visualization_msgs
+)
+target_include_directories(frenet_overtake_planner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+install(TARGETS frenet_overtake_planner DESTINATION lib/${PROJECT_NAME})
+
 # Install resources only if they exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
   install(DIRECTORY config

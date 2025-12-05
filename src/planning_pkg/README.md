@@ -8,6 +8,7 @@ C++ path planning package for F1TENTH autonomous racing.
 - **Path Utilities**: Reusable library for path manipulation (smoothing, resampling, interpolation)
 - **Simple Path Planner**: Basic path planner with configurable parameters
 - **Raceline Generator**: CLI tool to generate raceline from centerline
+- **Frenet Overtake Planner**: Sampling-based overtaking planner with Frenet coordinates and visualization
 
 ## Build
 
@@ -185,3 +186,74 @@ ros2 launch planning_pkg planner_launch.py \
 - `std_msgs`
 - `tf2`
 - `tf2_ros`
+- `visualization_msgs`
+
+---
+
+## Frenet Overtake Planner (`frenet_overtake_planner`)
+
+A sampling-based path planner that generates overtaking trajectories using Frenet coordinates (s, d).
+
+### Architecture
+
+The planner operates in the Frenet coordinate system where:
+- `s`: Longitudinal distance along track centerline
+- `d`: Lateral deviation from centerline (+left, -right)
+
+This simplifies overtaking to a 1D problem: smoothly transitioning `d` from 0 (center) to `d_target` (overtake lane).
+
+### Usage
+
+```bash
+ros2 run planning_pkg frenet_overtake_planner \
+  --ros-args \
+  -p max_road_width:=2.0 \
+  -p d_road_w:=0.5 \
+  -p planning_horizon:=3.0 \
+  -p collision_radius:=0.5 \
+  -p frame_id:=base_link
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_road_width` | double | 2.0 | Maximum lateral sampling range (±m) |
+| `d_road_w` | double | 0.5 | Lateral sampling step (m) |
+| `planning_horizon` | double | 3.0 | Planning time horizon (s) |
+| `planning_dt` | double | 0.2 | Time step for trajectory (s) |
+| `planning_speed` | double | 5.0 | Assumed forward speed (m/s) |
+| `collision_radius` | double | 0.5 | Vehicle collision check radius (m) |
+| `weight_centerline` | double | 0.5 | Cost weight for centerline deviation |
+| `weight_obstacle` | double | 1.0 | Cost weight for obstacle proximity |
+| `weight_smoothness` | double | 0.3 | Cost weight for lane change smoothness |
+| `planning_rate` | double | 10.0 | Planning loop frequency (Hz) |
+| `frame_id` | string | "base_link" | TF frame for visualization |
+
+### Published Topics
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `/planner/candidate_paths` | MarkerArray | All candidate paths (color-coded) |
+| `/planner/selected_path` | Path | Selected optimal path |
+| `/planner/path_cost` | Float64 | Cost of selected path |
+
+### Visualization Color Coding
+
+In Rviz, candidate paths are color-coded for debugging:
+- **Green (thick)**: Selected optimal path
+- **Gray (thin)**: Valid candidate paths
+- **Red (thin)**: Collision paths (rejected)
+- **Orange cylinder**: Detected obstacle
+
+### Cost Function
+
+The path cost is computed as:
+```
+cost = w_center * |d_target| + w_obs * (1/min_dist) + w_smooth * |Δd|
+```
+
+Where:
+- `w_center`: Penalty for deviation from centerline
+- `w_obs`: Penalty for obstacle proximity (inverse distance)
+- `w_smooth`: Penalty for rapid lane changes
