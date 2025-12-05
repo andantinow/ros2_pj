@@ -50,11 +50,13 @@ bridge:
     num_agent: 2
 
     # ego starting pose on map - match first raceline point (small_hall_orig)
+    # These values should match the first row of planning_pkg/data/raceline.csv
     sx: 5.937778
     sy: -9.419127
     stheta: 2.900365
 
-    # opp starting pose on map - slightly behind ego on raceline
+    # opp starting pose on map - second raceline point (behind ego)
+    # These values should match the second row of planning_pkg/data/raceline.csv
     sx1: 5.841038
     sy1: -9.395327
     stheta1: 2.900365
