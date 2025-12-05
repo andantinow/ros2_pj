@@ -118,7 +118,7 @@ nmpc_engine_node:
     # PHYSICAL CONSTRAINTS
     # =========================================================================
     # Hard limits on vehicle actuators
-    max_steer: 0.436             # [rad] Maximum steering angle (~25 degrees)
+    max_steer: 0.576             # [rad] Maximum steering angle (~33 degrees)
     max_steer_rate: 1.8          # [rad/s] Maximum steering rate
     max_speed: 6.0               # [m/s] Maximum forward speed
     max_accel: 4.0               # [m/s^2] Maximum acceleration
@@ -134,16 +134,16 @@ nmpc_engine_node:
     enable_collision_avoidance: true
     
     # A1 Zone parameters (reverse trigger)
-    a1_threshold: 0.3            # [m] Distance triggering reverse (front)
+    a1_threshold: 0.15           # [m] Distance triggering reverse (front) - halved from 0.3
     a1_side_factor: 0.8          # Side distance = a1_threshold * factor
-    reverse_speed: 0.5           # [m/s] Reverse driving speed
+    reverse_speed: 1.0           # [m/s] Reverse driving speed - increased from 0.5 for 시원한 후진
     reverse_duration: 0.8        # [s] Duration of reverse maneuver
     a1_steer_gain: 0.8           # Steering gain during reverse
     
-    # A2 Zone parameters (steering avoidance)
-    a2_threshold: 0.8            # [m] Distance triggering side avoidance
-    a2_urgent_threshold: 0.4     # [m] Distance for urgent avoidance
-    a2_max_steer_ratio: 0.7      # Max steering ratio (normal A2)
+    # A2 Zone parameters (steering avoidance - full opposite steering instead of slowdown)
+    a2_threshold: 0.4            # [m] Distance triggering side avoidance - halved from 0.8
+    a2_urgent_threshold: 0.2     # [m] Distance for urgent avoidance - halved from 0.4
+    a2_max_steer_ratio: 1.0      # Max steering ratio (normal A2) - full opposite steering
     a2_urgent_steer_ratio: 1.0   # Max steering ratio (urgent, full allowed)
-    a2_steer_gain: 0.6           # Steering gain for normal avoidance
+    a2_steer_gain: 1.0           # Steering gain for normal avoidance - full opposite steering
     a2_urgent_steer_gain: 1.5    # Steering gain for urgent avoidance (1.5x)

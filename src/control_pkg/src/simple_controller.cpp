@@ -468,16 +468,18 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
 }
 
 /**
- * @brief A2 범위에서 회피 조향각 계산 - lookahead 방향 기준 gap following
+ * @brief A2 범위에서 회피 조향각 계산 - 완전 반대 방향으로 조향
  * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
  * 
  * 새로운 로직:
- * 1. lookahead 방향 기준으로 라이다에서 장애물들 사이 gap center 찾기
- * 2. gap center 방향으로 조향 (lookahead에서 벗어나는 정도에 비례)
- * 3. 0.4m 이내 긴급 상황시 더 강하게 gap 방향으로 꺾음
+ * 1. 장애물이 왼쪽에 있으면 -> 오른쪽으로 완전 반대 조향
+ * 2. 장애물이 오른쪽에 있으면 -> 왼쪽으로 완전 반대 조향
+ * 3. 느려지지 않고 반대 조향으로 회피하며 주행 계속
  */
 double SimpleController::compute_avoidance_steering(double lookahead_angle)
 {
+  (void)lookahead_angle;  // 더 이상 gap following 사용 안함
+  
   double avoidance_steer = 0.0;
   
   // 장애물 거리 정보
@@ -492,51 +494,45 @@ double SimpleController::compute_avoidance_steering(double lookahead_angle)
     return 0.0;
   }
   
-  // lookahead 방향 기준으로 gap center 찾기
-  double gap_center_angle = find_gap_center_angle(lookahead_angle);
-  
-  // gap center와 lookahead의 차이 = 회피에 필요한 조향
-  double angle_diff = gap_center_angle - lookahead_angle;
-  
-  // 0.4m 이내 긴급 모드 판단
+  // 긴급 모드 판단 (a2_urgent_threshold 이내)
   bool is_urgent = min_dist < a2_urgent_threshold_;
   
-  // 긴급도 및 gain 계산
-  double urgency = 0.0;
-  double effective_gain = a2_steer_gain_;
-  double steer_ratio = a2_max_steer_ratio_;
-  
-  if (is_urgent) {
-    // 0.4m 이내: 긴급 모드 - gap 방향으로 강하게 꺾음
-    urgency = 1.0 - (min_dist / a2_urgent_threshold_);
-    urgency = std::clamp(urgency, 0.5, 1.0);
-    effective_gain = a2_urgent_steer_gain_;
-    steer_ratio = a2_urgent_steer_ratio_;
-  } else {
-    // 일반 회피 모드
-    urgency = 1.0 - (min_dist / a2_threshold_);
-    urgency = std::clamp(urgency, 0.0, 1.0);
-    effective_gain = a2_steer_gain_ * (1.0 + urgency * 0.5);
-    steer_ratio = a2_max_steer_ratio_ + urgency * 0.2;
+  // 장애물 방향 반대로 완전 조향
+  // 왼쪽에 장애물이 더 가까우면 -> 오른쪽으로 조향 (음수)
+  // 오른쪽에 장애물이 더 가까우면 -> 왼쪽으로 조향 (양수)
+  double steer_direction = 0.0;
+  if (left_dist < right_dist) {
+    // 왼쪽 장애물 -> 오른쪽으로 회피 (음수 조향)
+    steer_direction = -1.0;
+  } else if (right_dist < left_dist) {
+    // 오른쪽 장애물 -> 왼쪽으로 회피 (양수 조향)
+    steer_direction = 1.0;
+  } else if (front_dist < a2_threshold_) {
+    // 전방 장애물이면 더 넓은 쪽으로
+    steer_direction = (left_dist > right_dist) ? 1.0 : -1.0;
   }
   
-  // Gap 방향으로 조향 (angle_diff를 조향각으로 변환)
-  // angle_diff가 양수면 gap이 왼쪽 -> 왼쪽 조향 (양수)
-  // angle_diff가 음수면 gap이 오른쪽 -> 오른쪽 조향 (음수)
-  avoidance_steer = angle_diff * effective_gain * (0.5 + 0.5 * urgency);
+  // 긴급도에 따른 조향 강도 결정
+  double steer_ratio = is_urgent ? a2_urgent_steer_ratio_ : a2_max_steer_ratio_;
+  double steer_gain = is_urgent ? a2_urgent_steer_gain_ : a2_steer_gain_;
+  
+  // 거리에 반비례하여 조향 강도 증가 (가까울수록 더 강하게)
+  double distance_factor = 1.0 - (min_dist / a2_threshold_);
+  distance_factor = std::clamp(distance_factor, 0.3, 1.0);
+  
+  // 최종 회피 조향각 계산 - 완전 반대 방향으로
+  avoidance_steer = steer_direction * max_steer_angle_ * steer_ratio * steer_gain * distance_factor;
   
   // 최대 조향 각도 제한
-  double max_avoidance = max_steer_angle_ * std::min(1.0, steer_ratio);
-  avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
+  avoidance_steer = std::clamp(avoidance_steer, -max_steer_angle_, max_steer_angle_);
   
   // 로그 출력
   int throttle_ms = is_urgent ? 200 : 500;
   if (std::abs(avoidance_steer) > 0.01) {
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), throttle_ms,
-                 "[%s GAP] lookahead=%.2f° gap=%.2f° diff=%.2f° | steer=%.3f | dist: L%.2f R%.2f F%.2f",
+                 "[%s OPPOSITE] steer=%.3f (dir=%.0f) | dist: L%.2f R%.2f F%.2f",
                  is_urgent ? "URGENT" : "AVOID",
-                 lookahead_angle * 180.0 / M_PI, gap_center_angle * 180.0 / M_PI,
-                 angle_diff * 180.0 / M_PI, avoidance_steer,
+                 avoidance_steer, steer_direction,
                  left_dist, right_dist, front_dist);
   }
   
@@ -836,19 +832,17 @@ void SimpleController::control_loop()
   // 6) A2 범위 기반 회피 조향 추가 - lookahead 방향(alpha) 기준 gap following
   // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
-  double a2_slowdown_factor = 1.0;
   if (!is_in_a1_zone_ && check_a2_zone()) {
     // alpha = lookahead point 방향 각도 (차량 프레임 기준)
     delta_a2_avoidance = compute_avoidance_steering(alpha);
     steering_angle += delta_a2_avoidance;
     
-    // 측면 장애물 거리에 따른 속도 감소 - 0.4m 이내면 점점 느려짐
-    double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
-    a2_slowdown_factor = std::max(0.3, min_side_dist / a2_threshold_);  // 30% ~ 100% 속도
+    // 장애물 회피 시 속도 유지 - 반대 조향으로 회피하므로 느려지지 않음
+    // a2_slowdown_factor = 1.0 (속도 유지)
     
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                          "A2 Zone: steer=%.3f, slowdown=%.1f%%", 
-                          delta_a2_avoidance, a2_slowdown_factor * 100.0);
+                          "A2 Zone: steer=%.3f, maintaining speed with opposite steering", 
+                          delta_a2_avoidance);
   }
 
   // Clamp to physical steering limits
@@ -874,13 +868,10 @@ void SimpleController::control_loop()
                 lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, steering_angle);
   }
 
-  // Speed control: Reduce speed based on curvature
-  // A2 범위에 있으면 속도도 줄임
+  // Speed control: Reduce speed based on curvature only
+  // A2 회피 시에는 반대 조향으로 회피하므로 속도 유지
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
-  
-  // A2 회피 중이면 속도 추가 감소 (거리 기반)
-  speed_factor *= a2_slowdown_factor;
   
   double adjusted_speed = target_speed_ * speed_factor;
   
