@@ -1867,24 +1867,13 @@ private:
   
   /**
    * @brief Compute avoidance steering (A2 zone) - DISABLED
-   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad) - unused
    * 
    * 2024-12: 사용자 요청에 따라 비활성화됨
-   * 장애물/벽 충돌 시 갑작스런 반대 방향 조향이 차량 제어를 불안정하게 만들어 제거
-   * 이제 NMPC 경로 추종 + A1 zone 후진만 동작하고, A2 zone 회피 조향은 적용되지 않음
-   * 
-   * 이전 로직 설명 (참고용):
-   * - 왼쪽 장애물 가까우면 → 오른쪽으로 조향 (음수)
-   * - 오른쪽 장애물 가까우면 → 왼쪽으로 조향 (양수)
-   * - 거리에 반비례하여 조향력 증가 (가까울수록 강하게)
-   * 
-   * 문제점: 벽/장애물에 부딪힐 때 갑작스런 큰 반대 방향 힘이 차량을 불안정하게 만듦
+   * 장애물/벽 충돌 시 갑작스런 반대 방향 조향이 차량을 불안정하게 만들어 제거
+   * NMPC 경로 추종 + A1 zone 후진만 동작
    */
-  double computeAvoidanceSteering(double lookahead_angle)
+  double computeAvoidanceSteering(double /* lookahead_angle */)
   {
-    // 비활성화됨 - 항상 0 반환
-    // 장애물/벽 충돌 시 갑작스런 조향이 불안정을 유발하므로 제거
-    (void)lookahead_angle;  // 사용되지 않음
     return 0.0;
   }
   
