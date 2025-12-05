@@ -63,6 +63,7 @@ install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
 # ============================================================================
 
 find_package(visualization_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 add_executable(frenet_overtake_planner src/frenet_overtake_planner.cpp)
 ament_target_dependencies(frenet_overtake_planner
@@ -76,6 +77,55 @@ target_include_directories(frenet_overtake_planner PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 install(TARGETS frenet_overtake_planner DESTINATION lib/${PROJECT_NAME})
+
+# ============================================================================
+# Opponent Detector Node
+# ============================================================================
+# Detects leading vehicle using LiDAR + odometry + raceline
+# Outputs opponent position in Frenet coordinates (s, d)
+# ============================================================================
+
+add_executable(opponent_detector src/opponent_detector_node.cpp)
+ament_target_dependencies(opponent_detector
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  std_msgs
+  sensor_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_link_libraries(opponent_detector tf2_geometry_msgs::tf2_geometry_msgs)
+target_include_directories(opponent_detector PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+install(TARGETS opponent_detector DESTINATION lib/${PROJECT_NAME})
+
+# ============================================================================
+# Global Overtake Planner Node
+# ============================================================================
+# Plans global overtake line and manages overtake state machine
+# Features: polynomial d(s) transitions, state machine, visualization
+# ============================================================================
+
+add_executable(global_overtake_planner src/global_overtake_planner_node.cpp)
+ament_target_dependencies(global_overtake_planner
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  std_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_link_libraries(global_overtake_planner tf2_geometry_msgs::tf2_geometry_msgs)
+target_include_directories(global_overtake_planner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+install(TARGETS global_overtake_planner DESTINATION lib/${PROJECT_NAME})
 
 # Install resources only if they exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
@@ -93,6 +143,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tracks")
     DESTINATION share/${PROJECT_NAME}
     PATTERN ".gitkeep" EXCLUDE)
 endif()
+
+# Install launch files
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 # Install headers
 install(DIRECTORY include/
