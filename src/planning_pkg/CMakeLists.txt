@@ -26,6 +26,13 @@ target_include_directories(path_utils PUBLIC
 # G-G Diagram library (header-only, but we can add it to path_utils or create separate)
 # For now, it's header-only so no library needed
 
+# FrenetConverter library (shared between opponent_detector and global_overtake_planner)
+add_library(frenet_converter src/frenet_converter.cpp)
+ament_target_dependencies(frenet_converter rclcpp nav_msgs geometry_msgs)
+target_include_directories(frenet_converter PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
 # Existing example planner (if present)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/simple_path_planner.cpp")
   add_executable(simple_path_planner src/simple_path_planner.cpp)
@@ -97,7 +104,7 @@ ament_target_dependencies(opponent_detector
   tf2_ros
   tf2_geometry_msgs
 )
-target_link_libraries(opponent_detector tf2_geometry_msgs::tf2_geometry_msgs)
+target_link_libraries(opponent_detector frenet_converter tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(opponent_detector PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -121,7 +128,7 @@ ament_target_dependencies(global_overtake_planner
   tf2_ros
   tf2_geometry_msgs
 )
-target_link_libraries(global_overtake_planner tf2_geometry_msgs::tf2_geometry_msgs)
+target_link_libraries(global_overtake_planner frenet_converter tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(global_overtake_planner PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -155,14 +162,14 @@ install(DIRECTORY include/
   PATTERN ".gitkeep" EXCLUDE)
 
 # Install library
-install(TARGETS path_utils
+install(TARGETS path_utils frenet_converter
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 
 ament_export_include_directories(include)
-ament_export_libraries(path_utils)
+ament_export_libraries(path_utils frenet_converter)
 ament_export_dependencies(rclcpp nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs)
 
 ament_package()
