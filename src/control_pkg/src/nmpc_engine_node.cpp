@@ -964,6 +964,10 @@ public:
     a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
     enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
     
+    // Calculate recovery cooldown as 2x the reverse duration
+    // This prevents immediate re-triggering of reverse after completion
+    recovery_cooldown_duration_ = reverse_duration_ * 2.0;
+    
     // If not using Dual EKF, use ground truth
     if (!use_dual_ekf_) {
       odom_topic = "/car_state/odom_GT";
@@ -1073,6 +1077,7 @@ public:
       std::bind(&NMPCEngineNode::controlCycle, this));
     
     reverse_start_time_ = now();
+    recovery_cooldown_start_time_ = now();
     
     RCLCPP_INFO(get_logger(), "NMPC control loop running at %.1f Hz", control_rate_hz_);
   }
@@ -1100,19 +1105,46 @@ private:
     // Update obstacle distances from LiDAR
     updateObstacleDistances();
     
+    // Check if we're in recovery cooldown period (prevent immediate re-reverse)
+    bool in_recovery_cooldown = is_in_recovery_cooldown_ && 
+      (current_time - recovery_cooldown_start_time_).seconds() < recovery_cooldown_duration_;
+    
+    if (in_recovery_cooldown) {
+      // During cooldown, don't re-trigger reverse, just do normal control with extra caution
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 100,
+        "Recovery cooldown: %.2fs remaining",
+        recovery_cooldown_duration_ - (current_time - recovery_cooldown_start_time_).seconds());
+    }
+    
     // A1 zone check: STRONG SHORT BURST reverse when hitting front obstacle
-    if (checkA1Zone()) {
+    // Skip if in recovery cooldown (prevents oscillation)
+    if (!in_recovery_cooldown && checkA1Zone()) {
       // Start or continue reversing
       if (!is_reversing_) {
         is_reversing_ = true;
         reverse_start_time_ = current_time;
+        consecutive_reverse_count_++;
+        
+        // If we've reversed too many times in quick succession, use longer reverse
+        double effective_duration = reverse_duration_;
+        if (consecutive_reverse_count_ > 3) {
+          effective_duration = reverse_duration_ * 2.0;  // Double duration after 3 consecutive reverses
+          RCLCPP_WARN(get_logger(), 
+            "Multiple collisions (%d)! Using extended reverse duration: %.2fs",
+            consecutive_reverse_count_, effective_duration);
+        }
+        current_reverse_duration_ = effective_duration;
+        
+        // Store current steering to find best escape direction
+        findBestEscapeDirection();
+        
         RCLCPP_WARN(get_logger(), 
           "A1 COLLISION! Front=%.2fm < %.2fm -> BURST REVERSE (speed=%.1f, duration=%.2fs)",
-          last_obstacle_front_dist_, a1_threshold_, reverse_speed_, reverse_duration_);
+          last_obstacle_front_dist_, a1_threshold_, reverse_speed_, current_reverse_duration_);
       }
       
       double elapsed = (current_time - reverse_start_time_).seconds();
-      if (elapsed < reverse_duration_) {
+      if (elapsed < current_reverse_duration_) {
         // STRONG SHORT BURST: Apply maximum reverse force
         double reverse_steer = computeReverseSteering();
         
@@ -1126,18 +1158,35 @@ private:
         
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 50,  // Log every 50ms for short burst
           "BURST REVERSE: speed=%.2f, steer=%.3f, %.0f%%",
-          -reverse_speed_, reverse_steer, (elapsed / reverse_duration_) * 100.0);
+          -reverse_speed_, reverse_steer, (elapsed / current_reverse_duration_) * 100.0);
         return;
       } else {
-        // Burst complete
+        // Burst complete - start recovery cooldown
         is_reversing_ = false;
-        RCLCPP_INFO(get_logger(), "Burst reverse complete, resuming forward");
+        is_in_recovery_cooldown_ = true;
+        recovery_cooldown_start_time_ = current_time;
+        RCLCPP_INFO(get_logger(), "Burst reverse complete, entering recovery cooldown (%.2fs)", 
+          recovery_cooldown_duration_);
       }
     } else {
-      // Not in A1 zone, stop reversing if we were
+      // Not in A1 zone (or in cooldown), stop reversing if we were
       if (is_reversing_) {
         is_reversing_ = false;
-        RCLCPP_INFO(get_logger(), "Left A1 zone, stopping reverse");
+        is_in_recovery_cooldown_ = true;
+        recovery_cooldown_start_time_ = current_time;
+        RCLCPP_INFO(get_logger(), "Left A1 zone, entering recovery cooldown");
+      }
+      
+      // Reset consecutive reverse count immediately when out of A1 zone and cooldown complete
+      // This allows fresh collision handling at new locations
+      if (!in_recovery_cooldown && !checkA1Zone()) {
+        consecutive_reverse_count_ = 0;
+      }
+      
+      // Clear recovery cooldown flag when cooldown period ends
+      if (is_in_recovery_cooldown_ && !in_recovery_cooldown) {
+        is_in_recovery_cooldown_ = false;
+        RCLCPP_INFO(get_logger(), "Recovery cooldown complete, normal operation resumed");
       }
     }
 
@@ -1320,30 +1369,112 @@ private:
   }
   
   /**
+   * @brief Find best escape direction when hitting obstacle
+   * Scans LiDAR to find the widest gap in the rear hemisphere
+   * and stores the direction for reverse steering
+   */
+  void findBestEscapeDirection()
+  {
+    if (!scan_received_ || !latest_scan_ || latest_scan_->ranges.empty()) {
+      best_escape_angle_ = 0.0;
+      return;
+    }
+    
+    double angle_min = latest_scan_->angle_min;
+    double angle_inc = latest_scan_->angle_increment;
+    int num_ranges = latest_scan_->ranges.size();
+    
+    // Search in rear hemisphere: both left-rear (+90° to +180°) and right-rear (-90° to -180°)
+    constexpr double REAR_SEARCH_MIN = M_PI / 2.0;   // 90 degrees
+    constexpr double MIN_VALID_RANGE = 0.05;
+    constexpr double ESCAPE_STEER_RATIO = 0.8;       // 80% of max steer for escape
+    constexpr double SIDE_ESCAPE_STEER_RATIO = 0.6;  // 60% of max steer for side-based escape
+    
+    double best_angle = 0.0;
+    double max_range = 0.0;
+    
+    // Find the direction with maximum clearance in rear hemisphere
+    // Check both left-rear (angle > 90°) and right-rear (angle < -90°)
+    for (int i = 0; i < num_ranges; ++i) {
+      double angle = angle_min + i * angle_inc;
+      double range = latest_scan_->ranges[i];
+      
+      if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
+        continue;
+      }
+      
+      // Check if in rear hemisphere: angle > +90° or angle < -90°
+      // This correctly covers both left-rear and right-rear quadrants
+      bool in_left_rear = (angle >= REAR_SEARCH_MIN);   // +90° to +180° (or beyond)
+      bool in_right_rear = (angle <= -REAR_SEARCH_MIN); // -90° to -180° (or beyond)
+      
+      if (in_left_rear || in_right_rear) {
+        if (range > max_range) {
+          max_range = range;
+          // Convert to steering angle for reverse:
+          // If best clearance is on left-rear (angle > 0), steer right when reversing (negative)
+          // If best clearance is on right-rear (angle < 0), steer left when reversing (positive)
+          best_angle = -std::copysign(1.0, angle) * max_steer_ * ESCAPE_STEER_RATIO;
+        }
+      }
+    }
+    
+    // Also consider side clearances for escape direction
+    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+    double side_diff = right_dist - left_dist;
+    
+    // If side difference is significant and no good rear gap found
+    if (max_range < 0.5 && std::abs(side_diff) > 0.1) {
+      // Steer toward the side with more clearance when reversing
+      // If right side clearer (side_diff > 0), steer left when reversing (positive)
+      // If left side clearer (side_diff < 0), steer right when reversing (negative)
+      best_angle = std::copysign(max_steer_ * SIDE_ESCAPE_STEER_RATIO, side_diff);
+    }
+    
+    best_escape_angle_ = best_angle;
+    
+    RCLCPP_DEBUG(get_logger(), 
+      "Escape direction: angle=%.3f, max_rear_range=%.2f, L=%.2f, R=%.2f",
+      best_escape_angle_, max_range, left_dist, right_dist);
+  }
+  
+  /**
    * @brief Compute steering angle for reverse (A1 zone)
-   * When hitting obstacle, reverse and steer opposite to the direction that caused collision
+   * Uses pre-computed best escape direction to avoid spinning in circles
    */
   double computeReverseSteering()
   {
-    double reverse_steer = 0.0;
+    // Steering ratio constants for different scenarios
+    constexpr double CLEARANCE_STEER_RATIO = 0.7;   // 70% of max steer for clearance-based
+    constexpr double OBSTACLE_STEER_RATIO = 0.5;    // 50% of max steer for obstacle angle-based
+    constexpr double DEFAULT_STEER_RATIO = 0.4;     // 40% of max steer for symmetry breaking
     
-    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+    // Use pre-computed escape direction (found at start of reverse)
+    double reverse_steer = best_escape_angle_;
     
-    // If we have a clear direction from obstacle distances
-    double dist_diff = right_dist - left_dist;
-    
-    if (std::abs(dist_diff) > 0.05) {
-      // Obstacle is closer on one side - steer opposite direction when reversing
-      // If right side closer (dist_diff < 0), steer left (positive) when reversing
-      // If left side closer (dist_diff > 0), steer right (negative) when reversing
-      reverse_steer = -std::copysign(1.0, dist_diff) * max_steer_ * a1_steer_gain_;
-    } else if (std::abs(last_steering_before_collision_) > 0.05) {
-      // Steer opposite to the direction we were going before collision
-      reverse_steer = -last_steering_before_collision_ * a1_steer_gain_;
-    } else if (std::abs(last_obstacle_angle_) > 0.1) {
-      // Fall back to obstacle angle based steering
-      reverse_steer = -last_obstacle_angle_ * a1_steer_gain_;
+    // If no good escape direction was found, use fallback logic
+    if (std::abs(reverse_steer) < 0.01) {
+      double left_dist = std::min(last_obstacle_left_dist_, 5.0);
+      double right_dist = std::min(last_obstacle_right_dist_, 5.0);
+      
+      // Steer toward the side with more clearance
+      double dist_diff = right_dist - left_dist;
+      
+      if (std::abs(dist_diff) > 0.05) {
+        // If right side clearer, steer left when reversing (positive)
+        // If left side clearer, steer right when reversing (negative)
+        reverse_steer = std::copysign(max_steer_ * CLEARANCE_STEER_RATIO, dist_diff);
+      } else if (std::abs(last_obstacle_angle_) > 0.1) {
+        // Obstacle is at an angle - steer away from it
+        // If obstacle is on left (positive angle), steer right when reversing (negative)
+        reverse_steer = -std::copysign(max_steer_ * OBSTACLE_STEER_RATIO, last_obstacle_angle_);
+      } else {
+        // Default: small steering to break symmetry
+        // Alternate based on consecutive reverse count to avoid repeated spinning
+        reverse_steer = (consecutive_reverse_count_ % 2 == 0) ? 
+          max_steer_ * DEFAULT_STEER_RATIO : -max_steer_ * DEFAULT_STEER_RATIO;
+      }
     }
     
     reverse_steer = std::clamp(reverse_steer, -max_steer_, max_steer_);
@@ -1882,6 +2013,14 @@ private:
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
   double last_steering_before_collision_{0.0};  // Track last steering direction before collision
+  
+  // Recovery cooldown state (prevents oscillation after reverse)
+  bool is_in_recovery_cooldown_{false};
+  rclcpp::Time recovery_cooldown_start_time_;
+  double recovery_cooldown_duration_{0.3};  // Default 300ms cooldown
+  int consecutive_reverse_count_{0};        // Count consecutive reverses
+  double current_reverse_duration_{0.15};   // Current effective reverse duration
+  double best_escape_angle_{0.0};           // Pre-computed best escape direction
   
   // Reference trajectory state (moved from static to member)
   mutable size_t last_closest_idx_{0};
