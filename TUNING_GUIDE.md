@@ -10,7 +10,8 @@
 2. [글로벌 레이스라인 튜닝](#글로벌-레이스라인-튜닝)
 3. [센서 설정 튜닝](#센서-설정-튜닝)
 4. [컨트롤러 파라미터 튜닝](#컨트롤러-파라미터-튜닝)
-5. [트러블슈팅](#트러블슈팅)
+5. [NMPC 아키텍처 (v2.0)](#nmpc-아키텍처-v20)
+6. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -46,7 +47,85 @@ source install/setup.bash
 
 ---
 
-## 글로벌 레이스라인 튜닝
+## NMPC 아키텍처 (v2.0)
+
+### 🚀 새로운 기능: acados 연동 및 LifecycleNode
+
+v2.0에서는 다음과 같은 아키텍처 개선이 적용되었습니다:
+
+#### 1. acados 솔버 지원
+
+| 항목 | 기존 (Ipopt 스타일) | 신규 (acados) |
+|------|---------------------|---------------|
+| **QP 솔버** | MUMPS (일반 sparse) | HPIPM (horizon-structured) |
+| **알고리즘** | Interior Point | SQP/RTI |
+| **웜스타트** | 제한적 | 기본 설계 |
+| **코드생성** | 없음 | CasADi → C 코드 |
+| **타이밍** | 변동 (30~50ms) | 예측 가능 (<20ms RTI) |
+
+acados가 설치되어 있으면 자동으로 사용되며, 없으면 fallback 솔버가 동작합니다.
+
+#### 2. LifecycleNode 패턴
+
+```
+Unconfigured → configure → Inactive → activate → Active
+                            ↑                      ↓
+                         cleanup ←─ deactivate ←───
+```
+
+**Lifecycle 사용법:**
+
+```bash
+# 노드 시작 (Unconfigured 상태)
+ros2 run control_pkg nmpc_lifecycle_node
+
+# Configure: 솔버 초기화, 메모리 할당
+ros2 lifecycle set /nmpc_lifecycle_node configure
+
+# Activate: 제어 루프 시작
+ros2 lifecycle set /nmpc_lifecycle_node activate
+
+# Deactivate: 제어 루프 중지 (정차)
+ros2 lifecycle set /nmpc_lifecycle_node deactivate
+
+# Cleanup: 리소스 해제
+ros2 lifecycle set /nmpc_lifecycle_node cleanup
+```
+
+#### 3. MultiThreadedExecutor 지원
+
+NMPC 솔버가 30~50ms 걸려도 다른 콜백이 블로킹되지 않도록:
+
+- **센서 콜백 그룹** (Reentrant): odometry, LiDAR, path 콜백 병렬 실행
+- **솔버 콜백 그룹** (MutuallyExclusive): NMPC solve는 단일 스레드
+
+```cpp
+// 내부 구현
+sensor_callback_group_ = create_callback_group(Reentrant);
+solver_callback_group_ = create_callback_group(MutuallyExclusive);
+```
+
+### acados 설치 방법
+
+```bash
+# 1. acados 설치
+pip install acados-template casadi numpy
+
+# 2. OCP 코드 생성
+ros2 run control_pkg generate_acados_ocp.py --horizon 1.5 --steps 15
+
+# 3. 생성된 C 코드를 CMake에 추가하고 빌드
+colcon build --packages-select control_pkg
+```
+
+### NMPC 노드 선택 가이드
+
+| 노드 | 용도 | 특징 |
+|------|------|------|
+| `nmpc_engine_node` | 레거시/테스트 | rclcpp::Node, SingleThreadedExecutor |
+| `nmpc_lifecycle_node` | **프로덕션 권장** | LifecycleNode, MultiThreadedExecutor, acados |
+
+---
 
 ### 📁 핵심 파일 위치
 
