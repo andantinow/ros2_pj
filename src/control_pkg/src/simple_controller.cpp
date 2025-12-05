@@ -523,7 +523,6 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
   // lookahead 방향 기준 ±60도 범위에서 gap 찾기
   constexpr double SEARCH_HALF_ANGLE = M_PI / 3.0;  // 60도
   constexpr double MIN_VALID_RANGE = 0.05;
-  constexpr double GAP_THRESHOLD = 0.5;  // 0.5m 이상 떨어지면 gap으로 인식
   
   double search_min = lookahead_angle - SEARCH_HALF_ANGLE;
   double search_max = lookahead_angle + SEARCH_HALF_ANGLE;
@@ -1548,9 +1547,6 @@ double SimpleController::compute_lateral_error(double current_x, double current_
   double path_x = path.poses[closest_idx].pose.position.x;
   double path_y = path.poses[closest_idx].pose.position.y;
   
-  // Compute path heading from path orientation
-  double path_yaw = tf2::getYaw(path.poses[closest_idx].pose.orientation);
-  
   // Compute vector from vehicle to path point (in global frame)
   double dx = path_x - current_x;
   double dy = path_y - current_y;
@@ -1559,7 +1555,6 @@ double SimpleController::compute_lateral_error(double current_x, double current_
   // Vehicle frame: x forward, y left
   double cos_yaw = std::cos(current_yaw);
   double sin_yaw = std::sin(current_yaw);
-  double dx_vehicle = dx * cos_yaw + dy * sin_yaw;
   double dy_vehicle = -dx * sin_yaw + dy * cos_yaw;
   
   // Lateral error: y-component in vehicle frame
@@ -1947,6 +1942,7 @@ bool SimpleController::detect_upcoming_corner(int current_idx, double& corner_di
 
 double SimpleController::compute_out_in_out_offset(int current_idx, double corner_direction)
 {
+  (void)current_idx;  // Parameter reserved for future use
   if (!enable_out_in_out_) {
     return 0.0;
   }
