@@ -1058,12 +1058,6 @@ void SimpleController::control_loop()
   // 7) A2 범위 기반 회피 조향 - 비활성화됨
   // 측면 센서 A2 zone 기능이 제거됨. 장애물/벽 충돌 시 A1 zone 후진만 동작
   // 2024-12: 사용자 요청에 따라 A2 zone 조향 및 속도 감소 기능 제거
-  double delta_a2_avoidance = 0.0;
-  (void)delta_a2_avoidance;  // 미사용 변수 경고 방지
-  
-  // 벽 반발 조향도 비활성화 (A2 관련 기능)
-  double wall_repulsion_steer = 0.0;
-  (void)wall_repulsion_steer;  // 미사용 변수 경고 방지
   
   // === 벽 충돌 시각화 ===
   // A1 zone (매우 가까움) 또는 벽 데이터 기반 충돌 감지
@@ -1110,10 +1104,8 @@ void SimpleController::control_loop()
   
   double adjusted_speed = target_speed_ * speed_factor;
   
-  // === 상대 차량 Following - 비활성화됨 ===
-  // 사용자 요청에 따라 전방 장애물 감지 시 속도 감소 기능 제거
-  // 장애물/벽 충돌 시에는 A1 zone 후진만 동작
-  // adjusted_speed = compute_opponent_following_speed(adjusted_speed);  // 비활성화
+  // Note: A2 zone opponent following speed reduction disabled
+  // Only A1 zone reverse functionality is active for collision handling
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
