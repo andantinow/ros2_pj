@@ -40,7 +40,7 @@ private:
   double target_speed_ = 2.0;
   double max_speed_ = 2.0;
   double wheelbase_ = 0.33;
-  double max_steer_angle_ = 0.6458;  // Max steering limit: 37 degrees [rad]
+  double max_steer_angle_ = 0.6981;  // Max steering limit: 40 degrees [rad]
   double max_steer_rate_ = 4.0;  // Increased for faster steering response (1.0 -> 4.0) rad/s
   double lateral_error_gain_ = 1.5;  // Increased lateral error compensation gain (0.5 -> 1.5)
   double heading_error_gain_ = 0.8;  // Reduced heading error compensation gain (1.0 -> 0.8)
@@ -74,13 +74,13 @@ private:
   double overtake_max_duration_ = 3.0;       // 최대 추월 지속 시간 (seconds)
   double overtake_lateral_offset_ = 0.5;     // 추월 시 횡방향 오프셋 (m)
   double return_to_line_distance_ = 2.0;     // 추월 후 라인 복귀 거리 (m)
-  double min_overtake_gap_ = 1.0;            // 최소 추월 가능 간격 (m)
+  double min_overtake_gap_ = 1.2;            // 최소 추월 가능 간격 (m) - 더 엄격하게 (1.0 -> 1.2)
   double overtake_speed_boost_ = 1.5;        // 추월 시 속도 증가 배율 (1.5x)
   double post_overtake_speed_factor_ = 1.2;  // 추월 후 속도 유지 비율 (1.2x)
   double post_overtake_duration_ = 2.0;      // 추월 후 고속 유지 시간 (seconds)
   double overtake_steer_max_ = 0.25;         // 추월 시 최대 조향 강도 (rad)
   double overtake_steer_decay_ = 0.6;        // 추월 조향 감쇠율 (완료시점에 40% 유지)
-  double overtake_wall_caution_dist_ = 0.5;  // 벽 주의 거리 (이보다 가까우면 조향 강도 감소)
+  double overtake_wall_caution_dist_ = 0.6;  // 벽 주의 거리 (이보다 가까우면 조향 강도 감소) - 더 조심스럽게 (0.5 -> 0.6)
   rclcpp::Time overtake_start_time_ros_;     // 추월 시작 시간 (ROS Time)
   rclcpp::Time overtake_end_time_ros_;       // 추월 종료 시간 (ROS Time)
   bool is_post_overtake_ = false;            // 추월 직후 고속 유지 상태
@@ -144,8 +144,8 @@ private:
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
   
   // === 추월 조건 체크용 파라미터 ===
-  double narrow_road_threshold_ = 1.5;     // 좁은 도로 판단 기준 (좌우 합계 m)
-  double min_visibility_angle_ = 0.5;      // 최소 시야 각도 (rad, 약 30도)
+  double narrow_road_threshold_ = 2.0;     // 좁은 도로 판단 기준 (좌우 합계 m) - 더 엄격하게 (1.5 -> 2.0)
+  double min_visibility_angle_ = 0.35;     // 최소 시야 각도 (rad, 약 20도) - 더 엄격하게 (0.5 -> 0.35)
   
   // 장애물 위치 정보 (회피 방향 결정용)
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
@@ -205,11 +205,17 @@ private:
   double compute_return_to_line_steering();  // 라인 복귀 조향 계산
   void publish_overtake_path(double offset_direction);  // 추월 경로 시각화
   void publish_wall_collision_indicator(bool is_colliding, double x, double y);  // 벽 충돌 시각화
+  bool validate_overtake_path(double overtake_direction);  // 추월 경로 시뮬레이션 및 안전성 검증
+  std::vector<geometry_msgs::msg::Point> generate_overtake_trajectory(double overtake_direction);  // 추월 경로 생성
   
   // 벽 검색 캐싱
   mutable size_t last_wall_search_idx_ = 0;
   
   // 추월 안전 체크용 인덱스 캐싱
   mutable int last_closest_idx_overtake_ = 0;
+  
+  // 추월 경로 계획용 멤버 변수
+  double planned_overtake_direction_ = 0.0;  // 계획된 추월 방향 (좌:1.0, 우:-1.0)
+  bool has_valid_overtake_plan_ = false;     // 유효한 추월 계획이 있는지
 };
 #endif  // SIMPLE_CONTROLLER_HPP_

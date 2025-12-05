@@ -779,25 +779,24 @@ void SimpleController::check_and_start_overtake()
   
   // 추월 조건: 전방에 장애물이 있고, 추월 가능한 경로가 있음
   if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
+    // can_overtake_safely가 성공하면 planned_overtake_direction_에 검증된 방향이 저장됨
     bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
     
-    if (can_overtake) {
+    if (can_overtake && has_valid_overtake_plan_) {
       is_overtaking_ = true;
       is_following_opponent_ = false;
       overtake_start_time_ros_ = this->get_clock()->now();
       
-      // 추월 방향 결정 (더 넓은 쪽으로)
-      double left_space = last_obstacle_left_dist_;
-      double right_space = last_obstacle_right_dist_;
-      double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+      // 검증된 추월 방향 사용 (can_overtake_safely에서 이미 계획됨)
+      double overtake_direction = planned_overtake_direction_;
       
       RCLCPP_WARN(this->get_logger(), 
-                  "OVERTAKE START! front=%.2fm, direction=%s, L=%.2fm, R=%.2fm",
+                  "OVERTAKE START! Using VALIDATED path. front=%.2fm, direction=%s, L=%.2fm, R=%.2fm",
                   front_dist, 
                   overtake_direction > 0 ? "LEFT" : "RIGHT",
-                  left_space, right_space);
+                  last_obstacle_left_dist_, last_obstacle_right_dist_);
       
-      // 추월 경로 시각화
+      // 추월 경로 시각화 (검증된 경로)
       publish_overtake_path(overtake_direction);
     }
   }
@@ -1269,12 +1268,19 @@ void SimpleController::control_loop()
   
   // 추월 중이면 추월 경로 시각화 (계속 업데이트)
   if (is_overtaking_) {
-    double left_space = last_obstacle_left_dist_;
-    double right_space = last_obstacle_right_dist_;
-    double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+    // 검증된 추월 방향 사용 (계획된 경로)
+    double overtake_direction;
+    if (has_valid_overtake_plan_ && std::abs(planned_overtake_direction_) > 0.5) {
+      overtake_direction = planned_overtake_direction_;
+    } else {
+      // Fallback: 더 넓은 쪽으로
+      double left_space = last_obstacle_left_dist_;
+      double right_space = last_obstacle_right_dist_;
+      overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+    }
     publish_overtake_path(overtake_direction);
     
-    // 추월 중 조향각 조정 (신중하게)
+    // 추월 중 조향각 조정 (검증된 경로 기반)
     steering_angle = compute_overtake_steering(steering_angle);
   }
 
@@ -1796,6 +1802,10 @@ double SimpleController::compute_out_in_out_offset(int current_idx, double corne
 
 bool SimpleController::can_overtake_safely(double opponent_dist, double opponent_angle)
 {
+  // 추월 계획 초기화
+  has_valid_overtake_plan_ = false;
+  planned_overtake_direction_ = 0.0;
+  
   if (!enable_collision_avoidance_) {
     return false;
   }
@@ -1808,8 +1818,10 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   }
   
   // 상대방이 일정 거리 이내이고, 전방에 있는 경우
-  bool opponent_in_front = std::abs(opponent_angle) < M_PI / 4.0;  // ±45도 이내
-  bool opponent_close = opponent_dist < 3.0 && opponent_dist > 0.5;  // 0.5m ~ 3m
+  // 더 엄격한 전방 체크: ±30도 이내 (이전 ±45도)
+  bool opponent_in_front = std::abs(opponent_angle) < M_PI / 6.0;  // ±30도 이내로 더 엄격하게
+  // 더 넓은 거리 범위: 0.8m ~ 2.5m (더 조심스럽게 접근)
+  bool opponent_close = opponent_dist < 2.5 && opponent_dist > 0.8;
   
   if (!opponent_in_front || !opponent_close) {
     return false;
@@ -1820,7 +1832,7 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   double right_space = last_obstacle_right_dist_;
   double total_space = left_space + right_space;
   
-  // === 추월 금지 조건 체크 ===
+  // === 추월 금지 조건 체크 (1단계: 기본 조건) ===
   // 1. 좁은 도로 체크 (좌우 공간 합계가 threshold 미만이면 추월 금지)
   if (total_space < narrow_road_threshold_) {
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
@@ -1854,20 +1866,72 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
     return false;
   }
   
-  // 최소 추월 간격 이상인 방향이 있어야 함
-  bool can_overtake_left = left_space > min_overtake_gap_;
-  bool can_overtake_right = right_space > min_overtake_gap_;
+  // === 추월 방향 결정 및 경로 검증 (2단계: 경로 시뮬레이션) ===
+  // 안전 마진 추가: min_overtake_gap_ + 0.3m 이상 필요
+  double safety_margin = 0.3;
+  bool can_overtake_left = left_space > (min_overtake_gap_ + safety_margin);
+  bool can_overtake_right = right_space > (min_overtake_gap_ + safety_margin);
   
   // 벽 데이터가 있으면 추가 확인
   if (wall_data_loaded_) {
     double wall_left = get_wall_distance_left(current_x, current_y);
     double wall_right = get_wall_distance_right(current_x, current_y);
     
-    can_overtake_left = can_overtake_left && (wall_left > overtake_lateral_offset_ + 0.3);
-    can_overtake_right = can_overtake_right && (wall_right > overtake_lateral_offset_ + 0.3);
+    can_overtake_left = can_overtake_left && (wall_left > overtake_lateral_offset_ + safety_margin);
+    can_overtake_right = can_overtake_right && (wall_right > overtake_lateral_offset_ + safety_margin);
   }
   
-  return can_overtake_left || can_overtake_right;
+  // 초기 공간 체크로 추월 불가능하면 종료
+  if (!can_overtake_left && !can_overtake_right) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "FOLLOWING ONLY: Insufficient gap (L:%.2f, R:%.2f, min_gap:%.2f+%.2f)",
+                          left_space, right_space, min_overtake_gap_, safety_margin);
+    return false;
+  }
+  
+  // === 3단계: 추월 경로 시뮬레이션 및 검증 ===
+  // 더 넓은 쪽을 우선 시도, 그 다음 다른 쪽 시도
+  double preferred_direction = (left_space > right_space) ? 1.0 : -1.0;
+  double alternate_direction = -preferred_direction;
+  
+  bool preferred_valid = false;
+  bool alternate_valid = false;
+  
+  // 우선 방향 경로 검증
+  if ((preferred_direction > 0 && can_overtake_left) || 
+      (preferred_direction < 0 && can_overtake_right)) {
+    preferred_valid = validate_overtake_path(preferred_direction);
+    if (preferred_valid) {
+      RCLCPP_INFO(this->get_logger(), 
+                  "OVERTAKE PLAN: %s path validated successfully",
+                  preferred_direction > 0 ? "LEFT" : "RIGHT");
+      planned_overtake_direction_ = preferred_direction;
+      has_valid_overtake_plan_ = true;
+      return true;
+    }
+  }
+  
+  // 우선 방향이 안전하지 않으면 대안 방향 시도
+  if ((alternate_direction > 0 && can_overtake_left) || 
+      (alternate_direction < 0 && can_overtake_right)) {
+    alternate_valid = validate_overtake_path(alternate_direction);
+    if (alternate_valid) {
+      RCLCPP_INFO(this->get_logger(), 
+                  "OVERTAKE PLAN: Alternate %s path validated successfully",
+                  alternate_direction > 0 ? "LEFT" : "RIGHT");
+      planned_overtake_direction_ = alternate_direction;
+      has_valid_overtake_plan_ = true;
+      return true;
+    }
+  }
+  
+  // 모든 경로가 안전하지 않음
+  RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                        "FOLLOWING ONLY: No safe overtake path found (L_valid:%d, R_valid:%d)",
+                        (preferred_direction > 0) ? preferred_valid : alternate_valid,
+                        (preferred_direction < 0) ? preferred_valid : alternate_valid);
+  
+  return false;
 }
 
 double SimpleController::compute_overtake_steering(double base_steering)
@@ -1876,12 +1940,17 @@ double SimpleController::compute_overtake_steering(double base_steering)
     return base_steering;
   }
   
-  // 추월 중일 때 추가 조향 계산 (신중하게)
-  double left_space = last_obstacle_left_dist_;
-  double right_space = last_obstacle_right_dist_;
-  
-  // 더 넓은 쪽으로 추월 (신중한 판단)
-  double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+  // 검증된 추월 방향 사용 (can_overtake_safely에서 계획됨)
+  // 유효한 계획이 없으면 현재 공간 기반으로 판단 (fallback)
+  double overtake_direction;
+  if (has_valid_overtake_plan_ && std::abs(planned_overtake_direction_) > 0.5) {
+    overtake_direction = planned_overtake_direction_;
+  } else {
+    // Fallback: 더 넓은 쪽으로
+    double left_space = last_obstacle_left_dist_;
+    double right_space = last_obstacle_right_dist_;
+    overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+  }
   
   // 추월 진행 시간에 따른 조향 강도 조절 (초반에 강하게, 후반에 약하게)
   rclcpp::Time current_time = this->get_clock()->now();
@@ -1893,7 +1962,7 @@ double SimpleController::compute_overtake_steering(double base_steering)
   double steer_intensity = overtake_steer_max_ * (1.0 - overtake_progress * overtake_steer_decay_);
   
   // 벽까지 거리에 따른 안전 제어
-  double wall_dist = (overtake_direction > 0) ? left_space : right_space;
+  double wall_dist = (overtake_direction > 0) ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
   if (wall_dist < overtake_wall_caution_dist_) {
     // 벽에 너무 가까우면 조향 강도 줄임 (신중한 행동)
     steer_intensity *= (wall_dist / overtake_wall_caution_dist_);
@@ -2085,4 +2154,155 @@ void SimpleController::publish_wall_collision_indicator(bool is_colliding, doubl
   
   marker.lifetime = rclcpp::Duration::from_seconds(0.2);
   wall_collision_marker_pub_->publish(marker);
+}
+
+/**
+ * @brief 추월 경로를 생성하여 벡터로 반환
+ * 
+ * 현재 위치에서 추월 방향으로 S자 곡선 경로를 생성합니다.
+ * 이 경로는 추월 안전성 검증과 시각화에 사용됩니다.
+ * 
+ * @param overtake_direction 추월 방향 (1.0: 왼쪽, -1.0: 오른쪽)
+ * @return 생성된 추월 경로 포인트들
+ */
+std::vector<geometry_msgs::msg::Point> SimpleController::generate_overtake_trajectory(double overtake_direction)
+{
+  std::vector<geometry_msgs::msg::Point> trajectory;
+  
+  double current_x = current_odom_.pose.pose.position.x;
+  double current_y = current_odom_.pose.pose.position.y;
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  // 추월 경로 길이: 5m (진입 -> 추월 -> 복귀)
+  constexpr double OVERTAKE_PATH_LENGTH = 5.0;
+  constexpr double PATH_RESOLUTION = 0.2;  // 20cm 간격
+  
+  for (double dist = 0.0; dist < OVERTAKE_PATH_LENGTH; dist += PATH_RESOLUTION) {
+    geometry_msgs::msg::Point p;
+    
+    // S자 곡선으로 추월 경로 생성
+    // t: 0 -> 1 (진입부터 복귀까지)
+    double t = dist / OVERTAKE_PATH_LENGTH;
+    
+    // 횡방향 오프셋: sin(π*t)로 부드러운 S자 곡선
+    // 최대 오프셋은 overtake_lateral_offset_
+    double lateral_offset = overtake_direction * overtake_lateral_offset_ * std::sin(t * M_PI);
+    
+    // 전방 거리와 횡방향 오프셋을 글로벌 좌표로 변환
+    p.x = current_x + dist * std::cos(current_yaw) - lateral_offset * std::sin(current_yaw);
+    p.y = current_y + dist * std::sin(current_yaw) + lateral_offset * std::cos(current_yaw);
+    p.z = 0.0;
+    
+    trajectory.push_back(p);
+  }
+  
+  return trajectory;
+}
+
+/**
+ * @brief 추월 경로가 안전한지 시뮬레이션하여 검증
+ * 
+ * 추월 경로의 각 포인트에서:
+ * 1. 벽까지 거리가 충분한지 확인
+ * 2. 레이싱 라인으로 복귀 가능한지 확인
+ * 3. 경로 전체가 안전한지 종합적으로 판단
+ * 
+ * @param overtake_direction 추월 방향 (1.0: 왼쪽, -1.0: 오른쪽)
+ * @return 추월 경로가 안전하면 true
+ */
+bool SimpleController::validate_overtake_path(double overtake_direction)
+{
+  // 추월 경로 생성
+  std::vector<geometry_msgs::msg::Point> trajectory = generate_overtake_trajectory(overtake_direction);
+  
+  if (trajectory.empty()) {
+    RCLCPP_DEBUG(this->get_logger(), "Failed to generate overtake trajectory");
+    return false;
+  }
+  
+  // 안전 마진 설정
+  constexpr double MIN_WALL_CLEARANCE = 0.4;  // 벽과의 최소 거리 40cm
+  constexpr double MIN_TRACK_WIDTH = 0.5;     // 최소 트랙 너비 50cm
+  
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  // 경로의 각 포인트에서 안전성 검증
+  for (size_t i = 0; i < trajectory.size(); ++i) {
+    const auto& point = trajectory[i];
+    
+    // 1. 벽 데이터가 있으면 벽까지 거리 확인
+    if (wall_data_loaded_) {
+      double wall_left = get_wall_distance_left(point.x, point.y);
+      double wall_right = get_wall_distance_right(point.x, point.y);
+      
+      // 추월 방향의 벽 거리 확인
+      double wall_clearance = (overtake_direction > 0) ? wall_left : wall_right;
+      
+      if (wall_clearance < MIN_WALL_CLEARANCE) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                              "OVERTAKE PATH INVALID: Wall too close at point %zu (%.2fm < %.2fm)",
+                              i, wall_clearance, MIN_WALL_CLEARANCE);
+        return false;
+      }
+      
+      // 트랙 너비 확인 (양쪽 벽 사이 공간)
+      double track_width = wall_left + wall_right;
+      if (track_width < MIN_TRACK_WIDTH) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                              "OVERTAKE PATH INVALID: Track too narrow at point %zu (%.2fm < %.2fm)",
+                              i, track_width, MIN_TRACK_WIDTH);
+        return false;
+      }
+    }
+    
+    // 2. 경로 상의 레이싱 라인과의 거리 확인 (복귀 가능성)
+    if (!current_path_.poses.empty()) {
+      // 이 포인트에서 가장 가까운 레이싱 라인 포인트 찾기
+      double min_dist_to_raceline = std::numeric_limits<double>::max();
+      
+      for (const auto& pose : current_path_.poses) {
+        double dx = point.x - pose.pose.position.x;
+        double dy = point.y - pose.pose.position.y;
+        double dist = std::hypot(dx, dy);
+        if (dist < min_dist_to_raceline) {
+          min_dist_to_raceline = dist;
+        }
+      }
+      
+      // 레이싱 라인에서 너무 멀리 벗어나면 추월 불가
+      double max_deviation = overtake_lateral_offset_ * 1.5;  // 최대 편차
+      if (min_dist_to_raceline > max_deviation) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                              "OVERTAKE PATH INVALID: Too far from raceline at point %zu (%.2fm > %.2fm)",
+                              i, min_dist_to_raceline, max_deviation);
+        return false;
+      }
+    }
+  }
+  
+  // 3. 코너 진입 여부 확인 (경로 끝 부분)
+  if (!trajectory.empty()) {
+    const auto& end_point = trajectory.back();
+    
+    // 경로 끝 지점에서 코너가 있는지 확인
+    if (!current_path_.poses.empty()) {
+      double end_yaw = current_yaw;  // 대략적인 yaw 추정
+      int end_idx = find_closest_point_along_path(end_point.x, end_point.y, end_yaw, 
+                                                    current_path_, last_closest_idx_overtake_);
+      double corner_direction = 0.0;
+      if (detect_upcoming_corner(end_idx, corner_direction)) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                              "OVERTAKE PATH INVALID: Corner ahead after overtake (dir: %.1f)",
+                              corner_direction);
+        return false;
+      }
+    }
+  }
+  
+  // 모든 검증 통과
+  RCLCPP_INFO(this->get_logger(), 
+              "OVERTAKE PATH VALID: Direction=%s, %zu points verified",
+              overtake_direction > 0 ? "LEFT" : "RIGHT", trajectory.size());
+  
+  return true;
 }
