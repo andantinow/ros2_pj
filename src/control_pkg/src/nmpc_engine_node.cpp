@@ -1193,9 +1193,9 @@ private:
       delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
       solution.steering += delta_a2_avoidance;
       solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-      // Reduce speed in A2 zone - more aggressive slowdown for closer obstacles
+      // Reduce speed in A2 zone - mild slowdown for closer obstacles (70% to 100% speed)
       double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
-      double slowdown_factor = std::max(0.3, min_side_dist / a2_threshold_);  // 30% to 100% speed
+      double slowdown_factor = std::max(0.7, min_side_dist / a2_threshold_);  // 70% to 100% speed (reduced from 30%)
       solution.speed *= slowdown_factor;
       RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
         "A2 Zone: adding avoidance steer=%.3f, slowdown=%.1f%%", 

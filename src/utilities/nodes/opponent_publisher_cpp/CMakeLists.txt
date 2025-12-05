@@ -23,7 +23,6 @@ ament_target_dependencies(opponent_publisher
   rclcpp
   ackermann_msgs
   nav_msgs
-  f110_msgs
 )
 
 add_executable(collision_detector src/collision_detector.cpp)
