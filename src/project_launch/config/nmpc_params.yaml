@@ -140,10 +140,12 @@ nmpc_engine_node:
     reverse_duration: 0.8        # [s] Duration of reverse maneuver
     a1_steer_gain: 0.8           # Steering gain during reverse
     
-    # A2 Zone parameters (steering avoidance - full opposite steering instead of slowdown)
-    a2_threshold: 0.4            # [m] Distance triggering side avoidance - halved from 0.8
-    a2_urgent_threshold: 0.2     # [m] Distance for urgent avoidance - halved from 0.4
-    a2_max_steer_ratio: 1.0      # Max steering ratio (normal A2) - full opposite steering
+    # A2 Zone parameters (repulsive force based steering avoidance)
+    # Repulsive force: obstacles push the car away in opposite direction
+    # Force is additive to NMPC steering for smooth blending
+    a2_threshold: 0.8            # [m] Distance triggering repulsive force - increased from 0.4 for wider detection
+    a2_urgent_threshold: 0.3     # [m] Distance for urgent avoidance with amplified force
+    a2_max_steer_ratio: 0.7      # Max steering ratio (normal A2) - allows partial correction
     a2_urgent_steer_ratio: 1.0   # Max steering ratio (urgent, full allowed)
-    a2_steer_gain: 1.0           # Steering gain for normal avoidance - full opposite steering
-    a2_urgent_steer_gain: 1.5    # Steering gain for urgent avoidance (1.5x)
+    a2_steer_gain: 0.6           # Repulsive force gain - moderate to blend with NMPC
+    a2_urgent_steer_gain: 1.2    # Urgent repulsive force gain (2x normal)

@@ -1,7 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
-#include <f110_msgs/msg/wpnt_array.hpp>
+#include <nav_msgs/msg/path.hpp>
 
 #include <algorithm>
 #include <vector>
@@ -21,6 +21,7 @@ public:
     speed_       = declare_parameter<double>("speed",       1.0);
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
+    path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
 
     // 런치 호환(사용은 안 하더라도 선언해두기)
     declare_parameter<double>("start_s", 0.0);
@@ -30,8 +31,10 @@ public:
 
     // Pub/Sub
     drive_pub_ = create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/opp_drive", 10);
-    wpnt_sub_  = create_subscription<f110_msgs::msg::WpntArray>(
-        "/global_waypoints", 10, std::bind(&OpponentPublisher::waypointsCB, this, _1));
+    // Subscribe to nav_msgs/Path (from raceline_server) instead of WpntArray
+    path_sub_  = create_subscription<nav_msgs::msg::Path>(
+        path_topic_, rclcpp::QoS(10).transient_local(), 
+        std::bind(&OpponentPublisher::pathCB, this, _1));
     odom_sub_  = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 10, std::bind(&OpponentPublisher::odomCB, this, _1));
 
@@ -40,38 +43,64 @@ public:
         std::chrono::milliseconds(100),
         std::bind(&OpponentPublisher::timerCB, this));
 
-    RCLCPP_INFO(get_logger(), "Opponent Publisher ready");
+    RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
   }
 
 private:
-  // ===== Waypoints handling =====
-  void waypointsCB(const f110_msgs::msg::WpntArray::SharedPtr msg)
+  // ===== Path handling (nav_msgs/Path from raceline_server) =====
+  void pathCB(const nav_msgs::msg::Path::SharedPtr msg)
   {
     if (got_waypoints_) return;
 
-    const auto & wps = msg->wpnts;
-    if (wps.empty()) {
-      RCLCPP_WARN(get_logger(), "Received empty waypoints.");
+    const auto & poses = msg->poses;
+    if (poses.empty()) {
+      RCLCPP_WARN(get_logger(), "Received empty path.");
       return;
     }
 
-    xs_.reserve(wps.size());
-    ys_.reserve(wps.size());
-    psis_.reserve(wps.size());
-    ss_.reserve(wps.size());
+    xs_.clear();
+    ys_.clear();
+    psis_.clear();
+    ss_.clear();
+    
+    xs_.reserve(poses.size());
+    ys_.reserve(poses.size());
+    psis_.reserve(poses.size());
+    ss_.reserve(poses.size());
 
-    for (const auto & w : wps) {
-      xs_.push_back(w.x_m);
-      ys_.push_back(w.y_m);
-      psis_.push_back(w.psi_rad);
-      ss_.push_back(w.s_m);
+    double cumulative_s = 0.0;
+    for (size_t i = 0; i < poses.size(); ++i) {
+      const auto & pose = poses[i].pose;
+      xs_.push_back(pose.position.x);
+      ys_.push_back(pose.position.y);
+      
+      // Extract yaw from quaternion (with normalization for numerical stability)
+      double qx = pose.orientation.x;
+      double qy = pose.orientation.y;
+      double qz = pose.orientation.z;
+      double qw = pose.orientation.w;
+      // Normalize quaternion to handle potentially unnormalized input
+      double norm = std::sqrt(qx*qx + qy*qy + qz*qz + qw*qw);
+      if (norm > 1e-9) {
+        qx /= norm; qy /= norm; qz /= norm; qw /= norm;
+      }
+      double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+      psis_.push_back(yaw);
+      
+      // Calculate cumulative arc length using std::hypot for numerical stability
+      if (i > 0) {
+        double dx = xs_[i] - xs_[i-1];
+        double dy = ys_[i] - ys_[i-1];
+        cumulative_s += std::hypot(dx, dy);
+      }
+      ss_.push_back(cumulative_s);
     }
 
-    // 트랙 길이는 마지막 웨이포인트의 s_m로 가정
-    track_length_ = ss_.back();
+    track_length_ = cumulative_s;
     got_waypoints_ = true;
 
-    RCLCPP_INFO(get_logger(), "Waypoints loaded, track length = %.2f m", track_length_);
+    RCLCPP_INFO(get_logger(), "Path loaded from %s: %zu points, track length = %.2f m", 
+                path_topic_.c_str(), poses.size(), track_length_);
   }
 
   // ===== Odom handling =====
@@ -195,8 +224,9 @@ private:
   double speed_{1.0};
   double wheelbase_{0.2};
   std::string odom_topic_{"/opp_racecar/odom"};
+  std::string path_topic_{"/global_raceline"};
 
-  // Waypoints storage
+  // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;
   double track_length_{0.0};
   bool   got_waypoints_{false};
@@ -209,7 +239,7 @@ private:
 
   // ROS interfaces
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
-  rclcpp::Subscription<f110_msgs::msg::WpntArray>::SharedPtr wpnt_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

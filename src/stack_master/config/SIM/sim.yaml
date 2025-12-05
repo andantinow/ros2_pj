@@ -49,17 +49,17 @@ bridge:
     # opponent parameters
     num_agent: 2
 
-    # ego starting pose on map - match first raceline point (small_hall_orig)
-    # These values should match the first row of planning_pkg/data/raceline.csv
-    sx: 5.937778
-    sy: -9.419127
-    stheta: 2.900365
+    # ego starting pose on map - moved to safer position away from walls
+    # Using raceline point ~50 (middle of track) to avoid A1 zone collision at start
+    sx: 4.233191
+    sy: -6.017884
+    stheta: 3.344299
 
-    # opp starting pose on map - second raceline point (behind ego)
-    # These values should match the second row of planning_pkg/data/raceline.csv
-    sx1: 5.841038
-    sy1: -9.395327
-    stheta1: 2.900365
+    # opp starting pose on map - behind ego on the same track section
+    # Using raceline point ~60 to give space between ego and opponent
+    sx1: 3.501352
+    sy1: -6.627132
+    stheta1: 4.307111
 
     # teleop
     kb_teleop: True

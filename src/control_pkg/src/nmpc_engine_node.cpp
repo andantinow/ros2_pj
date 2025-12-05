@@ -922,18 +922,18 @@ public:
     declare_parameter<std::string>("scan_topic", "/scan");  // LiDAR topic
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
-    // A1/A2 collision avoidance parameters (Issue 6: soft constraints via cost)
+    // A1/A2 collision avoidance parameters (Repulsive Force based)
     declare_parameter("a1_threshold", 0.3);            // A1 range: reverse trigger distance (meters) - 30cm for safety
-    declare_parameter("a2_threshold", 0.8);            // A2 range: side steering avoidance distance (meters) - 80cm
-    declare_parameter("a2_urgent_threshold", 0.4);     // A2 urgent range: sharp steering when < 0.4m
+    declare_parameter("a2_threshold", 0.8);            // A2 range: repulsive force activation distance (meters) - 80cm
+    declare_parameter("a2_urgent_threshold", 0.3);     // A2 urgent range: amplified force when < 0.3m
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
-    declare_parameter("a2_max_steer_ratio", 0.7);     // A2 max steering ratio - increased for sharper avoidance
-    declare_parameter("a2_urgent_steer_ratio", 1.0);  // A2 urgent: full steering allowed when < 0.4m
+    declare_parameter("a2_max_steer_ratio", 0.7);     // A2 max steering ratio - allows partial correction
+    declare_parameter("a2_urgent_steer_ratio", 1.0);  // A2 urgent: full steering allowed
     declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
     declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
     declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
-    declare_parameter("a2_steer_gain", 0.6);          // A2 avoidance steering gain - increased for stronger response
-    declare_parameter("a2_urgent_steer_gain", 1.5);   // A2 urgent steering gain - 1.5x when < 0.4m
+    declare_parameter("a2_steer_gain", 0.6);          // A2 repulsive force gain - moderate to blend with NMPC
+    declare_parameter("a2_urgent_steer_gain", 1.2);   // A2 urgent repulsive force gain (2x normal)
     declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
 
     // Get parameters
@@ -974,7 +974,7 @@ public:
     RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
     RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
-    RCLCPP_INFO(get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), enabled=%s",
+    RCLCPP_INFO(get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (repulsive force), enabled=%s",
                 a1_threshold_, a2_threshold_, enable_collision_avoidance_ ? "true" : "false");
 
     // Configure MPC solver with all Issue fixes
@@ -1193,9 +1193,9 @@ private:
       delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
       solution.steering += delta_a2_avoidance;
       solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-      // Reduce speed in A2 zone - more aggressive slowdown for closer obstacles
+      // Reduce speed in A2 zone - mild slowdown for closer obstacles (70% to 100% speed)
       double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
-      double slowdown_factor = std::max(0.3, min_side_dist / a2_threshold_);  // 30% to 100% speed
+      double slowdown_factor = std::max(0.7, min_side_dist / a2_threshold_);  // 70% to 100% speed (reduced from 30%)
       solution.speed *= slowdown_factor;
       RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
         "A2 Zone: adding avoidance steer=%.3f, slowdown=%.1f%%", 
@@ -1472,67 +1472,85 @@ private:
   }
   
   /**
-   * @brief Compute avoidance steering (A2 zone) - lookahead 방향 기준 gap following
-   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
+   * @brief Compute avoidance steering (A2 zone) - Repulsive Force based
+   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad) - used for logging
    * 
-   * When obstacles are detected, find gap center relative to lookahead direction
-   * and steer toward the gap. Urgent mode (< 0.4m): maximum steering with 1.5x gain
+   * Uses repulsive force approach: obstacles push the car away in the opposite direction.
+   * - Left obstacle closer → steer right (negative steering)
+   * - Right obstacle closer → steer left (positive steering)
+   * - Force magnitude inversely proportional to distance (closer = stronger push)
+   * 
+   * This is additive to NMPC steering, creating a smooth blend:
+   * final_steer = nmpc_steer + repulsive_force
    */
   double computeAvoidanceSteering(double lookahead_angle)
   {
-    double avoidance_steer = 0.0;
-    
     double left_dist = std::min(last_obstacle_left_dist_, 5.0);
     double right_dist = std::min(last_obstacle_right_dist_, 5.0);
     double front_dist = std::min(last_obstacle_front_dist_, 5.0);
     double min_side_dist = std::min(left_dist, right_dist);
     double min_dist = std::min(min_side_dist, front_dist);
     
+    // No avoidance needed if no obstacles within A2 threshold
     if (min_dist > a2_threshold_) {
       return 0.0;
     }
     
-    // Find gap center relative to lookahead direction
-    double gap_center_angle = findGapCenterAngle(lookahead_angle);
-    double angle_diff = gap_center_angle - lookahead_angle;
+    // === Repulsive Force Calculation ===
+    // Force from each side: F = gain * (1/dist - 1/threshold) when dist < threshold
+    // This creates smooth force that increases as obstacle gets closer
     
-    // Check if in urgent zone (< 0.4m)
+    double repulsive_steer = 0.0;
+    
+    // Left obstacle repulsive force (pushes right = negative steering)
+    if (left_dist < a2_threshold_) {
+      // Repulsive force: stronger when closer (inverse relationship)
+      double left_force = std::max(0.0, (a2_threshold_ - left_dist) / a2_threshold_);  // 0 at threshold, 1 at 0
+      left_force = left_force * left_force;  // Quadratic for stronger response at close range
+      repulsive_steer -= left_force * a2_steer_gain_ * max_steer_;  // Push right (negative)
+    }
+    
+    // Right obstacle repulsive force (pushes left = positive steering)
+    if (right_dist < a2_threshold_) {
+      double right_force = std::max(0.0, (a2_threshold_ - right_dist) / a2_threshold_);
+      right_force = right_force * right_force;  // Quadratic
+      repulsive_steer += right_force * a2_steer_gain_ * max_steer_;  // Push left (positive)
+    }
+    
+    // Front obstacle: steer toward more open side
+    if (front_dist < a2_threshold_) {
+      double front_force = std::max(0.0, (a2_threshold_ - front_dist) / a2_threshold_);
+      front_force = front_force * front_force;
+      // Steer toward the more open side
+      if (left_dist > right_dist) {
+        repulsive_steer += front_force * a2_steer_gain_ * max_steer_ * 0.5;  // Turn left
+      } else {
+        repulsive_steer -= front_force * a2_steer_gain_ * max_steer_ * 0.5;  // Turn right
+      }
+    }
+    
+    // Urgent zone: amplify repulsive force
     bool is_urgent = min_dist < a2_urgent_threshold_;
-    
-    // Calculate urgency and effective gain
-    double urgency = 0.0;
-    double effective_gain = a2_steer_gain_;
-    double steer_ratio = a2_max_steer_ratio_;
-    
     if (is_urgent) {
-      urgency = 1.0 - (min_dist / a2_urgent_threshold_);
-      urgency = std::clamp(urgency, 0.5, 1.0);
-      effective_gain = a2_urgent_steer_gain_;
-      steer_ratio = a2_urgent_steer_ratio_;
-    } else {
-      urgency = 1.0 - (min_dist / a2_threshold_);
-      urgency = std::clamp(urgency, 0.0, 1.0);
-      effective_gain = a2_steer_gain_ * (1.0 + urgency * 0.5);
-      steer_ratio = a2_max_steer_ratio_ + urgency * 0.2;
+      repulsive_steer *= (a2_urgent_steer_gain_ / a2_steer_gain_);  // Apply urgent multiplier
     }
     
-    // Steer toward gap center
-    avoidance_steer = angle_diff * effective_gain * (0.5 + 0.5 * urgency);
+    // Clamp to maximum allowed steering
+    double max_avoidance = max_steer_ * (is_urgent ? a2_urgent_steer_ratio_ : a2_max_steer_ratio_);
+    repulsive_steer = std::clamp(repulsive_steer, -max_avoidance, max_avoidance);
     
-    // Apply steering limit
-    double max_avoidance = max_steer_ * std::min(1.0, steer_ratio);
-    avoidance_steer = std::clamp(avoidance_steer, -max_avoidance, max_avoidance);
-    
-    // Log avoidance
-    if (std::abs(avoidance_steer) > 0.01) {
+    // Log repulsive force avoidance
+    if (std::abs(repulsive_steer) > 0.01) {
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), is_urgent ? 200 : 500,
-        "[%s GAP] lookahead=%.1f° gap=%.1f° | steer=%.3f | L:%.2f R:%.2f F:%.2f",
+        "[%s REPULSE] steer=%.3f | L:%.2f R:%.2f F:%.2f (threshold:%.2f)",
         is_urgent ? "URGENT" : "AVOID",
-        lookahead_angle * 180.0 / M_PI, gap_center_angle * 180.0 / M_PI,
-        avoidance_steer, left_dist, right_dist, front_dist);
+        repulsive_steer, left_dist, right_dist, front_dist, a2_threshold_);
     }
     
-    return avoidance_steer;
+    // Suppress unused parameter warning
+    (void)lookahead_angle;
+    
+    return repulsive_steer;
   }
   
   /**
@@ -1845,18 +1863,18 @@ private:
   double max_steer_{0.436};  // 25 degrees in radians
   double prediction_horizon_{1.0};  // Store prediction horizon for reference building
   
-  // A1/A2 Collision avoidance parameters
+  // A1/A2 Collision avoidance parameters (Repulsive Force based)
   double a1_threshold_{0.3};    // Reverse trigger at 30cm for safety
-  double a2_threshold_{0.8};    // Side avoidance threshold (80cm)
-  double a2_urgent_threshold_{0.4};  // Urgent threshold: sharp steering when < 0.4m
+  double a2_threshold_{0.8};    // Repulsive force activation threshold (80cm)
+  double a2_urgent_threshold_{0.3};  // Urgent threshold: amplified force when < 0.3m
   double a1_side_factor_{0.8};
   double a2_max_steer_ratio_{0.7};
   double a2_urgent_steer_ratio_{1.0};  // Full steering in urgent mode
   double reverse_speed_{0.5};
   double reverse_duration_{0.8};
   double a1_steer_gain_{0.8};
-  double a2_steer_gain_{0.6};
-  double a2_urgent_steer_gain_{1.5};  // 1.5x gain when < 0.4m
+  double a2_steer_gain_{0.6};          // Repulsive force gain - moderate to blend with NMPC
+  double a2_urgent_steer_gain_{1.2};   // 2x gain when in urgent zone
   bool enable_collision_avoidance_{true};
   
   // Collision avoidance state
