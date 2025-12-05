@@ -103,11 +103,12 @@ private:
   // === A1/A2 범위 기반 충돌 회피 시스템 ===
   // A1 범위: 매우 좁은 범위 - 이 범위 안에 들어오면 후진 + 조향각 유지
   // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
-  // 참고: A1 < A2 < wall_repulsion_threshold 순서로 설정해야 함
-  //       (5cm < 12cm < 20cm: 후진 < 급조향 < 반발조향)
-  double a1_threshold_ = 0.05;             // A1 범위: 후진 트리거 거리 (meters) - 5cm (벽 충돌)
-  double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
-  double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
+  // wall_repulsion_threshold: 벽 반발 시작 거리 (기본값 0.20m)
+  // 참고: 충돌 회피 우선순위: A1(후진) < A2(급조향) < wall_repulsion(반발조향)
+  //       예: 12cm < 40cm (a1 < a2)
+  double a1_threshold_ = 0.12;             // A1 범위: 후진 트리거 거리 (meters) - 12cm
+  double a2_threshold_ = 0.40;             // A2 범위: 조향 회피 거리 (meters) - 40cm (a1보다 커야 함)
+  double a2_urgent_threshold_ = 0.25;      // A2 긴급 범위: 25cm 이내시 강한 조향
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율
@@ -120,6 +121,9 @@ private:
   bool is_reversing_ = false;              // 현재 후진 중인지
   bool is_pausing_after_reverse_ = false;  // 후진 후 정지 중인지 (생각 시간)
   bool is_in_a1_zone_ = false;             // 현재 A1 범위에 있는지 (중복 체크 방지)
+  bool just_finished_reverse_ = false;     // 후진 직후 상태 (재후진 방지용)
+  int reverse_cooldown_counter_ = 0;       // 후진 쿨다운 카운터 (무한 루프 방지)
+  static constexpr int REVERSE_COOLDOWN_CYCLES = 25;  // 약 0.5초 (20ms * 25)
   rclcpp::Time reverse_start_time_;        // 후진 시작 시간
   rclcpp::Time pause_start_time_;          // 정지 시작 시간
   double last_steering_before_reverse_ = 0.0;  // 충돌 시 조향각 (유지용)
@@ -134,10 +138,14 @@ private:
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
   double follow_distance_threshold_ = 3.0; // following 시작 거리 (m) - 앞 차와의 거리 감지 시작
   double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
-  double follow_speed_factor_ = 0.8;       // following 시 속도 비율 (상대 속도의 80%)
+  double follow_speed_factor_ = 0.2;       // following 시 속도 비율 (0.8 -> 0.2로 변경, 앞 차 있을 때 더 느리게)
   double follow_min_speed_ratio_ = 0.05;   // 최소 속도 비율 (5%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
+  
+  // === 추월 조건 체크용 파라미터 ===
+  double narrow_road_threshold_ = 1.5;     // 좁은 도로 판단 기준 (좌우 합계 m)
+  double min_visibility_angle_ = 0.5;      // 최소 시야 각도 (rad, 약 30도)
   
   // 장애물 위치 정보 (회피 방향 결정용)
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
@@ -200,5 +208,8 @@ private:
   
   // 벽 검색 캐싱
   mutable size_t last_wall_search_idx_ = 0;
+  
+  // 추월 안전 체크용 인덱스 캐싱
+  mutable int last_closest_idx_overtake_ = 0;
 };
 #endif  // SIMPLE_CONTROLLER_HPP_
