@@ -168,7 +168,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   vehicle_length_ = get_parameter("vehicle_length").as_double();
   
   // 차량 넓이 기반으로 최소 추월 간격 계산 (자차 + 상대 차량 + 안전 마진)
-  min_overtake_clearance_ = vehicle_width_ * 2.0 + 0.3;  // 두 차량 넓이 + 30cm 안전마진
+  min_overtake_clearance_ = vehicle_width_ * 2.0 + SAFETY_MARGIN;  // 두 차량 넓이 + 안전마진
   RCLCPP_INFO(this->get_logger(), "Vehicle dimensions: %.2fm x %.2fm, min_overtake_clearance: %.2fm",
               vehicle_width_, vehicle_length_, min_overtake_clearance_);
   
@@ -786,6 +786,7 @@ double SimpleController::smooth_speed_change(double target_speed, double current
  * @brief 추월 시작 조건 체크 및 시작
  * 
  * 추월 가능한 경로가 있으면 추월 시작
+ * 추월 불가능하면 Following 유지
  */
 void SimpleController::check_and_start_overtake()
 {
@@ -793,30 +794,40 @@ void SimpleController::check_and_start_overtake()
     return;  // 이미 추월 중
   }
   
+  // 후진/정지/계획 상태에서는 추월 시작 불가
+  if (is_reversing_ || is_pausing_after_reverse_ || is_planning_after_pause_) {
+    return;
+  }
+  
   double front_dist = last_obstacle_front_dist_;
   
   // 추월 조건: 전방에 장애물이 있고, 추월 가능한 경로가 있음
+  // Following 거리 (1.5m) 이내에 장애물이 있어야 추월 시도
   if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
     // can_overtake_safely가 성공하면 planned_overtake_direction_에 검증된 방향이 저장됨
+    // 이 함수 내에서 추월 경로 시뮬레이션 및 검증이 수행됨
     bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
     
+    // 핵심: has_valid_overtake_plan_이 true일 때만 추월 시작!
+    // 경로가 생성되지 않으면 추월 불가
     if (can_overtake && has_valid_overtake_plan_) {
       is_overtaking_ = true;
       is_following_opponent_ = false;
       overtake_start_time_ros_ = this->get_clock()->now();
       
-      // 검증된 추월 방향 사용 (can_overtake_safely에서 이미 계획됨)
+      // 검증된 추월 방향 사용
       double overtake_direction = planned_overtake_direction_;
       
       RCLCPP_WARN(this->get_logger(), 
-                  "OVERTAKE START! Using VALIDATED path. front=%.2fm, direction=%s, L=%.2fm, R=%.2fm",
-                  front_dist, 
+                  "OVERTAKE START! VALIDATED path (vehicle_width=%.2fm). front=%.2fm, direction=%s, L=%.2fm, R=%.2fm",
+                  vehicle_width_, front_dist, 
                   overtake_direction > 0 ? "LEFT" : "RIGHT",
                   last_obstacle_left_dist_, last_obstacle_right_dist_);
       
-      // 추월 경로 시각화 (검증된 경로)
+      // 추월 경로 시각화 (검증된 경로만 표시)
       publish_overtake_path(overtake_direction);
     }
+    // else: 추월 불가 -> Following 유지 (compute_opponent_following_speed에서 처리)
   }
 }
 
@@ -824,12 +835,24 @@ void SimpleController::check_and_start_overtake()
  * @brief 추월 상태 업데이트
  * 
  * 추월 완료 조건 체크 및 상태 전환
+ * 추월 중 충돌 감지 시 추월 중단 및 후진
  */
 void SimpleController::update_overtake_state()
 {
   rclcpp::Time current_time = this->get_clock()->now();
   
   if (is_overtaking_) {
+    // 추월 중 충돌 감지 시 추월 중단
+    if (is_in_a1_zone_) {
+      is_overtaking_ = false;
+      is_post_overtake_ = false;
+      has_valid_overtake_plan_ = false;
+      planned_overtake_direction_ = 0.0;  // 추월 방향도 초기화
+      RCLCPP_WARN(this->get_logger(), "OVERTAKE ABORTED: Collision detected! Initiating reverse...");
+      // 후진 로직은 control_loop의 A1 zone 처리에서 자동으로 수행됨
+      return;
+    }
+    
     // 추월 완료 또는 타임아웃 체크
     if (should_return_to_line()) {
       is_overtaking_ = false;
@@ -1870,8 +1893,8 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   // 상대방이 일정 거리 이내이고, 전방에 있는 경우
   // 더 엄격한 전방 체크: ±30도 이내
   bool opponent_in_front = std::abs(opponent_angle) < M_PI / 6.0;  // ±30도 이내
-  // Following 거리 (1.5m) 내에서만 추월 시도
-  bool opponent_close = opponent_dist < follow_distance_threshold_ && opponent_dist > 0.6;
+  // Following 거리 (1.5m) 내에서만 추월 시도, 최소 간격 이상에서만
+  bool opponent_close = opponent_dist < follow_distance_threshold_ && opponent_dist > MIN_OVERTAKE_DISTANCE;
   
   if (!opponent_in_front || !opponent_close) {
     return false;
@@ -1922,10 +1945,8 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   
   // === 추월 방향 결정 및 경로 검증 (2단계: 경로 시뮬레이션) ===
   // 차량 넓이를 고려한 최소 간격 체크
-  // required_clearance = 자차 넓이 + 상대차 넓이 + 안전 마진 (0.3m)
-  double safety_margin = 0.3;
-  bool can_overtake_left = left_space > (required_clearance + safety_margin);
-  bool can_overtake_right = right_space > (required_clearance + safety_margin);
+  bool can_overtake_left = left_space > (required_clearance + SAFETY_MARGIN);
+  bool can_overtake_right = right_space > (required_clearance + SAFETY_MARGIN);
   
   // 벽 데이터가 있으면 추가 확인
   if (wall_data_loaded_) {
@@ -1933,7 +1954,7 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
     double wall_right = get_wall_distance_right(current_x, current_y);
     
     // 추월 시 필요한 횡방향 오프셋 + 차량 넓이 절반 + 안전 마진
-    double required_wall_clearance = overtake_lateral_offset_ + (vehicle_width_ / 2.0) + safety_margin;
+    double required_wall_clearance = overtake_lateral_offset_ + (vehicle_width_ / 2.0) + SAFETY_MARGIN;
     
     can_overtake_left = can_overtake_left && (wall_left > required_wall_clearance);
     can_overtake_right = can_overtake_right && (wall_right > required_wall_clearance);
@@ -2139,11 +2160,11 @@ void SimpleController::publish_overtake_path(double offset_direction)
   // 횡방향 오프셋: 자차 넓이 + 상대차 넓이 + 안전 마진
   double safe_lateral_offset = overtake_lateral_offset_ + vehicle_width_;
   
-  for (double dist = 0.0; dist < 5.0; dist += 0.15) {
+  for (double dist = 0.0; dist < OVERTAKE_VIS_LENGTH; dist += OVERTAKE_VIS_STEP) {
     geometry_msgs::msg::Point p;
     // 추월 방향으로 오프셋된 경로 (부드러운 S자 곡선)
     // 진입 -> 최대 오프셋 -> 복귀
-    double t = dist / 5.0;  // 0 ~ 1
+    double t = dist / OVERTAKE_VIS_LENGTH;  // 0 ~ 1
     double lateral_offset = offset_direction * safe_lateral_offset * 
                            std::sin(t * M_PI);  // 부드러운 곡선
     
@@ -2301,10 +2322,10 @@ bool SimpleController::validate_overtake_path(double overtake_direction)
   }
   
   // 차량 넓이를 고려한 안전 마진 설정
-  // 차량 넓이 절반 + 여유 공간 (0.15m)
+  // 차량 넓이 절반 + 여유 공간
   double vehicle_half_width = vehicle_width_ / 2.0;
-  double MIN_WALL_CLEARANCE = vehicle_half_width + 0.15;  // 차량 넓이 고려
-  double MIN_TRACK_WIDTH = vehicle_width_ * 2.0 + 0.3;    // 두 차량 + 안전 마진
+  double min_wall_clearance = vehicle_half_width + WALL_SAFETY_MARGIN;  // 차량 넓이 고려
+  double min_track_width = vehicle_width_ * 2.0 + SAFETY_MARGIN;        // 두 차량 + 안전 마진
   
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
@@ -2320,19 +2341,19 @@ bool SimpleController::validate_overtake_path(double overtake_direction)
       // 추월 방향의 벽 거리 확인 (차량 넓이 고려)
       double wall_clearance = (overtake_direction > 0) ? wall_left : wall_right;
       
-      if (wall_clearance < MIN_WALL_CLEARANCE) {
+      if (wall_clearance < min_wall_clearance) {
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                               "OVERTAKE PATH INVALID: Wall too close (%.2fm < %.2fm, vehicle_width=%.2fm)",
-                              wall_clearance, MIN_WALL_CLEARANCE, vehicle_width_);
+                              wall_clearance, min_wall_clearance, vehicle_width_);
         return false;
       }
       
       // 트랙 너비 확인 (양쪽 벽 사이 공간 - 두 차량이 지나갈 수 있어야 함)
       double track_width = wall_left + wall_right;
-      if (track_width < MIN_TRACK_WIDTH) {
+      if (track_width < min_track_width) {
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                               "OVERTAKE PATH INVALID: Track too narrow (%.2fm < %.2fm for 2 vehicles)",
-                              track_width, MIN_TRACK_WIDTH);
+                              track_width, min_track_width);
         return false;
       }
     }

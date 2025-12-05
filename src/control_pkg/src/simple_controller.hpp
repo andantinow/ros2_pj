@@ -17,6 +17,13 @@ class SimpleController : public rclcpp::Node
 public:
   SimpleController();
 
+  // === Constants for collision avoidance and overtake ===
+  static constexpr double SAFETY_MARGIN = 0.3;              // General safety margin (m)
+  static constexpr double WALL_SAFETY_MARGIN = 0.15;        // Wall clearance safety margin (m)
+  static constexpr double MIN_OVERTAKE_DISTANCE = 0.6;      // Minimum distance for overtake consideration (m)
+  static constexpr double OVERTAKE_VIS_LENGTH = 5.0;        // Overtake visualization path length (m)
+  static constexpr double OVERTAKE_VIS_STEP = 0.15;         // Overtake visualization step size (m)
+
 private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
