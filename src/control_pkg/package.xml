@@ -2,14 +2,17 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>control_pkg</name>
-  <version>0.0.1</version>
-  <description>Vehicle controllers: Simple Pure Pursuit + NMPC</description>
+  <version>0.0.2</version>
+  <description>Vehicle controllers: Simple Pure Pursuit + NMPC with acados support</description>
   <maintainer email="misys@todo.todo">misys</maintainer>
   <license>Apache 2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Core ROS 2 dependencies -->
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>lifecycle_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>ackermann_msgs</depend>
   <depend>tf2</depend>
@@ -19,6 +22,9 @@
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>eigen</depend>
+
+  <!-- Optional: acados for high-performance NMPC -->
+  <!-- Install acados separately: https://docs.acados.org/installation/ -->
 
   <export>
     <build_type>ament_cmake</build_type>
