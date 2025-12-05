@@ -121,6 +121,9 @@ private:
   bool is_reversing_ = false;              // 현재 후진 중인지
   bool is_pausing_after_reverse_ = false;  // 후진 후 정지 중인지 (생각 시간)
   bool is_in_a1_zone_ = false;             // 현재 A1 범위에 있는지 (중복 체크 방지)
+  bool just_finished_reverse_ = false;     // 후진 직후 상태 (재후진 방지용)
+  int reverse_cooldown_counter_ = 0;       // 후진 쿨다운 카운터 (무한 루프 방지)
+  static constexpr int REVERSE_COOLDOWN_CYCLES = 25;  // 약 0.5초 (20ms * 25)
   rclcpp::Time reverse_start_time_;        // 후진 시작 시간
   rclcpp::Time pause_start_time_;          // 정지 시작 시간
   double last_steering_before_reverse_ = 0.0;  // 충돌 시 조향각 (유지용)

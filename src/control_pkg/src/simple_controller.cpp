@@ -170,8 +170,12 @@ SimpleController::SimpleController() : Node("simple_controller")
     }
   }
   
+  // ROS Time 변수들 초기화
   prev_time_ = this->get_clock()->now();
   reverse_start_time_ = this->get_clock()->now();
+  pause_start_time_ = this->get_clock()->now();
+  overtake_start_time_ros_ = this->get_clock()->now();
+  overtake_end_time_ros_ = this->get_clock()->now();
 
   // Path Subscription - Use transient_local QoS to receive latched path from raceline_server
   rclcpp::QoS path_qos(rclcpp::QoS(10).transient_local().reliable());
@@ -1000,14 +1004,25 @@ void SimpleController::control_loop()
       }
       return;
     } else {
-      // 정지 완료, 출발
+      // 정지 완료, 출발 준비 - 쿨다운 시작
       is_pausing_after_reverse_ = false;
-      RCLCPP_INFO(this->get_logger(), "Pause complete, resuming forward");
+      just_finished_reverse_ = true;
+      reverse_cooldown_counter_ = REVERSE_COOLDOWN_CYCLES;
+      RCLCPP_INFO(this->get_logger(), "Pause complete, starting cooldown before allowing another reverse");
     }
   }
   
-  // A1 범위 체크: 후진 필요
-  if (check_a1_zone()) {
+  // 후진 쿨다운 카운터 감소 (무한 후진 루프 방지)
+  if (reverse_cooldown_counter_ > 0) {
+    reverse_cooldown_counter_--;
+    if (reverse_cooldown_counter_ == 0) {
+      just_finished_reverse_ = false;
+      RCLCPP_DEBUG(this->get_logger(), "Reverse cooldown complete, reverse allowed again");
+    }
+  }
+  
+  // A1 범위 체크: 후진 필요 (쿨다운 중에는 후진하지 않음)
+  if (check_a1_zone() && !just_finished_reverse_) {
     // Start or continue reversing
     if (!is_reversing_ && !is_pausing_after_reverse_) {
       is_reversing_ = true;
@@ -1042,6 +1057,12 @@ void SimpleController::control_loop()
       RCLCPP_INFO(this->get_logger(), "A1 Reverse complete, starting pause (thinking)...");
       return;
     }
+  } else if (check_a1_zone() && just_finished_reverse_) {
+    // 쿨다운 중인데 아직 A1 zone - 매우 느리게 전진하며 탈출 시도
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "A1 Zone during cooldown! Trying slow forward escape (cooldown: %d)",
+                          reverse_cooldown_counter_);
+    // 일반 주행 로직으로 넘어감 (속도 제한은 아래에서 적용됨)
   } else {
     // Not in A1 zone, stop reversing if we were
     if (is_reversing_) {
@@ -1287,6 +1308,13 @@ void SimpleController::control_loop()
   last_adjusted_speed_ = adjusted_speed;
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
+  
+  // 후진 쿨다운 중 A1 zone에 있으면 매우 느리게 (탈출 시도)
+  if (just_finished_reverse_ && is_in_a1_zone_) {
+    adjusted_speed = std::min(adjusted_speed, 0.3);  // 최대 0.3 m/s
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "Cooldown escape mode: limiting speed to %.2f", adjusted_speed);
+  }
 
   ackermann_msgs::msg::AckermannDriveStamped drive_msg;
   drive_msg.header.stamp = current_time;
@@ -1298,11 +1326,12 @@ void SimpleController::control_loop()
   
   static int publish_count = 0;
   if (publish_count++ % 50 == 0) {  // Every 1 second at 20ms timer
-    RCLCPP_INFO(this->get_logger(), "Drive: speed=%.2f, steer=%.3f, idx=%d, LA=%.2f%s%s%s",
+    RCLCPP_INFO(this->get_logger(), "Drive: speed=%.2f, steer=%.3f, idx=%d, LA=%.2f%s%s%s%s",
                 drive_msg.drive.speed, drive_msg.drive.steering_angle, target_idx, adaptive_lookahead,
                 is_overtaking_ ? " [OVERTAKING]" : "",
                 is_post_overtake_ ? " [POST-OT]" : "",
-                is_following_opponent_ ? " [FOLLOWING]" : "");
+                is_following_opponent_ ? " [FOLLOWING]" : "",
+                just_finished_reverse_ ? " [COOLDOWN]" : "");
   }
 }
 
@@ -1490,11 +1519,15 @@ int SimpleController::find_closest_point_along_path(double current_x, double cur
 {
   if (path.poses.empty()) return 0;
   
+  // start_idx 범위 보정
+  int path_size = static_cast<int>(path.poses.size());
+  start_idx = std::clamp(start_idx, 0, path_size - 1);
+  
   // Restricted search window: limit to previous few points and next 20 points
   int search_range_forward = 20;
   int search_range_backward = 5;
   int min_idx = std::max(0, start_idx - search_range_backward);
-  int max_idx = std::min(static_cast<int>(path.poses.size() - 1), start_idx + search_range_forward);
+  int max_idx = std::min(path_size - 1, start_idx + search_range_forward);
   
   double min_dist_sq = std::numeric_limits<double>::max();
   int closest_idx = start_idx;
@@ -1695,9 +1728,18 @@ bool SimpleController::detect_upcoming_corner(int current_idx, double& corner_di
     return false;
   }
   
+  // 인덱스 범위 체크
+  if (current_idx >= static_cast<int>(current_path_.poses.size())) {
+    return false;
+  }
+  
   // 전방 몇 포인트를 확인하여 코너 감지
   int look_ahead_points = static_cast<int>(corner_approach_distance_ / 0.1);  // 0.1m spacing 가정
-  look_ahead_points = std::min(look_ahead_points, static_cast<int>(current_path_.poses.size()) - current_idx - 2);
+  int remaining_points = static_cast<int>(current_path_.poses.size()) - current_idx - 2;
+  if (remaining_points < 3) {
+    return false;
+  }
+  look_ahead_points = std::min(look_ahead_points, remaining_points);
   
   if (look_ahead_points < 3) {
     return false;
@@ -1758,6 +1800,13 @@ double SimpleController::compute_out_in_out_offset(int current_idx, double corne
 bool SimpleController::can_overtake_safely(double opponent_dist, double opponent_angle)
 {
   if (!enable_collision_avoidance_) {
+    return false;
+  }
+  
+  // 경로가 비어있으면 추월 불가
+  if (current_path_.poses.empty()) {
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                          "FOLLOWING ONLY: No path available");
     return false;
   }
   
