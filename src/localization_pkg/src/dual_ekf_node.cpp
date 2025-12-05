@@ -12,6 +12,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <algorithm>
 
 // Define M_PI if not available (for cross-platform compatibility)
 #ifndef M_PI
