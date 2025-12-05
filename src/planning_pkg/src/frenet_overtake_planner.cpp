@@ -79,6 +79,8 @@ public:
         this->declare_parameter<double>("weight_smoothness", 0.3);
         this->declare_parameter<double>("planning_rate", 10.0);
         this->declare_parameter<std::string>("frame_id", "base_link");
+        this->declare_parameter<double>("min_planning_speed", 1.0);
+        this->declare_parameter<double>("sigmoid_steepness", 6.0);
 
         // Publishers
         vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -122,22 +124,29 @@ private:
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
-        current_speed_ = std::max(1.0, msg->twist.twist.linear.x);
+        double min_planning_speed = this->get_parameter("min_planning_speed").as_double();
+        current_speed_ = std::max(min_planning_speed, msg->twist.twist.linear.x);
     }
 
     /**
      * @brief Convert Frenet coordinates to Cartesian
      * 
-     * For simplicity, assumes a straight track along X-axis.
-     * In production, this should use waypoint interpolation.
+     * NOTE: This is a simplified transformation assuming a straight track along X-axis.
+     * For production use with curved tracks, replace with:
+     * 1. Spline interpolation along centerline waypoints
+     * 2. Projection onto centerline normal at each s position
+     * 
+     * The transformation should be:
+     *   (x, y) = centerline(s) + d * normal(s)
+     * where normal(s) is the unit vector perpendicular to the centerline at s.
      */
     void frenetToCartesian(FrenetPath& fp)
     {
         fp.x.clear();
         fp.y.clear();
         for (size_t i = 0; i < fp.s.size(); ++i) {
-            // Simple transformation for straight track
-            // TODO: Replace with spline interpolation for curved tracks
+            // Simplified transformation for straight track (demo mode)
+            // Production: Use centerline spline + normal projection
             fp.x.push_back(fp.s[i]);
             fp.y.push_back(fp.d[i]);
         }
@@ -152,7 +161,8 @@ private:
             return d_target;
         }
         // Sigmoid: d(t) = d_target * (1 / (1 + exp(-k*(t - t_mid))))
-        double k = 6.0 / transition_time;  // Steepness
+        double sigmoid_steepness = this->get_parameter("sigmoid_steepness").as_double();
+        double k = sigmoid_steepness / transition_time;
         double t_mid = transition_time * 0.5;
         return d_target / (1.0 + std::exp(-k * (t - t_mid)));
     }

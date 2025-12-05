@@ -46,6 +46,13 @@ public:
         this->declare_parameter<double>("free_range_threshold", 6.0);
         this->declare_parameter<double>("min_valid_range", 0.1);
         this->declare_parameter<bool>("enable_visualization", true);
+        this->declare_parameter<double>("default_dt", 0.1);
+        
+        // Visualization color parameters
+        this->declare_parameter<double>("marker_color_r", 1.0);
+        this->declare_parameter<double>("marker_color_g", 0.5);
+        this->declare_parameter<double>("marker_color_b", 0.0);
+        this->declare_parameter<double>("marker_color_a", 0.8);
 
         // Publishers
         drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
@@ -134,7 +141,7 @@ private:
             rclcpp::Time now = this->now();
             double dt = (now - last_time_).seconds();
             if (dt <= 0.0) {
-                dt = 0.1;  // Default dt
+                dt = this->get_parameter("default_dt").as_double();
             }
 
             double relative_vel = 0.0;
@@ -213,11 +220,11 @@ private:
         marker.scale.y = 0.3;
         marker.scale.z = 0.3;
 
-        // Color: Orange for tracked target
-        marker.color.r = 1.0f;
-        marker.color.g = 0.5f;
-        marker.color.b = 0.0f;
-        marker.color.a = 0.8f;
+        // Configurable color for tracked target marker
+        marker.color.r = static_cast<float>(this->get_parameter("marker_color_r").as_double());
+        marker.color.g = static_cast<float>(this->get_parameter("marker_color_g").as_double());
+        marker.color.b = static_cast<float>(this->get_parameter("marker_color_b").as_double());
+        marker.color.a = static_cast<float>(this->get_parameter("marker_color_a").as_double());
 
         marker.lifetime = rclcpp::Duration::from_seconds(0.2);
 

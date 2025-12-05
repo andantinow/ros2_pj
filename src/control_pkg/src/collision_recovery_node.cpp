@@ -135,9 +135,20 @@ private:
         current_state_ = new_state;
         state_start_time_ = this->now();
 
-        // Log state transitions for debugging
-        const char* state_names[] = {"IDLE", "EMERGENCY_STOP", "WAIT", "BLIND_REVERSE", "RECOVERY_COMPLETE"};
-        RCLCPP_INFO(this->get_logger(), "State transition: %s", state_names[static_cast<int>(new_state)]);
+        // Log state transitions for debugging with type-safe conversion
+        RCLCPP_INFO(this->get_logger(), "State transition: %s", stateToString(new_state));
+    }
+
+    const char* stateToString(RecoveryState state) const
+    {
+        switch (state) {
+            case RecoveryState::IDLE: return "IDLE";
+            case RecoveryState::EMERGENCY_STOP: return "EMERGENCY_STOP";
+            case RecoveryState::WAIT: return "WAIT";
+            case RecoveryState::BLIND_REVERSE: return "BLIND_REVERSE";
+            case RecoveryState::RECOVERY_COMPLETE: return "RECOVERY_COMPLETE";
+            default: return "UNKNOWN";
+        }
     }
 
     void controlLoop()
