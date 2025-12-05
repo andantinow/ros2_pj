@@ -104,7 +104,7 @@ ament_target_dependencies(opponent_detector
   tf2_ros
   tf2_geometry_msgs
 )
-target_link_libraries(opponent_detector frenet_converter)
+target_link_libraries(opponent_detector frenet_converter tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(opponent_detector PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -128,7 +128,7 @@ ament_target_dependencies(global_overtake_planner
   tf2_ros
   tf2_geometry_msgs
 )
-target_link_libraries(global_overtake_planner frenet_converter)
+target_link_libraries(global_overtake_planner frenet_converter tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(global_overtake_planner PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
