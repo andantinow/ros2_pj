@@ -1284,37 +1284,72 @@ bool SimpleController::load_wall_data(const std::string& csv_file)
   
   wall_data_.clear();
   std::string line;
+  int line_num = 0;
+  int parse_errors = 0;
   
   // 헤더 스킵
   std::getline(file, line);
+  line_num++;
   
   while (std::getline(file, line)) {
+    line_num++;
     if (line.empty()) continue;
     
     std::stringstream ss(line);
     WallPoint point;
     char comma;
     
+    // CSV 파싱 with validation
     if (ss >> point.x >> comma >> point.y >> comma >> point.d_left >> comma >> point.d_right >> comma >> point.psi) {
-      wall_data_.push_back(point);
+      // 값 범위 검증
+      if (std::isfinite(point.x) && std::isfinite(point.y) &&
+          std::isfinite(point.d_left) && std::isfinite(point.d_right) &&
+          std::isfinite(point.psi) &&
+          point.d_left >= 0.0 && point.d_right >= 0.0) {
+        wall_data_.push_back(point);
+      } else {
+        parse_errors++;
+        if (parse_errors <= 3) {
+          RCLCPP_WARN(this->get_logger(), "Invalid wall data at line %d: values out of range", line_num);
+        }
+      }
+    } else {
+      parse_errors++;
+      if (parse_errors <= 3) {
+        RCLCPP_WARN(this->get_logger(), "Failed to parse wall data at line %d", line_num);
+      }
     }
   }
   
+  if (parse_errors > 3) {
+    RCLCPP_WARN(this->get_logger(), "... and %d more parsing errors", parse_errors - 3);
+  }
+  
   wall_data_loaded_ = !wall_data_.empty();
+  if (wall_data_loaded_) {
+    RCLCPP_INFO(this->get_logger(), "Wall data loaded: %zu valid points from %s", 
+                wall_data_.size(), csv_file.c_str());
+  }
   return wall_data_loaded_;
 }
 
-double SimpleController::get_wall_distance_left(double x, double y)
+size_t SimpleController::find_closest_wall_point(double x, double y)
 {
-  if (!wall_data_loaded_ || wall_data_.empty()) {
-    return 10.0;  // 기본값: 충분히 멀다고 가정
+  if (wall_data_.empty()) {
+    return 0;
   }
   
-  // 가장 가까운 벽 데이터 포인트 찾기
-  double min_dist_sq = std::numeric_limits<double>::max();
-  size_t closest_idx = 0;
+  // 지역 검색: 마지막 검색 위치 근처에서 먼저 검색 (O(1) 평균)
+  size_t search_range = 50;  // 주변 50개 포인트 검색
+  size_t start_idx = (last_wall_search_idx_ > search_range) ? 
+                      last_wall_search_idx_ - search_range : 0;
+  size_t end_idx = std::min(last_wall_search_idx_ + search_range, wall_data_.size());
   
-  for (size_t i = 0; i < wall_data_.size(); ++i) {
+  double min_dist_sq = std::numeric_limits<double>::max();
+  size_t closest_idx = last_wall_search_idx_;
+  
+  // 지역 검색
+  for (size_t i = start_idx; i < end_idx; ++i) {
     double dx = wall_data_[i].x - x;
     double dy = wall_data_[i].y - y;
     double dist_sq = dx * dx + dy * dy;
@@ -1324,6 +1359,30 @@ double SimpleController::get_wall_distance_left(double x, double y)
     }
   }
   
+  // 지역 검색에서 너무 멀면 전체 검색
+  if (min_dist_sq > 4.0) {  // 2m 이상 떨어져 있으면
+    for (size_t i = 0; i < wall_data_.size(); ++i) {
+      double dx = wall_data_[i].x - x;
+      double dy = wall_data_[i].y - y;
+      double dist_sq = dx * dx + dy * dy;
+      if (dist_sq < min_dist_sq) {
+        min_dist_sq = dist_sq;
+        closest_idx = i;
+      }
+    }
+  }
+  
+  last_wall_search_idx_ = closest_idx;
+  return closest_idx;
+}
+
+double SimpleController::get_wall_distance_left(double x, double y)
+{
+  if (!wall_data_loaded_ || wall_data_.empty()) {
+    return 10.0;  // 기본값: 충분히 멀다고 가정
+  }
+  
+  size_t closest_idx = find_closest_wall_point(x, y);
   return wall_data_[closest_idx].d_left;
 }
 
@@ -1333,19 +1392,7 @@ double SimpleController::get_wall_distance_right(double x, double y)
     return 10.0;
   }
   
-  double min_dist_sq = std::numeric_limits<double>::max();
-  size_t closest_idx = 0;
-  
-  for (size_t i = 0; i < wall_data_.size(); ++i) {
-    double dx = wall_data_[i].x - x;
-    double dy = wall_data_[i].y - y;
-    double dist_sq = dx * dx + dy * dy;
-    if (dist_sq < min_dist_sq) {
-      min_dist_sq = dist_sq;
-      closest_idx = i;
-    }
-  }
-  
+  size_t closest_idx = find_closest_wall_point(x, y);
   return wall_data_[closest_idx].d_right;
 }
 

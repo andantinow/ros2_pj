@@ -152,6 +152,7 @@ private:
   
   // === 새로운 기능들 ===
   bool load_wall_data(const std::string& csv_file);  // 벽 데이터 CSV 로드
+  size_t find_closest_wall_point(double x, double y);  // 헬퍼: 가장 가까운 벽 포인트 인덱스
   double get_wall_distance_left(double x, double y);  // 현재 위치에서 왼쪽 벽까지 거리
   double get_wall_distance_right(double x, double y); // 현재 위치에서 오른쪽 벽까지 거리
   bool detect_upcoming_corner(int current_idx, double& corner_direction);  // 전방 코너 감지
@@ -162,5 +163,8 @@ private:
   double compute_return_to_line_steering();  // 라인 복귀 조향 계산
   void publish_overtake_path(double offset_direction);  // 추월 경로 시각화
   void publish_wall_collision_indicator(bool is_colliding, double x, double y);  // 벽 충돌 시각화
+  
+  // 벽 검색 캐싱
+  mutable size_t last_wall_search_idx_ = 0;
 };
 #endif  // SIMPLE_CONTROLLER_HPP_
