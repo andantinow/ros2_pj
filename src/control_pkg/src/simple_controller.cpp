@@ -696,6 +696,8 @@ double SimpleController::compute_opponent_following_speed(double base_speed)
       if (range < 0.01) {
         range = 0.01;  // Division by zero 방지
       }
+      // distance_ratio: 0~1 범위, 거리가 가까울수록 작아짐
+      // follow_min_speed_ratio_로 하한을 설정하여 완전 정지 방지
       double distance_ratio = (front_dist - follow_min_distance_) / range;
       distance_ratio = std::clamp(distance_ratio, follow_min_speed_ratio_, 1.0);
       
@@ -744,8 +746,10 @@ double SimpleController::smooth_speed_change(double target_speed, double current
   double max_speed_change = speed_smooth_factor_ * max_speed_;
   
   if (std::abs(speed_diff) > max_speed_change) {
-    // 급격한 속도 변화 방지
-    return current_adjusted_speed + std::copysign(max_speed_change, speed_diff);
+    // 급격한 속도 변화 방지 - clamp로 간결하게 처리
+    return std::clamp(target_speed, 
+                      current_adjusted_speed - max_speed_change, 
+                      current_adjusted_speed + max_speed_change);
   }
   
   return target_speed;
