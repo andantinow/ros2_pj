@@ -134,7 +134,7 @@ nmpc_engine_node:
     enable_collision_avoidance: true
     
     # A1 Zone parameters (reverse trigger)
-    a1_threshold: 0.15           # [m] Distance triggering reverse (front) - halved from 0.3
+    a1_threshold: 0.1            # [m] Distance triggering reverse (front) - 0.1m
     a1_side_factor: 0.8          # Side distance = a1_threshold * factor
     reverse_speed: 1.0           # [m/s] Reverse driving speed - increased from 0.5 for 시원한 후진
     reverse_duration: 0.8        # [s] Duration of reverse maneuver
@@ -143,8 +143,8 @@ nmpc_engine_node:
     # A2 Zone parameters (repulsive force based steering avoidance)
     # Repulsive force: obstacles push the car away in opposite direction
     # Force is additive to NMPC steering for smooth blending
-    a2_threshold: 0.8            # [m] Distance triggering repulsive force - increased from 0.4 for wider detection
-    a2_urgent_threshold: 0.3     # [m] Distance for urgent avoidance with amplified force
+    a2_threshold: 0.4            # [m] Distance triggering repulsive force - 0.4m for obstacle detection
+    a2_urgent_threshold: 0.25    # [m] Distance for urgent avoidance with amplified force
     a2_max_steer_ratio: 0.7      # Max steering ratio (normal A2) - allows partial correction
     a2_urgent_steer_ratio: 1.0   # Max steering ratio (urgent, full allowed)
     a2_steer_gain: 0.6           # Repulsive force gain - moderate to blend with NMPC

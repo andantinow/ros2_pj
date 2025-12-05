@@ -58,15 +58,19 @@ private:
   double lateral_error_integral_ = 0.0;
   double prev_lateral_error_ = 0.0;
   
+  // Corner handling parameters (코너링 설정)
+  double corner_curvature_threshold_ = 0.5;  // 곡률이 이 값 이상이면 코너로 판단
+  double corner_speed_factor_ = 0.5;         // 코너에서 속도 감소 비율 (0.5 = 50% 속도)
+  double corner_steer_amplify_ = 1.5;        // 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
   // Path interpolation
   bool use_path_interpolation_ = true;
   
   // === A1/A2 범위 기반 충돌 회피 시스템 ===
   // A1 범위: 좁은 범위 - 이 범위 안에 들어오면 후진 + 반대방향 조향
   // A2 범위: 넓은 범위 - A1보다 넓지만 이 범위 안에 들어오면 조향만 반대방향으로
-  double a1_threshold_ = 0.075;            // A1 범위: 후진 트리거 거리 (meters) - 0.075m 벽에 가까움 (halved)
-  double a2_threshold_ = 0.3;              // A2 범위: 조향 회피 거리 (meters) - 0.3m (halved)
-  double a2_urgent_threshold_ = 0.2;       // A2 긴급 범위: 0.2m 이내시 급격한 조향 (halved)
+  double a1_threshold_ = 0.1;              // A1 범위: 후진 트리거 거리 (meters) - 0.1m
+  double a2_threshold_ = 0.4;              // A2 범위: 조향 회피 거리 (meters) - 0.4m
+  double a2_urgent_threshold_ = 0.25;      // A2 긴급 범위: 0.25m 이내시 급격한 조향
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율 - 완전 반대 조향
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율 - 완전 반대 조향
