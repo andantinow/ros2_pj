@@ -364,4 +364,4 @@ inline std::unique_ptr<IAcadosNMPCSolver> createNMPCSolver(bool prefer_acados = 
 
 }  // namespace acados_interface
 
-#endif  // CONTROL_PKG__ACADOS_NMPC_INTERFACE_HPP_
+#endif  // CONTROL_PKG__ACADOS_NMPC_INTERFACE_HPP_ (include guard end)

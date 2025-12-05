@@ -39,7 +39,7 @@ try:
     ACADOS_AVAILABLE = True
 except ImportError:
     ACADOS_AVAILABLE = False
-    print("WARNING: acados not installed. Run: pip install acados casadi")
+    print("WARNING: acados not installed. Run: pip install acados-template casadi")
     print("This script will only generate the model definition file.")
 
 

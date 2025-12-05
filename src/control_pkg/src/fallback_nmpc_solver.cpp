@@ -264,6 +264,11 @@ bool FallbackNMPCSolver::initialize(const NMPCConfig& config)
   impl_->config_ = config;
   impl_->config_.dt = config.prediction_horizon_sec / std::max(1, config.N);
   
+  // Ensure convergence_tolerance has a sensible default if not set
+  if (impl_->config_.convergence_tolerance <= 0.0) {
+    impl_->config_.convergence_tolerance = 1e-6;
+  }
+  
   // Initialize control sequence
   impl_->u_sequence_.resize(config.N);
   for (auto& u : impl_->u_sequence_) {

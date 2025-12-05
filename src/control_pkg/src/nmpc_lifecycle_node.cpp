@@ -717,9 +717,12 @@ private:
       ref.x = poses[idx].pose.position.x;
       ref.y = poses[idx].pose.position.y;
       
+      // Proper quaternion to yaw conversion
+      double qx = poses[idx].pose.orientation.x;
+      double qy = poses[idx].pose.orientation.y;
       double qz = poses[idx].pose.orientation.z;
       double qw = poses[idx].pose.orientation.w;
-      ref.yaw = std::atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz);
+      ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       ref.v = nominal_speed_;
       
       reference.push_back(ref);
