@@ -74,19 +74,24 @@ private:
       xs_.push_back(pose.position.x);
       ys_.push_back(pose.position.y);
       
-      // Extract yaw from quaternion
+      // Extract yaw from quaternion (with normalization for numerical stability)
       double qx = pose.orientation.x;
       double qy = pose.orientation.y;
       double qz = pose.orientation.z;
       double qw = pose.orientation.w;
+      // Normalize quaternion to handle potentially unnormalized input
+      double norm = std::sqrt(qx*qx + qy*qy + qz*qz + qw*qw);
+      if (norm > 1e-9) {
+        qx /= norm; qy /= norm; qz /= norm; qw /= norm;
+      }
       double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       psis_.push_back(yaw);
       
-      // Calculate cumulative arc length
+      // Calculate cumulative arc length using std::hypot for numerical stability
       if (i > 0) {
         double dx = xs_[i] - xs_[i-1];
         double dy = ys_[i] - ys_[i-1];
-        cumulative_s += std::sqrt(dx*dx + dy*dy);
+        cumulative_s += std::hypot(dx, dy);
       }
       ss_.push_back(cumulative_s);
     }
