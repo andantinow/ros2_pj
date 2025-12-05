@@ -63,7 +63,7 @@ nmpc_engine_node:
     
     # State tracking weights (matched to nmpc_engine_node.cpp defaults)
     w_pos: 10.0                  # Position tracking weight (lateral error)
-    w_yaw: 10.0                  # Heading tracking weight (important for stability)
+    w_yaw: 7.0                   # Heading tracking weight (reduced to prevent "heading obsession" in curves)
     w_vel: 3.0                   # Velocity tracking weight
     
     # Control effort weights
@@ -72,9 +72,9 @@ nmpc_engine_node:
     
     # CRITICAL: Control rate (slew rate) weights
     # Issue 3.1: High steering rate weight prevents oscillation on straights
-    # This is the single most important tuning parameter for stability
-    # Value of 600.0 matches the optimized default in nmpc_engine_node.cpp
-    w_steer_rate: 600.0          # Steering rate penalty - CRITICAL FOR STABILITY
+    # Reduced from 600 to 200 to allow faster steering response in curves
+    # This helps prevent "sluggish steering" feeling in corners
+    w_steer_rate: 200.0          # Steering rate penalty - reduced for better curve response
     w_accel_rate: 60.0           # Acceleration rate penalty
     
     # Terminal cost weight (Issue 7.2: convergence improvement)
@@ -85,16 +85,17 @@ nmpc_engine_node:
     # =========================================================================
     # Allows deviation from reference within a "tube" around the path
     # Enables NMPC to find optimal racing lines within track boundaries
-    # Set to 0.0 for exact path tracking
-    lateral_tolerance: 0.25      # [m] Allowed deviation from centerline (±)
+    # Reduced from 0.25m to 0.15m for tighter path following
+    lateral_tolerance: 0.15      # [m] Allowed deviation from centerline (±)
     
     # =========================================================================
     # LATENCY COMPENSATION (Issue 3.3)
     # =========================================================================
     # Compensates for system delay (sensor -> computation -> actuator)
     # Forward simulates state by this amount before solving
-    # Typical F1TENTH latency: 30-100ms
-    latency_compensation_sec: 0.05  # [seconds] Total system delay
+    # Set to 0.0 to disable (more conservative, prevents state mismatch)
+    # Typical F1TENTH latency: 30-100ms (set to actual measured value)
+    latency_compensation_sec: 0.0   # [seconds] Disabled for conservative control
     
     # =========================================================================
     # SOLVER SETTINGS (Issue 3.1: Status 3 Prevention)
@@ -110,7 +111,9 @@ nmpc_engine_node:
     # =========================================================================
     # Below threshold: Kinematic bicycle model (simple, stable)
     # Above threshold: Dynamic bicycle model with tire slip
-    dynamic_model_threshold: 2.5 # [m/s] Speed for model switching
+    # Set to very high value (100.0) to effectively disable dynamic model
+    # This ensures kinematic model is always used for predictable behavior
+    dynamic_model_threshold: 100.0  # [m/s] Kinematic model only (dynamic disabled)
     vehicle_mass: 3.5            # [kg] Vehicle mass
     vehicle_inertia: 0.04        # [kg*m^2] Yaw moment of inertia
     
