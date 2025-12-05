@@ -40,7 +40,7 @@ private:
   double target_speed_ = 2.0;
   double max_speed_ = 2.0;
   double wheelbase_ = 0.33;
-  double max_steer_angle_ = 0.576;  // Max steering limit: 33 degrees [rad]
+  double max_steer_angle_ = 0.6458;  // Max steering limit: 37 degrees [rad]
   double max_steer_rate_ = 4.0;  // Increased for faster steering response (1.0 -> 4.0) rad/s
   double lateral_error_gain_ = 1.5;  // Increased lateral error compensation gain (0.5 -> 1.5)
   double heading_error_gain_ = 0.8;  // Reduced heading error compensation gain (1.0 -> 0.8)
@@ -62,6 +62,33 @@ private:
   double corner_curvature_threshold_ = 0.5;  // 곡률이 이 값 이상이면 코너로 판단
   double corner_speed_factor_ = 0.5;         // 코너에서 속도 감소 비율 (0.5 = 50% 속도)
   double corner_steer_amplify_ = 1.5;        // 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
+  
+  // === Out-In-Out 코너링 (레이싱 라인) ===
+  double corner_approach_distance_ = 1.5;    // 코너 접근 감지 거리 (m)
+  double out_in_out_offset_ = 0.3;           // 아웃-인-아웃 오프셋 (m) - 코너 전 바깥으로 이동
+  bool enable_out_in_out_ = true;            // 아웃-인-아웃 활성화
+  
+  // === 추월 시스템 (Opponent Overtaking) ===
+  bool is_overtaking_ = false;               // 현재 추월 중인지
+  double overtake_start_time_ = 0.0;         // 추월 시작 시간
+  double overtake_max_duration_ = 3.0;       // 최대 추월 지속 시간 (seconds)
+  double overtake_lateral_offset_ = 0.5;     // 추월 시 횡방향 오프셋 (m)
+  double return_to_line_distance_ = 2.0;     // 추월 후 라인 복귀 거리 (m)
+  double min_overtake_gap_ = 1.0;            // 최소 추월 가능 간격 (m)
+  rclcpp::Time overtake_start_time_ros_;     // 추월 시작 시간 (ROS Time)
+  
+  // 추월 경로 시각화
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr overtake_path_marker_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr wall_collision_marker_pub_;
+  
+  // 벽 데이터 (CSV 로드)
+  struct WallPoint {
+    double x, y;
+    double d_left, d_right;
+    double psi;
+  };
+  std::vector<WallPoint> wall_data_;
+  bool wall_data_loaded_ = false;
   // Path interpolation
   bool use_path_interpolation_ = true;
   
@@ -69,8 +96,8 @@ private:
   // A1 범위: 좁은 범위 - 이 범위 안에 들어오면 후진 + 반대방향 조향
   // A2 범위: 넓은 범위 - A1보다 넓지만 이 범위 안에 들어오면 조향만 반대방향으로
   double a1_threshold_ = 0.1;              // A1 범위: 후진 트리거 거리 (meters) - 0.1m
-  double a2_threshold_ = 0.4;              // A2 범위: 조향 회피 거리 (meters) - 0.4m
-  double a2_urgent_threshold_ = 0.25;      // A2 긴급 범위: 0.25m 이내시 급격한 조향
+  double a2_threshold_ = 0.2;              // A2 범위: 조향 회피 거리 (meters) - 0.2m (Changed from 0.4m)
+  double a2_urgent_threshold_ = 0.15;      // A2 긴급 범위: 0.15m 이내시 급격한 조향 (Changed from 0.25m)
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율 - 완전 반대 조향
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율 - 완전 반대 조향
@@ -122,5 +149,18 @@ private:
   void update_obstacle_distances();         // 장애물 거리 업데이트
   double find_gap_center_angle(double lookahead_angle);  // lookahead 방향 기준 장애물 사이 중간점 각도 계산
   void publish_lookahead_marker(double x, double y, double z);  // Lookahead 시각화
+  
+  // === 새로운 기능들 ===
+  bool load_wall_data(const std::string& csv_file);  // 벽 데이터 CSV 로드
+  double get_wall_distance_left(double x, double y);  // 현재 위치에서 왼쪽 벽까지 거리
+  double get_wall_distance_right(double x, double y); // 현재 위치에서 오른쪽 벽까지 거리
+  bool detect_upcoming_corner(int current_idx, double& corner_direction);  // 전방 코너 감지
+  double compute_out_in_out_offset(int current_idx, double corner_direction);  // 아웃-인-아웃 오프셋 계산
+  bool can_overtake_safely(double opponent_dist, double opponent_angle);  // 안전 추월 가능 여부
+  double compute_overtake_steering(double base_steering);  // 추월 조향 계산
+  bool should_return_to_line();  // 라인 복귀 필요 여부
+  double compute_return_to_line_steering();  // 라인 복귀 조향 계산
+  void publish_overtake_path(double offset_direction);  // 추월 경로 시각화
+  void publish_wall_collision_indicator(bool is_colliding, double x, double y);  // 벽 충돌 시각화
 };
-#endif
+#endif  // SIMPLE_CONTROLLER_HPP_
