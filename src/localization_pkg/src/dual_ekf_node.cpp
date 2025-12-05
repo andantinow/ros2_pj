@@ -12,6 +12,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <algorithm>
 
 // Define M_PI if not available (for cross-platform compatibility)
 #ifndef M_PI
@@ -125,6 +126,13 @@ private:
     std::string odom_frame_;
     std::string base_link_frame_;
     
+    // Outlier rejection thresholds (Mahalanobis distance)
+    double mahalanobis_threshold_ = 5.0;  // Chi-squared 95% for 3 DOF
+    
+    // Covariance bounds
+    double min_covariance_ = 0.0001;
+    double max_covariance_ = 100.0;
+    
     /**
      * @brief Declare all ROS parameters
      */
@@ -166,6 +174,13 @@ private:
         // TF broadcasting
         declare_parameter<bool>("publish_tf", true);
         
+        // Outlier rejection
+        declare_parameter<double>("mahalanobis_threshold", 5.0);
+        
+        // Covariance bounds
+        declare_parameter<double>("min_covariance", 0.0001);
+        declare_parameter<double>("max_covariance", 100.0);
+        
         // Get frame IDs
         map_frame_ = get_parameter("map_frame").as_string();
         odom_frame_ = get_parameter("odom_frame").as_string();
@@ -181,6 +196,11 @@ private:
         // Get buffer sizes
         odom_buffer_size_ = static_cast<size_t>(get_parameter("odom_buffer_size").as_int());
         imu_buffer_size_ = static_cast<size_t>(get_parameter("imu_buffer_size").as_int());
+        
+        // Get outlier rejection and covariance bounds
+        mahalanobis_threshold_ = get_parameter("mahalanobis_threshold").as_double();
+        min_covariance_ = get_parameter("min_covariance").as_double();
+        max_covariance_ = get_parameter("max_covariance").as_double();
     }
     
     /**
@@ -383,6 +403,9 @@ private:
         local_state_ = F * local_state_;
         local_cov_ = F * local_cov_ * F.transpose() + local_Q_ * dt;
         
+        // Bound covariance after prediction
+        boundCovariance<LOCAL_STATE_DIM>(local_cov_);
+        
         // === Correction Step with Odometry ===
         if (!odom_buffer_.empty()) {
             auto& odom = odom_buffer_.back();
@@ -405,19 +428,30 @@ private:
             Eigen::Vector2d y_odom = z_odom - H_odom * local_state_;
             Eigen::Matrix<double, 2, 2> S_odom = H_odom * local_cov_ * H_odom.transpose() + R_odom;
             
-            // Use LLT decomposition for numerical stability with error checking
-            Eigen::LLT<Eigen::Matrix2d> llt_odom(S_odom);
-            if (llt_odom.info() == Eigen::Success) {
-                Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * llt_odom.solve(Eigen::Matrix2d::Identity());
-                
-                local_state_ = local_state_ + K_odom * y_odom;
-                
-                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
-                LocalCov I_KH = LocalCov::Identity() - K_odom * H_odom;
-                local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_odom * R_odom * K_odom.transpose();
+            // Outlier rejection using Mahalanobis distance
+            double mahal_dist_odom = mahalanobisDistance<2>(y_odom, S_odom);
+            if (mahal_dist_odom > mahalanobis_threshold_ * mahalanobis_threshold_) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Odom measurement rejected: Mahalanobis distance %.2f exceeds threshold",
+                    std::sqrt(mahal_dist_odom));
             } else {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
-                    "Odom EKF update skipped: S matrix not positive definite");
+                // Use LLT decomposition for numerical stability with error checking
+                Eigen::LLT<Eigen::Matrix2d> llt_odom(S_odom);
+                if (llt_odom.info() == Eigen::Success) {
+                    Eigen::Matrix<double, LOCAL_STATE_DIM, 2> K_odom = local_cov_ * H_odom.transpose() * llt_odom.solve(Eigen::Matrix2d::Identity());
+                    
+                    local_state_ = local_state_ + K_odom * y_odom;
+                    
+                    // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                    LocalCov I_KH = LocalCov::Identity() - K_odom * H_odom;
+                    local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_odom * R_odom * K_odom.transpose();
+                    
+                    // Bound covariance after update
+                    boundCovariance<LOCAL_STATE_DIM>(local_cov_);
+                } else {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
+                        "Odom EKF update skipped: S matrix not positive definite");
+                }
             }
         }
         
@@ -447,19 +481,30 @@ private:
             Eigen::Vector3d y_imu = z_imu - H_imu * local_state_;
             Eigen::Matrix3d S_imu = H_imu * local_cov_ * H_imu.transpose() + R_imu;
             
-            // Use LLT decomposition for numerical stability with error checking
-            Eigen::LLT<Eigen::Matrix3d> llt_imu(S_imu);
-            if (llt_imu.info() == Eigen::Success) {
-                Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * llt_imu.solve(Eigen::Matrix3d::Identity());
-                
-                local_state_ = local_state_ + K_imu * y_imu;
-                
-                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
-                LocalCov I_KH = LocalCov::Identity() - K_imu * H_imu;
-                local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_imu * R_imu * K_imu.transpose();
-            } else {
+            // Outlier rejection using Mahalanobis distance
+            double mahal_dist_imu = mahalanobisDistance<3>(y_imu, S_imu);
+            if (mahal_dist_imu > mahalanobis_threshold_ * mahalanobis_threshold_) {
                 RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "IMU EKF update skipped: S matrix not positive definite");
+                    "IMU measurement rejected: Mahalanobis distance %.2f exceeds threshold",
+                    std::sqrt(mahal_dist_imu));
+            } else {
+                // Use LLT decomposition for numerical stability with error checking
+                Eigen::LLT<Eigen::Matrix3d> llt_imu(S_imu);
+                if (llt_imu.info() == Eigen::Success) {
+                    Eigen::Matrix<double, LOCAL_STATE_DIM, 3> K_imu = local_cov_ * H_imu.transpose() * llt_imu.solve(Eigen::Matrix3d::Identity());
+                    
+                    local_state_ = local_state_ + K_imu * y_imu;
+                    
+                    // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                    LocalCov I_KH = LocalCov::Identity() - K_imu * H_imu;
+                    local_cov_ = I_KH * local_cov_ * I_KH.transpose() + K_imu * R_imu * K_imu.transpose();
+                    
+                    // Bound covariance after update
+                    boundCovariance<LOCAL_STATE_DIM>(local_cov_);
+                } else {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "IMU EKF update skipped: S matrix not positive definite");
+                }
             }
         }
         
@@ -526,6 +571,9 @@ private:
         
         global_cov_ = F * global_cov_ * F.transpose() + global_Q_ * dt;
         
+        // Bound covariance after prediction
+        boundCovariance<GLOBAL_STATE_DIM>(global_cov_);
+        
         // === Correction Step with Global Pose ===
         if (latest_global_pose_) {
             double meas_x = latest_global_pose_->pose.pose.position.x;
@@ -560,20 +608,31 @@ private:
             
             Eigen::Matrix3d S = H * global_cov_ * H.transpose() + R;
             
-            // Use LLT decomposition for numerical stability with error checking
-            Eigen::LLT<Eigen::Matrix3d> llt_global(S);
-            if (llt_global.info() == Eigen::Success) {
-                Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * llt_global.solve(Eigen::Matrix3d::Identity());
-                
-                global_state_ = global_state_ + K * y;
-                global_state_(2) = normalizeAngle(global_state_(2));
-                
-                // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
-                GlobalCov I_KH = GlobalCov::Identity() - K * H;
-                global_cov_ = I_KH * global_cov_ * I_KH.transpose() + K * R * K.transpose();
-            } else {
+            // Outlier rejection using Mahalanobis distance
+            double mahal_dist_global = mahalanobisDistance<3>(y, S);
+            if (mahal_dist_global > mahalanobis_threshold_ * mahalanobis_threshold_) {
                 RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "Global EKF update skipped: S matrix not positive definite");
+                    "Global pose measurement rejected: Mahalanobis distance %.2f exceeds threshold",
+                    std::sqrt(mahal_dist_global));
+            } else {
+                // Use LLT decomposition for numerical stability with error checking
+                Eigen::LLT<Eigen::Matrix3d> llt_global(S);
+                if (llt_global.info() == Eigen::Success) {
+                    Eigen::Matrix<double, GLOBAL_STATE_DIM, 3> K = global_cov_ * H.transpose() * llt_global.solve(Eigen::Matrix3d::Identity());
+                    
+                    global_state_ = global_state_ + K * y;
+                    global_state_(2) = normalizeAngle(global_state_(2));
+                    
+                    // Joseph form update for numerical stability: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+                    GlobalCov I_KH = GlobalCov::Identity() - K * H;
+                    global_cov_ = I_KH * global_cov_ * I_KH.transpose() + K * R * K.transpose();
+                    
+                    // Bound covariance after update
+                    boundCovariance<GLOBAL_STATE_DIM>(global_cov_);
+                } else {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "Global EKF update skipped: S matrix not positive definite");
+                }
             }
             
             // Clear the latest pose after using it
@@ -724,6 +783,51 @@ private:
             angle += 2.0 * M_PI;
         }
         return angle - M_PI;
+    }
+    
+    /**
+     * @brief Bound covariance matrix to prevent numerical issues
+     * Ensures all diagonal elements are within [min_cov, max_cov]
+     */
+    template<int N>
+    void boundCovariance(Eigen::Matrix<double, N, N>& cov) {
+        for (int i = 0; i < N; ++i) {
+            cov(i, i) = std::clamp(cov(i, i), min_covariance_, max_covariance_);
+        }
+        
+        // Ensure symmetry
+        cov = (cov + cov.transpose()) / 2.0;
+        
+        // Ensure positive semi-definite (simple check)
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> solver(cov);
+        if (solver.info() == Eigen::Success) {
+            Eigen::Matrix<double, N, 1> eigenvalues = solver.eigenvalues();
+            bool needs_fix = false;
+            for (int i = 0; i < N; ++i) {
+                if (eigenvalues(i) < min_covariance_) {
+                    eigenvalues(i) = min_covariance_;
+                    needs_fix = true;
+                }
+            }
+            if (needs_fix) {
+                cov = solver.eigenvectors() * eigenvalues.asDiagonal() * solver.eigenvectors().transpose();
+            }
+        }
+    }
+    
+    /**
+     * @brief Calculate Mahalanobis distance for outlier rejection
+     * d² = y' * S^(-1) * y
+     */
+    template<int N>
+    double mahalanobisDistance(const Eigen::Matrix<double, N, 1>& innovation,
+                                const Eigen::Matrix<double, N, N>& innovation_cov) {
+        Eigen::LLT<Eigen::Matrix<double, N, N>> llt(innovation_cov);
+        if (llt.info() != Eigen::Success) {
+            return std::numeric_limits<double>::max();  // Invalid, reject
+        }
+        Eigen::Matrix<double, N, 1> v = llt.matrixL().solve(innovation);
+        return v.squaredNorm();
     }
 };
 
