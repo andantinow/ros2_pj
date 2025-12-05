@@ -9,6 +9,8 @@ C++ path planning package for F1TENTH autonomous racing.
 - **Simple Path Planner**: Basic path planner with configurable parameters
 - **Raceline Generator**: CLI tool to generate raceline from centerline
 - **Frenet Overtake Planner**: Sampling-based overtaking planner with Frenet coordinates and visualization
+- **Opponent Detector**: LiDAR-based leading vehicle detection with Frenet coordinate output
+- **Global Overtake Planner**: State machine-based overtake planning with pre-computed paths
 
 ## Build
 
@@ -257,3 +259,126 @@ Where:
 - `w_center`: Penalty for deviation from centerline
 - `w_obs`: Penalty for obstacle proximity (inverse distance)
 - `w_smooth`: Penalty for rapid lane changes
+
+---
+
+## Opponent Detection & Overtake System
+
+This system implements structured opponent detection and global overtake line planning:
+
+### Architecture Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────┐
+│ opponent_detector│───▶│global_overtake_ │───▶│ Controller (NMPC/   │
+│                 │    │ planner         │    │ SimpleController)   │
+└────────┬────────┘    └────────┬────────┘    └─────────────────────┘
+         │                      │
+         │ /opponent_info       │ /active_raceline
+         │ (s, d, distance)     │ /overtake_state
+         ▼                      ▼
+    ┌──────────┐          ┌──────────┐
+    │  RViz    │          │  RViz    │
+    │ Markers  │          │ Markers  │
+    └──────────┘          └──────────┘
+```
+
+### 1. Opponent Detector (`opponent_detector`)
+
+Detects leading vehicles using LiDAR + odometry + raceline data.
+
+**Features:**
+- Frenet coordinate conversion for raceline-relative positioning
+- Narrow front sector scanning (±15°) for opponent detection
+- Opponent validation (must be ahead on raceline, within lane bounds)
+- RViz visualization with markers
+
+**Topics:**
+| Topic | Type | I/O | Description |
+|-------|------|-----|-------------|
+| `/scan` | LaserScan | Input | LiDAR data |
+| `/odom` | Odometry | Input | Vehicle odometry |
+| `/global_raceline` | Path | Input | Base raceline |
+| `/opponent_info` | Float64MultiArray | Output | [x, y, s, d, dist, angle, valid, ego_s, ego_d] |
+| `/opponent_marker` | MarkerArray | Output | RViz visualization |
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `front_angle_min` | -0.26 | Min angle for front sector (rad) |
+| `front_angle_max` | 0.26 | Max angle for front sector (rad) |
+| `max_detection_range` | 10.0 | Maximum LiDAR range to consider (m) |
+| `lane_half_width` | 0.6 | Half lane width for validation (m) |
+| `min_ahead_margin` | 0.3 | Min s difference to be "ahead" (m) |
+| `max_ahead_distance` | 5.0 | Max s difference to track (m) |
+
+### 2. Global Overtake Planner (`global_overtake_planner`)
+
+Plans overtake paths and manages the overtake state machine.
+
+**State Machine:**
+```
+┌─────────┐   opponent detected    ┌──────────────────┐
+│ NORMAL  │───────────────────────▶│ PREPARE_OVERTAKE │
+└────┬────┘                        └────────┬─────────┘
+     │                                      │
+     │ overtake complete        close enough │
+     │                                      ▼
+┌────┴────┐                        ┌──────────┐
+│ RETURN  │◀───────────────────────│ OVERTAKE │
+└─────────┘   passed opponent      └──────────┘
+```
+
+**Features:**
+- Pre-computed overtake paths using polynomial d(s) transitions
+- Automatic direction selection based on opponent position
+- Smooth S-curve lane change: `d(t) = d_max * sin(π*t)`
+- RViz visualization of state and planned path
+
+**Topics:**
+| Topic | Type | I/O | Description |
+|-------|------|-----|-------------|
+| `/global_raceline` | Path | Input | Base raceline |
+| `/opponent_info` | Float64MultiArray | Input | From opponent_detector |
+| `/odom` | Odometry | Input | Vehicle odometry |
+| `/global_overtake_raceline` | Path | Output | Planned overtake path |
+| `/active_raceline` | Path | Output | Currently active path |
+| `/overtake_state` | String | Output | Current state |
+| `/overtake_markers` | MarkerArray | Output | RViz visualization |
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `d_max` | 0.6 | Maximum lateral offset (m) |
+| `s_buffer_start` | 1.0 | Start overtake ahead of ego (m) |
+| `s_overlap` | 1.5 | Pass this far beyond opponent (m) |
+| `s_buffer_end` | 2.0 | Distance to return to raceline (m) |
+| `trigger_distance` | 1.5 | Distance to start preparation (m) |
+| `execute_distance` | 1.0 | Distance to execute overtake (m) |
+| `overtake_timeout` | 5.0 | Maximum overtake duration (s) |
+
+### Launch
+
+Launch the complete overtake system:
+
+```bash
+ros2 launch planning_pkg overtake_system_launch.py
+
+# With custom parameters:
+ros2 launch planning_pkg overtake_system_launch.py \
+  d_max:=0.8 \
+  trigger_distance:=2.0 \
+  frame_id:=map
+```
+
+### RViz Visualization
+
+Add these topics to RViz for complete visualization:
+
+| Topic | Display Type | Description |
+|-------|--------------|-------------|
+| `/opponent_marker` | MarkerArray | Orange sphere for opponent |
+| `/overtake_markers` | MarkerArray | State text + overtake path |
+| `/global_raceline` | Path | Base raceline (white/blue) |
+| `/global_overtake_raceline` | Path | Overtake path (purple/cyan) |
+| `/active_raceline` | Path | Currently active path (thick)
