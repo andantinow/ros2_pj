@@ -187,12 +187,14 @@ SimpleController::SimpleController() : Node("simple_controller")
   
   // 상대 차량 폭 + 안전 마진 계산 (보고서 기반 D_forbidden 계산용)
   // D_forbidden = [d_opp - W_car/2 - W_margin, d_opp + W_car/2 + W_margin]
+  // Report: W_car = 0.35m, W_margin = 0.15m -> D_forbidden width = 0.65m
   opponent_width_with_margin_ = vehicle_width_ + 2.0 * SAFETY_MARGIN;  // W_car + 2*W_margin
   
   // 차량 넓이 기반으로 최소 추월 간격 계산 (자차 + 상대 차량 + 안전 마진)
+  // Report: 약 0.6~0.7m 폭의 구간이 "주행 불가 영역"으로 설정
   min_overtake_clearance_ = vehicle_width_ * 2.0 + SAFETY_MARGIN;  // 두 차량 넓이 + 안전마진
-  RCLCPP_INFO(this->get_logger(), "Vehicle dimensions: %.2fm x %.2fm, min_overtake_clearance: %.2fm",
-              vehicle_width_, vehicle_length_, min_overtake_clearance_);
+  RCLCPP_INFO(this->get_logger(), "Vehicle dimensions: %.2fm x %.2fm, min_overtake_clearance: %.2fm, D_forbidden width: %.2fm",
+              vehicle_width_, vehicle_length_, min_overtake_clearance_, opponent_width_with_margin_);
   RCLCPP_INFO(this->get_logger(), "CRSM enabled: reverse_steering_mode=%d (0=neutral, 1=invert, 2=maintain)",
               reverse_steering_mode_);
   RCLCPP_INFO(this->get_logger(), "ACC enabled: Kp=%.2f, Kd=%.2f, target_gap=%.2fm",

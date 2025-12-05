@@ -29,14 +29,15 @@ public:
   };
   
   // === Constants for collision avoidance and overtake ===
-  static constexpr double SAFETY_MARGIN = 0.3;              // General safety margin (m)
+  // Based on F1TENTH Research Report: "Collision Recovery and Dynamic Overtaking Architecture"
+  static constexpr double SAFETY_MARGIN = 0.15;             // General safety margin (m) - Report: W_margin = 0.15~0.2m
   static constexpr double WALL_SAFETY_MARGIN = 0.15;        // Wall clearance safety margin (m)
   static constexpr double MIN_OVERTAKE_DISTANCE = 0.6;      // Minimum distance for overtake consideration (m)
   static constexpr double OVERTAKE_VIS_LENGTH = 5.0;        // Overtake visualization path length (m)
   static constexpr double OVERTAKE_VIS_STEP = 0.15;         // Overtake visualization step size (m)
-  static constexpr double IMU_CRASH_ACCEL_THRESHOLD = 9.5;  // Crash detection acceleration threshold (m/s^2)
-  static constexpr double STALL_VELOCITY_THRESHOLD = 0.1;   // Stall detection velocity threshold (m/s)
-  static constexpr double STALL_CMD_VELOCITY_THRESHOLD = 0.5; // Commanded velocity for stall detection (m/s)
+  static constexpr double IMU_CRASH_ACCEL_THRESHOLD = 9.5;  // Crash detection acceleration threshold (m/s^2) - Report: A_thresh = 8.0~10.0 m/s^2
+  static constexpr double STALL_VELOCITY_THRESHOLD = 0.1;   // Stall detection velocity threshold (m/s) - Report: |v_act| < 0.1 m/s
+  static constexpr double STALL_CMD_VELOCITY_THRESHOLD = 0.5; // Commanded velocity for stall detection (m/s) - Report: v_cmd > 0.5 m/s
 
 private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
@@ -143,8 +144,8 @@ private:
   double a1_side_factor_ = 0.9;            // A1 측면 거리 팩터 (a1_threshold * 이 값) - 측면도 민감하게
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율
-  double reverse_speed_ = 0.8;             // 후진 속도 (m/s) - 조금 느리게 후진
-  double reverse_duration_ = 1.2;          // 후진 지속 시간 (seconds) - 조금 더 오래 후진
+  double reverse_speed_ = 1.5;             // 후진 속도 (m/s) - Report: -1.5 m/s (강력한 후진 토크)
+  double reverse_duration_ = 1.2;          // 후진 지속 시간 (seconds) - Report: 1.2~1.5s
   double reverse_pause_duration_ = 0.5;    // 후진 후 정지 시간 (seconds) - 생각 시간
   double a1_steer_gain_ = 0.8;             // A1 범위에서 후진 시 조향 강도
   double a2_steer_gain_ = 1.0;             // A2 범위에서 회피 조향 강도
@@ -191,11 +192,12 @@ private:
   rclcpp::Time prev_opponent_time_;        // 이전 상대 차량 거리 측정 시간
   
   // === 차량 치수 (추월 경로 계산용) ===
-  double vehicle_width_ = 0.3;             // 차량 넓이 (m) - 약 30cm (F1TENTH 기준)
-  double vehicle_length_ = 0.5;            // 차량 길이 (m) - 약 50cm (F1TENTH 기준)
+  // Report: F1TENTH 차량 기준 W_car = 0.35m, L_car 약 0.5m
+  double vehicle_width_ = 0.35;            // 차량 넓이 (m) - Report specification
+  double vehicle_length_ = 0.5;            // 차량 길이 (m)
   
   // === 추월 조건 체크용 파라미터 ===
-  double narrow_road_threshold_ = 2.0;     // 좁은 도로 판단 기준 (좌우 합계 m) - 더 엄격하게 (1.5 -> 2.0)
+  double narrow_road_threshold_ = 3.0;     // 좁은 도로 판단 기준 (좌우 합계 m) - Report: Max Lateral 3.0m
   double min_visibility_angle_ = 0.35;     // 최소 시야 각도 (rad, 약 20도) - 더 엄격하게 (0.5 -> 0.35)
   double min_overtake_clearance_ = 0.0;    // 최소 추월 간격 (계산됨: vehicle_width * 2 + safety_margin)
   
