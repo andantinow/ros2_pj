@@ -8,10 +8,10 @@
 # - Issue 5.1: Lateral tolerance tube
 # - Issue 6.1: Soft constraints (Status 4 prevention)
 #
-# NOTE: These parameter values match the optimized defaults in nmpc_engine_node.cpp
-# which were tuned based on ForzaETH reference architecture recommendations.
-# The previous inline parameters in main.launch.py were experimental values that
-# deviated from these optimal settings and may have caused suboptimal performance.
+# V3.0 Updates:
+# - Simplified collision handling (stop -> wait -> straight reverse)
+# - Opponent following and overtaking system
+# - Overtaking path visualization
 #
 # Reference: https://github.com/ForzaETH/race_stack
 # =============================================================================
@@ -125,30 +125,50 @@ nmpc_engine_node:
     min_accel: -6.0              # [m/s^2] Maximum deceleration (negative)
     
     # =========================================================================
-    # A1/A2 COLLISION AVOIDANCE SYSTEM
+    # SIMPLIFIED COLLISION HANDLING (V3.0)
     # =========================================================================
-    # A1 Zone: Very close obstacle - triggers STRONG SHORT BURST reverse
-    # A2 Zone: Close obstacle - triggers steering avoidance (NO SLOWDOWN)
-    # 
-    # User request: 
-    # 1. When hitting wall, apply strong force in opposite direction for very short time
-    # 2. Remove slowdown when side obstacles are present
-    # 3. Only front obstacles trigger reverse (not side obstacles)
+    # When wall/obstacle collision detected:
+    # 1. STOP immediately (stop_duration)
+    # 2. Wait briefly
+    # 3. REVERSE STRAIGHT BACK (no steering to avoid spinning)
+    # 4. Resume normal operation after cooldown
+    #
+    # This removes all complex steering during collision, fixing the spinning issue
     
     enable_collision_avoidance: true
     
-    # A1 Zone parameters (STRONG SHORT BURST reverse)
-    a1_threshold: 0.3            # [m] Distance triggering reverse (front only) - 30cm
-    reverse_speed: 2.5           # [m/s] STRONG reverse speed - powerful burst
-    reverse_duration: 0.15       # [s] VERY SHORT burst - quick impulse
-    a1_steer_gain: 1.0           # Full steering gain during reverse
-    
-    # A2 Zone parameters (steering avoidance only - NO SLOWDOWN)
-    # Repulsive force: obstacles push the car away in opposite direction
-    # Note: Speed reduction removed per user request
-    a2_threshold: 0.4            # [m] Distance triggering repulsive force
+    # Collision detection thresholds
+    a1_threshold: 0.3            # [m] Distance triggering collision (front only)
+    a2_threshold: 0.4            # [m] Distance triggering steering avoidance
     a2_urgent_threshold: 0.25    # [m] Distance for urgent avoidance
+    
+    # Collision response timing
+    stop_duration: 0.3           # [s] Time to stop before reversing
+    reverse_duration: 0.5        # [s] Time to reverse
+    reverse_speed: 1.5           # [m/s] Reverse speed (straight back)
+    
+    # Steering avoidance gains (A2 zone - repulsive force approach)
+    a1_steer_gain: 1.0           # Not used in simplified mode (straight reverse)
+    a2_steer_gain: 1.5           # Repulsive force gain for side obstacles
+    a2_urgent_steer_gain: 2.0    # Increased gain in urgent situations
     a2_max_steer_ratio: 1.0      # Full steering allowed
     a2_urgent_steer_ratio: 1.0   # Full steering in urgent mode
-    a2_steer_gain: 1.5           # High repulsive force gain
-    a2_urgent_steer_gain: 2.0    # Very high urgent gain
+    
+    # =========================================================================
+    # OPPONENT FOLLOWING AND OVERTAKING SYSTEM (V3.0)
+    # =========================================================================
+    # Detects opponent ahead using LiDAR and opponent odometry
+    # - When following: limits speed to opponent speed
+    # - When safe: executes overtaking maneuver
+    # - Overtaking paths visualized in RViz (MAGENTA=left, CYAN=right)
+    
+    enable_overtaking: true
+    
+    # Detection and following
+    opponent_detection_range: 3.0     # [m] Range to detect opponent ahead
+    opponent_following_distance: 1.0  # [m] Safe following distance
+    opponent_speed_tracking_gain: 0.8 # Speed limiting when following (0.8 = 80% of opponent speed)
+    
+    # Overtaking
+    overtake_path_width: 0.8          # [m] Lateral offset for overtaking paths
+    overtake_decision_distance: 2.5   # [m] Distance to start considering overtake
