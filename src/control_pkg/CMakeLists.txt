@@ -144,10 +144,61 @@ if(acados_FOUND)
   )
 endif()
 
+# ============================================================================
+# Collision Recovery Node (Stop-Wait-Reverse FSM)
+# ============================================================================
+# Implements deterministic collision recovery for F1TENTH
+# Takes highest priority in the Ackermann MUX during emergency
+# ============================================================================
+
+add_executable(collision_recovery_node
+  src/collision_recovery_node.cpp
+)
+
+target_include_directories(collision_recovery_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(collision_recovery_node
+  rclcpp
+  ackermann_msgs
+  sensor_msgs
+  std_msgs
+)
+
+# ============================================================================
+# Adaptive Cruise Control Node (Time-Headway based ACC)
+# ============================================================================
+# Implements velocity-synchronized following with relative velocity estimation
+# ============================================================================
+
+find_package(std_msgs REQUIRED)
+
+add_executable(adaptive_cruise_control_node
+  src/adaptive_cruise_control_node.cpp
+)
+
+target_include_directories(adaptive_cruise_control_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(adaptive_cruise_control_node
+  rclcpp
+  ackermann_msgs
+  sensor_msgs
+  nav_msgs
+  std_msgs
+  visualization_msgs
+)
+
 install(TARGETS 
   simple_controller_node
   nmpc_engine_node
   nmpc_lifecycle_node
+  collision_recovery_node
+  adaptive_cruise_control_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
