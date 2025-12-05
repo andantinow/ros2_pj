@@ -1,30 +1,32 @@
-"""
-Launch file for the Opponent Detection and Overtake Planning System
+"""Launch file for the Opponent Detection and Overtake Planning System.
 
-This launch file starts:
-1. opponent_detector - Detects leading vehicles using LiDAR + odom + raceline
-2. global_overtake_planner - Plans overtake paths and manages state machine
+This launch file starts the opponent_detector and global_overtake_planner nodes
+for structured opponent detection and overtake path planning.
+
+Nodes:
+    opponent_detector: Detects leading vehicles using LiDAR + odom + raceline
+    global_overtake_planner: Plans overtake paths and manages state machine
 
 Prerequisites:
-- raceline_server must be running (publishing /global_raceline)
-- /scan (LaserScan) and /odom (Odometry) topics must be available
+    - raceline_server must be running (publishing /global_raceline)
+    - /scan (LaserScan) and /odom (Odometry) topics must be available
 
 Topics:
-  Input:
-    /scan - LiDAR data
-    /odom - Vehicle odometry
-    /global_raceline - Base raceline path
-  Output:
-    /opponent_info - Detected opponent in Frenet coordinates
-    /opponent_marker - RViz visualization of opponent
-    /global_overtake_raceline - Planned overtake path
-    /active_raceline - Currently active path (raceline or overtake)
-    /overtake_state - Current state machine state
-    /overtake_markers - RViz visualization of overtake state
+    Input:
+        /scan - LiDAR data
+        /odom - Vehicle odometry
+        /global_raceline - Base raceline path
+    Output:
+        /opponent_info - Detected opponent in Frenet coordinates
+        /opponent_marker - RViz visualization of opponent
+        /global_overtake_raceline - Planned overtake path
+        /active_raceline - Currently active path (raceline or overtake)
+        /overtake_state - Current state machine state
+        /overtake_markers - RViz visualization of overtake state
 
-Usage:
-  ros2 launch planning_pkg overtake_system_launch.py
-  ros2 launch planning_pkg overtake_system_launch.py d_max:=0.8 trigger_distance:=2.0
+Example:
+    ros2 launch planning_pkg overtake_system_launch.py
+    ros2 launch planning_pkg overtake_system_launch.py d_max:=0.8 trigger_distance:=2.0
 """
 
 import os

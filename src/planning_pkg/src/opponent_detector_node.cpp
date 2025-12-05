@@ -38,6 +38,8 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <sstream>
+#include <iomanip>
 
 namespace planning_pkg
 {
@@ -45,6 +47,9 @@ namespace planning_pkg
 // ============================================================================
 // FrenetConverter Implementation
 // ============================================================================
+
+// Constants for numerical stability
+constexpr double MIN_SEGMENT_LENGTH = 1e-6;
 
 void FrenetConverter::setReferencePath(const nav_msgs::msg::Path& path)
 {
@@ -62,7 +67,7 @@ void FrenetConverter::setReferencePath(const nav_msgs::msg::Path& path)
     for (size_t i = 1; i < path.poses.size(); ++i) {
         double dx = path.poses[i].pose.position.x - path.poses[i-1].pose.position.x;
         double dy = path.poses[i].pose.position.y - path.poses[i-1].pose.position.y;
-        double ds = std::hypot(dx, dy);
+        double ds = std::sqrt(dx * dx + dy * dy);  // Use direct calculation for performance
         cumulative_distances_.push_back(cumulative_distances_.back() + ds);
     }
     
@@ -174,7 +179,7 @@ geometry_msgs::msg::Point FrenetConverter::toCartesian(double s, double d) const
     // Interpolation factor within segment
     double seg_start = cumulative_distances_[idx];
     double seg_length = cumulative_distances_[idx + 1] - seg_start;
-    double t = (seg_length > 1e-6) ? (s_mod - seg_start) / seg_length : 0.0;
+    double t = (seg_length > MIN_SEGMENT_LENGTH) ? (s_mod - seg_start) / seg_length : 0.0;
     t = std::clamp(t, 0.0, 1.0);
     
     // Interpolate centerline position
@@ -574,10 +579,11 @@ private:
             text_marker.pose.position.z = 0.8;
             text_marker.pose.orientation.w = 1.0;
             
-            char buf[128];
-            snprintf(buf, sizeof(buf), "OPP\ns=%.1f d=%.2f\ndist=%.2f",
-                     opponent.s, opponent.d, opponent.distance);
-            text_marker.text = buf;
+            std::ostringstream oss;
+            oss << "OPP\ns=" << std::fixed << std::setprecision(1) << opponent.s
+                << " d=" << std::setprecision(2) << opponent.d
+                << "\ndist=" << opponent.distance;
+            text_marker.text = oss.str();
             
             text_marker.scale.z = 0.3;
             text_marker.color.r = 1.0f;

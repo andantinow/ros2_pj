@@ -428,11 +428,10 @@ private:
         
         double total_len = frenet_converter_.getTotalPathLength();
         
-        // Wrap s values
+        // Wrap s values using std::fmod for efficiency
         auto wrapS = [total_len](double s) {
-            while (s < 0) s += total_len;
-            while (s >= total_len) s -= total_len;
-            return s;
+            double wrapped = std::fmod(s, total_len);
+            return wrapped < 0 ? wrapped + total_len : wrapped;
         };
         
         // Generate path points
@@ -460,8 +459,11 @@ private:
             pose.pose.position = p;
             pose.pose.position.z = 0.0;
             
-            // Compute heading from path direction
+            // Compute heading from path direction and set quaternion properly
+            // For 2D rotation around z-axis: qx=0, qy=0, qz=sin(yaw/2), qw=cos(yaw/2)
             double psi = frenet_converter_.getHeadingAtS(s_wrapped);
+            pose.pose.orientation.x = 0.0;
+            pose.pose.orientation.y = 0.0;
             pose.pose.orientation.z = std::sin(psi / 2.0);
             pose.pose.orientation.w = std::cos(psi / 2.0);
             
