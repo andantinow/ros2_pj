@@ -58,6 +58,13 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("a1_steer_gain", a1_steer_gain_);
   declare_parameter("a2_steer_gain", a2_steer_gain_);
   declare_parameter("a2_urgent_steer_gain", a2_urgent_steer_gain_);
+  declare_parameter("reverse_pause_duration", reverse_pause_duration_);
+  declare_parameter("wall_repulsion_gain", wall_repulsion_gain_);
+  declare_parameter("wall_repulsion_threshold", wall_repulsion_threshold_);
+  declare_parameter("wall_repulsion_max_steer", wall_repulsion_max_steer_);
+  declare_parameter("follow_distance_threshold", follow_distance_threshold_);
+  declare_parameter("follow_min_distance", follow_min_distance_);
+  declare_parameter("follow_speed_factor", follow_speed_factor_);
   declare_parameter("enable_collision_avoidance", enable_collision_avoidance_);
   // Corner handling parameters (코너링 설정)
   declare_parameter("corner_curvature_threshold", corner_curvature_threshold_);
@@ -112,6 +119,13 @@ SimpleController::SimpleController() : Node("simple_controller")
   a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
   a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
   a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
+  reverse_pause_duration_ = get_parameter("reverse_pause_duration").as_double();
+  wall_repulsion_gain_ = get_parameter("wall_repulsion_gain").as_double();
+  wall_repulsion_threshold_ = get_parameter("wall_repulsion_threshold").as_double();
+  wall_repulsion_max_steer_ = get_parameter("wall_repulsion_max_steer").as_double();
+  follow_distance_threshold_ = get_parameter("follow_distance_threshold").as_double();
+  follow_min_distance_ = get_parameter("follow_min_distance").as_double();
+  follow_speed_factor_ = get_parameter("follow_speed_factor").as_double();
   enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
   // Corner handling parameters (코너링 설정)
   corner_curvature_threshold_ = get_parameter("corner_curvature_threshold").as_double();
@@ -587,6 +601,112 @@ double SimpleController::compute_avoidance_steering(double lookahead_angle)
   return avoidance_steer;
 }
 
+/**
+ * @brief 벽 반발 조향 계산 (수식 기반)
+ * 
+ * 벽에 가까워지면 반발력 공식으로 조향각 계산:
+ *   steer = gain * (1/d - 1/d_max)  where d < d_max
+ * 
+ * 속도 감소 없이 조향만으로 벽에서 멀어지도록 함
+ */
+double SimpleController::compute_wall_repulsion_steering()
+{
+  // 최소 유효 거리 (센서 노이즈 방지)
+  constexpr double MIN_VALID_REPULSION_DIST = 0.03;
+  
+  // 측면 장애물 거리 (벽)
+  double left_dist = std::min(last_obstacle_left_dist_, 10.0);
+  double right_dist = std::min(last_obstacle_right_dist_, 10.0);
+  
+  double repulsion_steer = 0.0;
+  
+  // 왼쪽 벽이 가까우면 -> 오른쪽으로 조향 (음수)
+  if (left_dist < wall_repulsion_threshold_ && left_dist > MIN_VALID_REPULSION_DIST) {
+    // 반발력 공식: F = k * (1/d - 1/d_max)
+    double inv_d = 1.0 / left_dist;
+    double inv_d_max = 1.0 / wall_repulsion_threshold_;
+    double repulsion_force = wall_repulsion_gain_ * (inv_d - inv_d_max);
+    repulsion_steer -= repulsion_force;  // 오른쪽으로 (음수)
+  }
+  
+  // 오른쪽 벽이 가까우면 -> 왼쪽으로 조향 (양수)
+  if (right_dist < wall_repulsion_threshold_ && right_dist > MIN_VALID_REPULSION_DIST) {
+    double inv_d = 1.0 / right_dist;
+    double inv_d_max = 1.0 / wall_repulsion_threshold_;
+    double repulsion_force = wall_repulsion_gain_ * (inv_d - inv_d_max);
+    repulsion_steer += repulsion_force;  // 왼쪽으로 (양수)
+  }
+  
+  // 최대 반발 조향각 제한
+  repulsion_steer = std::clamp(repulsion_steer, -wall_repulsion_max_steer_, wall_repulsion_max_steer_);
+  
+  // 로그 출력 (활성화시)
+  if (std::abs(repulsion_steer) > 0.01) {
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "Wall repulsion: steer=%.3f, L=%.2fm, R=%.2fm",
+                          repulsion_steer, left_dist, right_dist);
+  }
+  
+  return repulsion_steer;
+}
+
+/**
+ * @brief 상대 차량 Following 속도 계산
+ * 
+ * 전방에 상대 차량이 있고 추월이 불가능할 때,
+ * 상대 차량과 안전 거리를 유지하며 따라가기
+ */
+double SimpleController::compute_opponent_following_speed(double base_speed)
+{
+  double front_dist = last_obstacle_front_dist_;
+  
+  // 전방 장애물이 following 거리 이내이고, A1 zone 아닌 경우
+  // Note: A1 threshold 체크는 is_in_a1_zone_ 플래그와 중복되지만 안전을 위해 둘 다 체크
+  if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
+    // 추월 가능 여부 확인
+    bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
+    
+    if (!can_overtake) {
+      // 추월 불가 -> Following 모드
+      if (!is_following_opponent_) {
+        is_following_opponent_ = true;
+        RCLCPP_INFO(this->get_logger(), "Cannot overtake, starting FOLLOWING mode at %.2fm", front_dist);
+      }
+      
+      // 거리에 따른 속도 조절
+      // 가까울수록 더 느리게 (최소 거리 이하면 정지에 가깝게)
+      double range = follow_distance_threshold_ - follow_min_distance_;
+      if (range < 0.01) {
+        range = 0.01;  // Division by zero 방지
+      }
+      double distance_ratio = (front_dist - follow_min_distance_) / range;
+      distance_ratio = std::clamp(distance_ratio, 0.1, 1.0);
+      
+      double following_speed = base_speed * follow_speed_factor_ * distance_ratio;
+      
+      RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                            "FOLLOWING: front=%.2fm, ratio=%.2f, speed=%.2f/%.2f",
+                            front_dist, distance_ratio, following_speed, base_speed);
+      
+      return following_speed;
+    } else {
+      // 추월 가능 -> Following 해제
+      if (is_following_opponent_) {
+        is_following_opponent_ = false;
+        RCLCPP_INFO(this->get_logger(), "Can overtake, exiting FOLLOWING mode");
+      }
+    }
+  } else {
+    // Following 범위 밖
+    if (is_following_opponent_) {
+      is_following_opponent_ = false;
+      RCLCPP_INFO(this->get_logger(), "Clear path, exiting FOLLOWING mode");
+    }
+  }
+  
+  return base_speed;
+}
+
 int SimpleController::find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead)
 {
     if (path.poses.empty()) return -1;
@@ -710,45 +830,76 @@ void SimpleController::control_loop()
   // 먼저 장애물 거리 업데이트
   update_obstacle_distances();
   
+  // === 후진 후 정지 상태 (생각 시간) ===
+  if (is_pausing_after_reverse_) {
+    double pause_elapsed = (current_time - pause_start_time_).seconds();
+    if (pause_elapsed < reverse_pause_duration_) {
+      // 정지 상태 유지
+      ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+      drive_msg.header.stamp = current_time;
+      drive_msg.header.frame_id = current_odom_.child_frame_id;
+      drive_msg.drive.speed = 0.0;
+      drive_msg.drive.steering_angle = 0.0;  // 조향 중립
+      
+      drive_pub_->publish(drive_msg);
+      
+      static int pause_log_count = 0;
+      if (pause_log_count++ % 25 == 0) {
+        RCLCPP_INFO(this->get_logger(), "PAUSING: %.2fs/%.2fs (thinking...)",
+                    pause_elapsed, reverse_pause_duration_);
+      }
+      return;
+    } else {
+      // 정지 완료, 출발
+      is_pausing_after_reverse_ = false;
+      RCLCPP_INFO(this->get_logger(), "Pause complete, resuming forward");
+    }
+  }
+  
   // A1 범위 체크: 후진 필요
   if (check_a1_zone()) {
     // Start or continue reversing
-    if (!is_reversing_) {
+    if (!is_reversing_ && !is_pausing_after_reverse_) {
       is_reversing_ = true;
       reverse_start_time_ = current_time;
-      last_steering_before_reverse_ = prev_steering_angle_;
-      RCLCPP_WARN(this->get_logger(), "A1 Zone! Starting reverse with opposite steering");
+      last_steering_before_reverse_ = prev_steering_angle_;  // 충돌 시 조향각 저장
+      RCLCPP_WARN(this->get_logger(), "A1 Zone! Starting reverse with SAME steering angle: %.3f", 
+                  last_steering_before_reverse_);
     }
     
     double elapsed = (current_time - reverse_start_time_).seconds();
     if (elapsed < reverse_duration_) {
-      // Continue reversing
-      double reverse_steer = compute_reverse_steering();
-      
+      // Continue reversing - 조향각 그대로 유지한 채 후진
       ackermann_msgs::msg::AckermannDriveStamped drive_msg;
       drive_msg.header.stamp = current_time;
       drive_msg.header.frame_id = current_odom_.child_frame_id;
       drive_msg.drive.speed = -reverse_speed_;
-      drive_msg.drive.steering_angle = reverse_steer;
+      drive_msg.drive.steering_angle = last_steering_before_reverse_;  // 조향각 유지!
       
       drive_pub_->publish(drive_msg);
       
       static int reverse_log_count = 0;
       if (reverse_log_count++ % 25 == 0) {
-        RCLCPP_INFO(this->get_logger(), "A1 REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
-                    -reverse_speed_, reverse_steer, elapsed, reverse_duration_);
+        RCLCPP_INFO(this->get_logger(), "A1 REVERSING: speed=%.2f, steer=%.3f (maintained), elapsed=%.2fs/%.2fs",
+                    -reverse_speed_, last_steering_before_reverse_, elapsed, reverse_duration_);
       }
       return;
     } else {
-      // Reverse complete
+      // Reverse complete, 이제 정지 시작 (생각 시간)
       is_reversing_ = false;
-      RCLCPP_INFO(this->get_logger(), "A1 Reverse complete, resuming forward");
+      is_pausing_after_reverse_ = true;
+      pause_start_time_ = current_time;
+      RCLCPP_INFO(this->get_logger(), "A1 Reverse complete, starting pause (thinking)...");
+      return;
     }
   } else {
     // Not in A1 zone, stop reversing if we were
     if (is_reversing_) {
       is_reversing_ = false;
-      RCLCPP_INFO(this->get_logger(), "Left A1 zone, stopping reverse");
+      is_pausing_after_reverse_ = true;
+      pause_start_time_ = current_time;
+      RCLCPP_INFO(this->get_logger(), "Left A1 zone, starting pause (thinking)...");
+      return;
     }
   }
 
@@ -951,6 +1102,12 @@ void SimpleController::control_loop()
     }
   }
   
+  // === 벽 반발 조향 (수식 기반) ===
+  // A1/A2 zone 밖에서도 벽에 가까우면 반발력으로 조향
+  // 속도 감소 없이 조향만으로 벽에서 멀어지도록 함
+  double wall_repulsion_steer = compute_wall_repulsion_steering();
+  steering_angle += wall_repulsion_steer;
+  
   // === 벽 충돌 시각화 ===
   // A1 zone (매우 가까움) 또는 벽 데이터 기반 충돌 감지
   bool is_wall_collision = is_in_a1_zone_ || 
@@ -978,8 +1135,8 @@ void SimpleController::control_loop()
   static int debug_count = 0;
   if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, A2Avoid=%.3f, steer=%.3f",
-                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, steering_angle);
+                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, A2Avoid=%.3f, WallRepel=%.3f, steer=%.3f",
+                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, wall_repulsion_steer, steering_angle);
   }
 
   // Speed control: Reduce speed based on path curvature (not amplified steering angle)
@@ -995,6 +1152,10 @@ void SimpleController::control_loop()
   }
   
   double adjusted_speed = target_speed_ * speed_factor;
+  
+  // === 상대 차량 Following ===
+  // 추월 불가시 속도 맞춰서 following
+  adjusted_speed = compute_opponent_following_speed(adjusted_speed);
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
