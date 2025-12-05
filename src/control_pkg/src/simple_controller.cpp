@@ -1740,10 +1740,7 @@ bool SimpleController::detect_upcoming_corner(int current_idx, double& corner_di
     return false;
   }
   look_ahead_points = std::min(look_ahead_points, remaining_points);
-  
-  if (look_ahead_points < 3) {
-    return false;
-  }
+  // look_ahead_points는 remaining_points 이하이므로 별도 체크 불필요
   
   // 곡률 계산
   double max_curvature = 0.0;

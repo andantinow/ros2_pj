@@ -105,10 +105,10 @@ private:
   // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
   // wall_repulsion_threshold: 벽 반발 시작 거리 (기본값 0.20m)
   // 참고: 충돌 회피 우선순위: A1(후진) < A2(급조향) < wall_repulsion(반발조향)
-  //       예: 12cm < 12cm < 20cm (a1 < a2 < wall_repulsion_threshold)
-  double a1_threshold_ = 0.12;             // A1 범위: 후진 트리거 거리 (meters) - 12cm (0.05 -> 0.12로 변경)
-  double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
-  double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
+  //       예: 12cm < 40cm (a1 < a2)
+  double a1_threshold_ = 0.12;             // A1 범위: 후진 트리거 거리 (meters) - 12cm
+  double a2_threshold_ = 0.40;             // A2 범위: 조향 회피 거리 (meters) - 40cm (a1보다 커야 함)
+  double a2_urgent_threshold_ = 0.25;      // A2 긴급 범위: 25cm 이내시 강한 조향
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
   double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율
   double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율
