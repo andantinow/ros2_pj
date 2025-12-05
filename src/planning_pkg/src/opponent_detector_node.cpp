@@ -32,6 +32,7 @@
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include "planning_pkg/opponent_detector.hpp"
 #include <vector>
