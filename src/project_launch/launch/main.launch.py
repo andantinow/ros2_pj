@@ -22,7 +22,7 @@ def generate_launch_description():
     # launch arguments
     declare_map_name = DeclareLaunchArgument(
         'map_name',
-        default_value='teras',
+        default_value='small_hall_orig',
         description='Map name (e.g., teras, silverstone).'
     )
 
