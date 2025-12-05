@@ -3,6 +3,8 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 #include <rclcpp/qos.hpp>
@@ -61,6 +63,17 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("corner_curvature_threshold", corner_curvature_threshold_);
   declare_parameter("corner_speed_factor", corner_speed_factor_);
   declare_parameter("corner_steer_amplify", corner_steer_amplify_);
+  // Out-In-Out 코너링 파라미터
+  declare_parameter("corner_approach_distance", corner_approach_distance_);
+  declare_parameter("out_in_out_offset", out_in_out_offset_);
+  declare_parameter("enable_out_in_out", enable_out_in_out_);
+  // 추월 시스템 파라미터
+  declare_parameter("overtake_max_duration", overtake_max_duration_);
+  declare_parameter("overtake_lateral_offset", overtake_lateral_offset_);
+  declare_parameter("return_to_line_distance", return_to_line_distance_);
+  declare_parameter("min_overtake_gap", min_overtake_gap_);
+  // 벽 데이터 파일 경로
+  declare_parameter<std::string>("wall_data_file", "");
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
   min_lookahead_ = get_parameter("min_lookahead").as_double();
@@ -104,6 +117,23 @@ SimpleController::SimpleController() : Node("simple_controller")
   corner_curvature_threshold_ = get_parameter("corner_curvature_threshold").as_double();
   corner_speed_factor_ = get_parameter("corner_speed_factor").as_double();
   corner_steer_amplify_ = get_parameter("corner_steer_amplify").as_double();
+  // Out-In-Out 코너링 파라미터
+  corner_approach_distance_ = get_parameter("corner_approach_distance").as_double();
+  out_in_out_offset_ = get_parameter("out_in_out_offset").as_double();
+  enable_out_in_out_ = get_parameter("enable_out_in_out").as_bool();
+  // 추월 시스템 파라미터
+  overtake_max_duration_ = get_parameter("overtake_max_duration").as_double();
+  overtake_lateral_offset_ = get_parameter("overtake_lateral_offset").as_double();
+  return_to_line_distance_ = get_parameter("return_to_line_distance").as_double();
+  min_overtake_gap_ = get_parameter("min_overtake_gap").as_double();
+  
+  // 벽 데이터 로드
+  std::string wall_data_file = get_parameter("wall_data_file").as_string();
+  if (!wall_data_file.empty()) {
+    if (load_wall_data(wall_data_file)) {
+      RCLCPP_INFO(this->get_logger(), "Wall data loaded: %zu points", wall_data_.size());
+    }
+  }
   
   prev_time_ = this->get_clock()->now();
   reverse_start_time_ = this->get_clock()->now();
@@ -136,6 +166,16 @@ SimpleController::SimpleController() : Node("simple_controller")
   // Lookahead point visualization marker publisher (빨간 점으로 표시)
   lookahead_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
       "/pid_lookahead_point",
+      rclcpp::QoS(1));
+  
+  // 추월 경로 시각화 publisher (녹색 라인)
+  overtake_path_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+      "/overtake_path",
+      rclcpp::QoS(1));
+  
+  // 벽 충돌 시각화 publisher (충돌시 빨간색)
+  wall_collision_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>(
+      "/wall_collision_indicator",
       rclcpp::QoS(1));
   
   RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, publishing to drive: %s", 
@@ -840,6 +880,22 @@ void SimpleController::control_loop()
   // 6) 코너 감지 및 조향각 증폭 - 코너에서 더 큰 각도로 회전 (A2 회피 전에 적용)
   // 경로 곡률이 임계값 이상이면 코너로 판단하고 경로 추종 조향각만 증폭
   bool is_corner = std::abs(path_curvature) > corner_curvature_threshold_;
+  
+  // === 아웃-인-아웃 (Out-In-Out) 코너링 ===
+  double corner_direction = 0.0;
+  double out_in_out_steer_offset = 0.0;
+  if (enable_out_in_out_ && detect_upcoming_corner(closest_idx, corner_direction)) {
+    // 코너 진입 전: 반대 방향으로 살짝 조향 (아웃)
+    double offset = compute_out_in_out_offset(closest_idx, corner_direction);
+    // 오프셋을 조향각으로 변환 (횡방향 이동을 위한 조향)
+    out_in_out_steer_offset = -offset * 0.5;  // gain 0.5
+    
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "OUT-IN-OUT: corner_dir=%.1f, offset=%.3f, steer_offset=%.3f",
+                          corner_direction, offset, out_in_out_steer_offset);
+  }
+  steering_angle += out_in_out_steer_offset;
+  
   if (is_corner) {
     // 코너에서 조향각 증폭 (corner_steer_amplify_ 배) - 경로 추종 조향에만 적용
     steering_angle *= corner_steer_amplify_;
@@ -851,18 +907,57 @@ void SimpleController::control_loop()
   // 7) A2 범위 기반 회피 조향 추가 - 코너 증폭 후에 별도로 추가
   // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
-  if (!is_in_a1_zone_ && check_a2_zone()) {
+  bool in_a2_zone = !is_in_a1_zone_ && check_a2_zone();
+  
+  if (in_a2_zone) {
     // alpha = lookahead point 방향 각도 (차량 프레임 기준)
     delta_a2_avoidance = compute_avoidance_steering(alpha);
+    
+    // === 추월 시스템 ===
+    // 전방 장애물이 감지되면 추월 시도
+    if (!is_overtaking_ && can_overtake_safely(last_obstacle_front_dist_, last_obstacle_angle_)) {
+      is_overtaking_ = true;
+      overtake_start_time_ros_ = current_time;
+      RCLCPP_INFO(this->get_logger(), "Starting overtake maneuver");
+    }
+    
+    if (is_overtaking_) {
+      // 추월 중: 더 적극적인 회피 조향 + 속도 유지
+      delta_a2_avoidance = compute_overtake_steering(delta_a2_avoidance);
+      
+      // 추월 완료 확인
+      if (should_return_to_line()) {
+        is_overtaking_ = false;
+        RCLCPP_INFO(this->get_logger(), "Overtake complete, returning to racing line");
+      }
+    }
+    
     steering_angle += delta_a2_avoidance;  // 회피 조향은 증폭되지 않고 그대로 추가
     
     // 장애물 회피 시 속도 유지 - 반대 조향으로 회피하므로 느려지지 않음
-    // a2_slowdown_factor = 1.0 (속도 유지)
+    // 추월 중에는 더 빠르게 유지
     
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                          "A2 Zone: steer=%.3f, maintaining speed with opposite steering", 
-                          delta_a2_avoidance);
+                          "A2 Zone: steer=%.3f, overtaking=%s", 
+                          delta_a2_avoidance, is_overtaking_ ? "true" : "false");
+  } else if (is_overtaking_) {
+    // A2 zone을 벗어났지만 아직 추월 중이면 라인 복귀
+    double return_steer = compute_return_to_line_steering();
+    steering_angle += return_steer;
+    
+    if (should_return_to_line()) {
+      is_overtaking_ = false;
+      RCLCPP_INFO(this->get_logger(), "Returned to racing line");
+    }
   }
+  
+  // === 벽 충돌 시각화 ===
+  // A1 zone (매우 가까움) 또는 벽 데이터 기반 충돌 감지
+  bool is_wall_collision = is_in_a1_zone_ || 
+                           last_obstacle_front_dist_ < 0.15 ||
+                           last_obstacle_left_dist_ < 0.1 ||
+                           last_obstacle_right_dist_ < 0.1;
+  publish_wall_collision_indicator(is_wall_collision, current_x, current_y);
 
   // Clamp to physical steering limits
   steering_angle = std::clamp(steering_angle, -max_steer_angle_, max_steer_angle_);
@@ -1173,4 +1268,383 @@ void SimpleController::publish_lookahead_marker(double x, double y, double z)
   marker.lifetime = rclcpp::Duration::from_seconds(0.2);  // 200ms lifetime for stable visualization
   
   lookahead_marker_pub_->publish(marker);
+}
+
+// ============================================================================
+// 새로운 기능들: 벽 인식, 아웃-인-아웃, 추월, 시각화
+// ============================================================================
+
+bool SimpleController::load_wall_data(const std::string& csv_file)
+{
+  std::ifstream file(csv_file);
+  if (!file.is_open()) {
+    RCLCPP_WARN(this->get_logger(), "Failed to open wall data file: %s", csv_file.c_str());
+    return false;
+  }
+  
+  wall_data_.clear();
+  std::string line;
+  int line_num = 0;
+  int parse_errors = 0;
+  
+  // 헤더 스킵
+  std::getline(file, line);
+  line_num++;
+  
+  while (std::getline(file, line)) {
+    line_num++;
+    if (line.empty()) continue;
+    
+    std::stringstream ss(line);
+    WallPoint point;
+    char comma;
+    
+    // CSV 파싱 with validation
+    if (ss >> point.x >> comma >> point.y >> comma >> point.d_left >> comma >> point.d_right >> comma >> point.psi) {
+      // 값 범위 검증
+      if (std::isfinite(point.x) && std::isfinite(point.y) &&
+          std::isfinite(point.d_left) && std::isfinite(point.d_right) &&
+          std::isfinite(point.psi) &&
+          point.d_left >= 0.0 && point.d_right >= 0.0) {
+        wall_data_.push_back(point);
+      } else {
+        parse_errors++;
+        if (parse_errors <= 3) {
+          RCLCPP_WARN(this->get_logger(), "Invalid wall data at line %d: values out of range", line_num);
+        }
+      }
+    } else {
+      parse_errors++;
+      if (parse_errors <= 3) {
+        RCLCPP_WARN(this->get_logger(), "Failed to parse wall data at line %d", line_num);
+      }
+    }
+  }
+  
+  if (parse_errors > 3) {
+    RCLCPP_WARN(this->get_logger(), "... and %d more parsing errors", parse_errors - 3);
+  }
+  
+  wall_data_loaded_ = !wall_data_.empty();
+  if (wall_data_loaded_) {
+    RCLCPP_INFO(this->get_logger(), "Wall data loaded: %zu valid points from %s", 
+                wall_data_.size(), csv_file.c_str());
+  }
+  return wall_data_loaded_;
+}
+
+size_t SimpleController::find_closest_wall_point(double x, double y)
+{
+  if (wall_data_.empty()) {
+    return 0;
+  }
+  
+  // 지역 검색: 마지막 검색 위치 근처에서 먼저 검색 (O(1) 평균)
+  size_t search_range = 50;  // 주변 50개 포인트 검색
+  size_t start_idx = (last_wall_search_idx_ > search_range) ? 
+                      last_wall_search_idx_ - search_range : 0;
+  size_t end_idx = std::min(last_wall_search_idx_ + search_range, wall_data_.size());
+  
+  double min_dist_sq = std::numeric_limits<double>::max();
+  size_t closest_idx = last_wall_search_idx_;
+  
+  // 지역 검색
+  for (size_t i = start_idx; i < end_idx; ++i) {
+    double dx = wall_data_[i].x - x;
+    double dy = wall_data_[i].y - y;
+    double dist_sq = dx * dx + dy * dy;
+    if (dist_sq < min_dist_sq) {
+      min_dist_sq = dist_sq;
+      closest_idx = i;
+    }
+  }
+  
+  // 지역 검색에서 너무 멀면 전체 검색
+  if (min_dist_sq > 4.0) {  // 2m 이상 떨어져 있으면
+    for (size_t i = 0; i < wall_data_.size(); ++i) {
+      double dx = wall_data_[i].x - x;
+      double dy = wall_data_[i].y - y;
+      double dist_sq = dx * dx + dy * dy;
+      if (dist_sq < min_dist_sq) {
+        min_dist_sq = dist_sq;
+        closest_idx = i;
+      }
+    }
+  }
+  
+  last_wall_search_idx_ = closest_idx;
+  return closest_idx;
+}
+
+double SimpleController::get_wall_distance_left(double x, double y)
+{
+  if (!wall_data_loaded_ || wall_data_.empty()) {
+    return 10.0;  // 기본값: 충분히 멀다고 가정
+  }
+  
+  size_t closest_idx = find_closest_wall_point(x, y);
+  return wall_data_[closest_idx].d_left;
+}
+
+double SimpleController::get_wall_distance_right(double x, double y)
+{
+  if (!wall_data_loaded_ || wall_data_.empty()) {
+    return 10.0;
+  }
+  
+  size_t closest_idx = find_closest_wall_point(x, y);
+  return wall_data_[closest_idx].d_right;
+}
+
+bool SimpleController::detect_upcoming_corner(int current_idx, double& corner_direction)
+{
+  if (current_path_.poses.empty() || current_idx < 0) {
+    return false;
+  }
+  
+  // 전방 몇 포인트를 확인하여 코너 감지
+  int look_ahead_points = static_cast<int>(corner_approach_distance_ / 0.1);  // 0.1m spacing 가정
+  look_ahead_points = std::min(look_ahead_points, static_cast<int>(current_path_.poses.size()) - current_idx - 2);
+  
+  if (look_ahead_points < 3) {
+    return false;
+  }
+  
+  // 곡률 계산
+  double max_curvature = 0.0;
+  double curvature_sign = 0.0;
+  
+  for (int i = current_idx; i < current_idx + look_ahead_points - 1; ++i) {
+    double curvature = compute_path_curvature(current_path_, i);
+    if (std::abs(curvature) > std::abs(max_curvature)) {
+      max_curvature = curvature;
+      curvature_sign = (curvature > 0) ? 1.0 : -1.0;
+    }
+  }
+  
+  // 코너 감지 (곡률이 임계값 이상)
+  if (std::abs(max_curvature) > corner_curvature_threshold_) {
+    corner_direction = curvature_sign;  // 양수: 왼쪽, 음수: 오른쪽
+    return true;
+  }
+  
+  return false;
+}
+
+double SimpleController::compute_out_in_out_offset(int current_idx, double corner_direction)
+{
+  if (!enable_out_in_out_) {
+    return 0.0;
+  }
+  
+  // 코너 방향의 반대쪽으로 오프셋 (아웃-인-아웃)
+  // corner_direction > 0: 왼쪽 코너 -> 오른쪽으로 아웃 (음수 오프셋)
+  // corner_direction < 0: 오른쪽 코너 -> 왼쪽으로 아웃 (양수 오프셋)
+  double offset = -corner_direction * out_in_out_offset_;
+  
+  // 벽 데이터가 있으면 벽까지 거리 확인
+  if (wall_data_loaded_) {
+    double current_x = current_odom_.pose.pose.position.x;
+    double current_y = current_odom_.pose.pose.position.y;
+    
+    double wall_left = get_wall_distance_left(current_x, current_y);
+    double wall_right = get_wall_distance_right(current_x, current_y);
+    
+    // 벽에 너무 가까워지지 않도록 오프셋 제한
+    double safety_margin = 0.3;
+    if (offset > 0 && offset > wall_left - safety_margin) {
+      offset = std::max(0.0, wall_left - safety_margin);
+    } else if (offset < 0 && -offset > wall_right - safety_margin) {
+      offset = -std::max(0.0, wall_right - safety_margin);
+    }
+  }
+  
+  return offset;
+}
+
+bool SimpleController::can_overtake_safely(double opponent_dist, double opponent_angle)
+{
+  if (!enable_collision_avoidance_) {
+    return false;
+  }
+  
+  // 상대방이 일정 거리 이내이고, 전방에 있는 경우
+  bool opponent_in_front = std::abs(opponent_angle) < M_PI / 4.0;  // ±45도 이내
+  bool opponent_close = opponent_dist < 3.0 && opponent_dist > 0.5;  // 0.5m ~ 3m
+  
+  if (!opponent_in_front || !opponent_close) {
+    return false;
+  }
+  
+  // 추월 가능한 간격이 있는지 확인
+  double left_space = last_obstacle_left_dist_;
+  double right_space = last_obstacle_right_dist_;
+  
+  // 최소 추월 간격 이상인 방향이 있어야 함
+  bool can_overtake_left = left_space > min_overtake_gap_;
+  bool can_overtake_right = right_space > min_overtake_gap_;
+  
+  // 벽 데이터가 있으면 추가 확인
+  if (wall_data_loaded_) {
+    double current_x = current_odom_.pose.pose.position.x;
+    double current_y = current_odom_.pose.pose.position.y;
+    
+    double wall_left = get_wall_distance_left(current_x, current_y);
+    double wall_right = get_wall_distance_right(current_x, current_y);
+    
+    can_overtake_left = can_overtake_left && (wall_left > overtake_lateral_offset_ + 0.3);
+    can_overtake_right = can_overtake_right && (wall_right > overtake_lateral_offset_ + 0.3);
+  }
+  
+  return can_overtake_left || can_overtake_right;
+}
+
+double SimpleController::compute_overtake_steering(double base_steering)
+{
+  if (!is_overtaking_) {
+    return base_steering;
+  }
+  
+  // 추월 중일 때 추가 조향 계산
+  double left_space = last_obstacle_left_dist_;
+  double right_space = last_obstacle_right_dist_;
+  
+  // 더 넓은 쪽으로 추월
+  double overtake_direction = (left_space > right_space) ? 1.0 : -1.0;
+  
+  // 추월 조향각 = 기본 조향 + 추월 오프셋
+  double overtake_steer = base_steering + overtake_direction * 0.2;  // 약 11도 추가 조향
+  
+  // 최대 조향각 제한
+  overtake_steer = std::clamp(overtake_steer, -max_steer_angle_, max_steer_angle_);
+  
+  // 추월 경로 시각화
+  publish_overtake_path(overtake_direction);
+  
+  return overtake_steer;
+}
+
+bool SimpleController::should_return_to_line()
+{
+  if (!is_overtaking_) {
+    return false;
+  }
+  
+  rclcpp::Time current_time = this->get_clock()->now();
+  double elapsed = (current_time - overtake_start_time_ros_).seconds();
+  
+  // 최대 추월 시간 초과
+  if (elapsed > overtake_max_duration_) {
+    RCLCPP_INFO(this->get_logger(), "Overtake timeout, returning to line");
+    return true;
+  }
+  
+  // 전방에 장애물 없음 (추월 완료)
+  if (last_obstacle_front_dist_ > return_to_line_distance_) {
+    RCLCPP_INFO(this->get_logger(), "Overtake complete, returning to line");
+    return true;
+  }
+  
+  return false;
+}
+
+double SimpleController::compute_return_to_line_steering()
+{
+  // 레이싱 라인으로 부드럽게 복귀
+  // 현재 횡방향 오차를 기반으로 복귀 조향 계산
+  double current_x = current_odom_.pose.pose.position.x;
+  double current_y = current_odom_.pose.pose.position.y;
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  // 경로상 가장 가까운 점 찾기
+  static int last_closest_idx = 0;
+  int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, 
+                                                   current_path_, last_closest_idx);
+  last_closest_idx = closest_idx;
+  
+  // 횡방향 오차 계산
+  double lateral_error = compute_lateral_error(current_x, current_y, current_yaw, 
+                                                current_path_, closest_idx);
+  
+  // 복귀 조향 = 횡방향 오차에 비례하는 조향 (부드럽게)
+  double return_steer = -lateral_error * 0.5;  // gain 0.5
+  
+  return std::clamp(return_steer, -max_steer_angle_ * 0.5, max_steer_angle_ * 0.5);
+}
+
+void SimpleController::publish_overtake_path(double offset_direction)
+{
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = "map";
+  marker.header.stamp = this->get_clock()->now();
+  marker.ns = "overtake_path";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  
+  marker.scale.x = 0.1;  // 라인 두께
+  
+  // 녹색 라인
+  marker.color.r = 0.0f;
+  marker.color.g = 1.0f;
+  marker.color.b = 0.0f;
+  marker.color.a = 0.8f;
+  
+  marker.pose.orientation.w = 1.0;
+  
+  // 현재 위치에서 전방 추월 경로 표시
+  double current_x = current_odom_.pose.pose.position.x;
+  double current_y = current_odom_.pose.pose.position.y;
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  for (double dist = 0.0; dist < 3.0; dist += 0.2) {
+    geometry_msgs::msg::Point p;
+    // 추월 방향으로 오프셋된 경로
+    double lateral_offset = offset_direction * overtake_lateral_offset_ * 
+                           std::sin(dist / 3.0 * M_PI);  // 부드러운 곡선
+    
+    p.x = current_x + dist * std::cos(current_yaw) - lateral_offset * std::sin(current_yaw);
+    p.y = current_y + dist * std::sin(current_yaw) + lateral_offset * std::cos(current_yaw);
+    p.z = 0.1;
+    marker.points.push_back(p);
+  }
+  
+  marker.lifetime = rclcpp::Duration::from_seconds(0.3);
+  overtake_path_marker_pub_->publish(marker);
+}
+
+void SimpleController::publish_wall_collision_indicator(bool is_colliding, double x, double y)
+{
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = "map";
+  marker.header.stamp = this->get_clock()->now();
+  marker.ns = "wall_collision";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::SPHERE;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  
+  marker.pose.position.x = x;
+  marker.pose.position.y = y;
+  marker.pose.position.z = 0.5;
+  marker.pose.orientation.w = 1.0;
+  
+  // 충돌 시 빨간색, 아니면 녹색
+  marker.scale.x = 0.5;
+  marker.scale.y = 0.5;
+  marker.scale.z = 0.5;
+  
+  if (is_colliding) {
+    marker.color.r = 1.0f;
+    marker.color.g = 0.0f;
+    marker.color.b = 0.0f;
+    marker.color.a = 1.0f;
+  } else {
+    marker.color.r = 0.0f;
+    marker.color.g = 1.0f;
+    marker.color.b = 0.0f;
+    marker.color.a = 0.5f;
+  }
+  
+  marker.lifetime = rclcpp::Duration::from_seconds(0.2);
+  wall_collision_marker_pub_->publish(marker);
 }

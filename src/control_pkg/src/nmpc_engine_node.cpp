@@ -87,7 +87,7 @@ struct MPCConfig
   double track_boundary_margin = 0.05;  // Additional margin for track boundaries [m]
   
   // Constraints
-  double max_steer = 0.436;       // Maximum steering angle [rad] (25 degrees)
+  double max_steer = 0.6458;      // Maximum steering angle [rad] (37 degrees - increased from 25)
   double max_steer_rate = 1.8;    // Maximum steering rate [rad/s] (increased for responsiveness)
   double max_accel = 4.0;         // Maximum acceleration [m/s^2] (increased)
   double min_accel = -6.0;        // Maximum deceleration [m/s^2] (increased for safety)
@@ -909,7 +909,7 @@ public:
     declare_parameter("vehicle_inertia", 0.04);           // Yaw moment of inertia [kg*m^2]
     
     // Constraints
-    declare_parameter("max_steer", 0.436);  // 25 degrees in radians
+    declare_parameter("max_steer", 0.6458);  // 37 degrees in radians (Changed from 25)
     declare_parameter("max_steer_rate", 1.8);  // rad/s (increased)
     declare_parameter("max_speed", 6.0);       // Increased max speed
     declare_parameter("max_accel", 4.0);       // Increased acceleration
@@ -924,16 +924,16 @@ public:
     
     // A1/A2 collision avoidance parameters (Repulsive Force based)
     declare_parameter("a1_threshold", 0.3);            // A1 range: reverse trigger distance (meters) - 30cm for safety
-    declare_parameter("a2_threshold", 0.8);            // A2 range: repulsive force activation distance (meters) - 80cm
-    declare_parameter("a2_urgent_threshold", 0.3);     // A2 urgent range: amplified force when < 0.3m
+    declare_parameter("a2_threshold", 0.2);            // A2 range: repulsive force activation distance (meters) - 20cm (Changed from 80cm)
+    declare_parameter("a2_urgent_threshold", 0.15);    // A2 urgent range: amplified force when < 0.15m (Changed from 0.3m)
     declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
-    declare_parameter("a2_max_steer_ratio", 0.7);     // A2 max steering ratio - allows partial correction
+    declare_parameter("a2_max_steer_ratio", 1.0);     // A2 max steering ratio - full steering for aggressive avoidance
     declare_parameter("a2_urgent_steer_ratio", 1.0);  // A2 urgent: full steering allowed
     declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
     declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
     declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
-    declare_parameter("a2_steer_gain", 0.6);          // A2 repulsive force gain - moderate to blend with NMPC
-    declare_parameter("a2_urgent_steer_gain", 1.2);   // A2 urgent repulsive force gain (2x normal)
+    declare_parameter("a2_steer_gain", 1.5);          // A2 repulsive force gain - HIGH to override NMPC (Changed from 0.6)
+    declare_parameter("a2_urgent_steer_gain", 2.0);   // A2 urgent repulsive force gain - VERY HIGH (Changed from 1.2)
     declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
 
     // Get parameters
