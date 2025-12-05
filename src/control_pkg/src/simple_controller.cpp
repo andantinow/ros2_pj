@@ -837,13 +837,24 @@ void SimpleController::control_loop()
   // 5) Raw sum: delta_raw = delta_pp + delta_pid + delta_stanley + delta_ff
   double steering_angle = delta_pp + delta_pid + delta_stanley + delta_ff;
   
-  // 6) A2 범위 기반 회피 조향 추가 - lookahead 방향(alpha) 기준 gap following
+  // 6) 코너 감지 및 조향각 증폭 - 코너에서 더 큰 각도로 회전 (A2 회피 전에 적용)
+  // 경로 곡률이 임계값 이상이면 코너로 판단하고 경로 추종 조향각만 증폭
+  bool is_corner = std::abs(path_curvature) > corner_curvature_threshold_;
+  if (is_corner) {
+    // 코너에서 조향각 증폭 (corner_steer_amplify_ 배) - 경로 추종 조향에만 적용
+    steering_angle *= corner_steer_amplify_;
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "CORNER detected: curvature=%.3f, steer amplified by %.2fx",
+                          path_curvature, corner_steer_amplify_);
+  }
+  
+  // 7) A2 범위 기반 회피 조향 추가 - 코너 증폭 후에 별도로 추가
   // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
   double delta_a2_avoidance = 0.0;
   if (!is_in_a1_zone_ && check_a2_zone()) {
     // alpha = lookahead point 방향 각도 (차량 프레임 기준)
     delta_a2_avoidance = compute_avoidance_steering(alpha);
-    steering_angle += delta_a2_avoidance;
+    steering_angle += delta_a2_avoidance;  // 회피 조향은 증폭되지 않고 그대로 추가
     
     // 장애물 회피 시 속도 유지 - 반대 조향으로 회피하므로 느려지지 않음
     // a2_slowdown_factor = 1.0 (속도 유지)
@@ -851,17 +862,6 @@ void SimpleController::control_loop()
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
                           "A2 Zone: steer=%.3f, maintaining speed with opposite steering", 
                           delta_a2_avoidance);
-  }
-
-  // 7) 코너 감지 및 조향각 증폭 - 코너에서 더 큰 각도로 회전
-  // 경로 곡률이 임계값 이상이면 코너로 판단하고 조향각을 증폭
-  bool is_corner = std::abs(path_curvature) > corner_curvature_threshold_;
-  if (is_corner) {
-    // 코너에서 조향각 증폭 (corner_steer_amplify_ 배)
-    steering_angle *= corner_steer_amplify_;
-    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER detected: curvature=%.3f, steer amplified by %.2fx",
-                          path_curvature, corner_steer_amplify_);
   }
 
   // Clamp to physical steering limits
@@ -887,10 +887,9 @@ void SimpleController::control_loop()
                 lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, steering_angle);
   }
 
-  // Speed control: Reduce speed based on curvature and corners
-  // A2 회피 시에는 반대 조향으로 회피하므로 속도 유지
-  double curvature = std::abs(steering_angle) / wheelbase_;
-  double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
+  // Speed control: Reduce speed based on path curvature (not amplified steering angle)
+  // path_curvature 를 직접 사용하여 증폭된 조향각으로 인한 과도한 속도 감소 방지
+  double speed_factor = 1.0 / (1.0 + 2.0 * std::abs(path_curvature));
   
   // 코너에서 추가 속도 감소 적용
   if (is_corner) {
