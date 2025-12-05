@@ -93,23 +93,40 @@ private:
   bool use_path_interpolation_ = true;
   
   // === A1/A2 범위 기반 충돌 회피 시스템 ===
-  // A1 범위: 좁은 범위 - 이 범위 안에 들어오면 후진 + 반대방향 조향
-  // A2 범위: 넓은 범위 - A1보다 넓지만 이 범위 안에 들어오면 조향만 반대방향으로
-  double a1_threshold_ = 0.1;              // A1 범위: 후진 트리거 거리 (meters) - 0.1m
-  double a2_threshold_ = 0.2;              // A2 범위: 조향 회피 거리 (meters) - 0.2m (Changed from 0.4m)
-  double a2_urgent_threshold_ = 0.15;      // A2 긴급 범위: 0.15m 이내시 급격한 조향 (Changed from 0.25m)
+  // A1 범위: 매우 좁은 범위 - 이 범위 안에 들어오면 후진 + 조향각 유지
+  // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
+  // 참고: A1 < A2 < wall_repulsion_threshold 순서로 설정해야 함
+  //       (8cm < 12cm < 20cm: 후진 < 급조향 < 반발조향)
+  double a1_threshold_ = 0.08;             // A1 범위: 후진 트리거 거리 (meters) - 8cm
+  double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
+  double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
   double a1_side_factor_ = 0.8;           // A1 측면 거리 팩터 (a1_threshold * 이 값)
-  double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율 - 완전 반대 조향
-  double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율 - 완전 반대 조향
-  double reverse_speed_ = 1.0;             // 후진 속도 (m/s) - 더 시원하게
-  double reverse_duration_ = 0.8;         // 후진 지속 시간 (seconds)
-  double a1_steer_gain_ = 0.8;            // A1 범위에서 후진 시 조향 강도
-  double a2_steer_gain_ = 1.0;             // A2 범위에서 회피 조향 강도 - 완전 반대 조향
-  double a2_urgent_steer_gain_ = 1.5;     // A2 긴급시 조향 강도 - 0.4m 이내시 1.5배 강화 (NEW)
-  bool is_reversing_ = false;             // 현재 후진 중인지
-  bool is_in_a1_zone_ = false;            // 현재 A1 범위에 있는지 (중복 체크 방지)
-  rclcpp::Time reverse_start_time_;       // 후진 시작 시간
-  double last_steering_before_reverse_ = 0.0;  // 후진 전 조향각
+  double a2_max_steer_ratio_ = 1.0;        // A2 최대 조향 비율
+  double a2_urgent_steer_ratio_ = 1.0;     // A2 긴급시 최대 조향 비율
+  double reverse_speed_ = 1.0;             // 후진 속도 (m/s)
+  double reverse_duration_ = 0.6;          // 후진 지속 시간 (seconds) - 더 짧게
+  double reverse_pause_duration_ = 0.3;    // 후진 후 정지 시간 (seconds) - 생각 시간
+  double a1_steer_gain_ = 0.8;             // A1 범위에서 후진 시 조향 강도
+  double a2_steer_gain_ = 1.0;             // A2 범위에서 회피 조향 강도
+  double a2_urgent_steer_gain_ = 1.5;      // A2 긴급시 조향 강도
+  bool is_reversing_ = false;              // 현재 후진 중인지
+  bool is_pausing_after_reverse_ = false;  // 후진 후 정지 중인지 (생각 시간)
+  bool is_in_a1_zone_ = false;             // 현재 A1 범위에 있는지 (중복 체크 방지)
+  rclcpp::Time reverse_start_time_;        // 후진 시작 시간
+  rclcpp::Time pause_start_time_;          // 정지 시작 시간
+  double last_steering_before_reverse_ = 0.0;  // 충돌 시 조향각 (유지용)
+  
+  // === 벽 반발 조향 시스템 (수식 기반) ===
+  // 벽에 가까워지면 반발력으로 조향 (속도 감소 없이)
+  double wall_repulsion_gain_ = 0.8;       // 벽 반발 조향 게인
+  double wall_repulsion_threshold_ = 0.20; // 벽 반발 시작 거리 (20cm)
+  double wall_repulsion_max_steer_ = 0.3;  // 최대 반발 조향각 (rad, ~17도)
+  
+  // === 상대 차량 Following 시스템 ===
+  bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
+  double follow_distance_threshold_ = 3.0; // following 시작 거리 (m)
+  double follow_min_distance_ = 1.5;       // 최소 유지 거리 (m)
+  double follow_speed_factor_ = 0.9;       // following 시 속도 비율 (상대 속도의 90%)
   
   // 장애물 위치 정보 (회피 방향 결정용)
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
@@ -149,6 +166,8 @@ private:
   void update_obstacle_distances();         // 장애물 거리 업데이트
   double find_gap_center_angle(double lookahead_angle);  // lookahead 방향 기준 장애물 사이 중간점 각도 계산
   void publish_lookahead_marker(double x, double y, double z);  // Lookahead 시각화
+  double compute_wall_repulsion_steering(); // 벽 반발 조향 계산 (수식 기반)
+  double compute_opponent_following_speed(double base_speed);  // 상대 차량 following 속도 계산
   
   // === 새로운 기능들 ===
   bool load_wall_data(const std::string& csv_file);  // 벽 데이터 CSV 로드
