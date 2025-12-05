@@ -45,6 +45,22 @@ dual_ekf_node:
     global_process_noise_pos: 0.01   # Position process noise
     global_process_noise_vel: 0.1    # Velocity process noise in global EKF
     
+    # Outlier rejection using Mahalanobis distance (squared)
+    # The Mahalanobis distance threshold determines when measurements are rejected as outliers
+    # Chi-squared thresholds for 3 DOF: 95% ≈ 7.8, 99% ≈ 11.3
+    # Value of 10.0 chosen to balance between:
+    # - Accepting valid measurements during transient states (collision recovery, sudden maneuvers)
+    # - Still rejecting severe outliers that could destabilize the filter
+    # Log showed rejections at distances 8.80 and 5.39 with default threshold of 5.0
+    mahalanobis_threshold: 10.0
+    
+    # Covariance bounds to prevent numerical instability
+    # These are variance values (units: squared state units, e.g., m^2 for position, (m/s)^2 for velocity)
+    # min_covariance: Prevents filter from becoming overconfident (near-zero variance = numerical issues)
+    # max_covariance: Prevents filter from becoming too uncertain (very high variance = slow convergence)
+    min_covariance: 0.0001       # Minimum variance for any state (prevents singularity)
+    max_covariance: 100.0        # Maximum variance for any state (prevents divergence)
+    
     # TF broadcasting
     publish_tf: true
 
