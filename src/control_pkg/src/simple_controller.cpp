@@ -1797,11 +1797,10 @@ bool SimpleController::can_overtake_safely(double opponent_dist, double opponent
   double current_y = current_odom_.pose.pose.position.y;
   double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
   
-  // 현재 위치에서 가장 가까운 경로 인덱스 찾기
-  static int last_closest_idx_overtake = 0;
+  // 현재 위치에서 가장 가까운 경로 인덱스 찾기 (멤버 변수 사용)
   int closest_idx = find_closest_point_along_path(current_x, current_y, current_yaw, 
-                                                   current_path_, last_closest_idx_overtake);
-  last_closest_idx_overtake = closest_idx;
+                                                   current_path_, last_closest_idx_overtake_);
+  last_closest_idx_overtake_ = closest_idx;
   
   if (detect_upcoming_corner(closest_idx, corner_direction)) {
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,

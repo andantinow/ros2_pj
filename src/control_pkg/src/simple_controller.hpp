@@ -103,8 +103,9 @@ private:
   // === A1/A2 범위 기반 충돌 회피 시스템 ===
   // A1 범위: 매우 좁은 범위 - 이 범위 안에 들어오면 후진 + 조향각 유지
   // A2 범위: 약간 넓은 범위 - 벽 반발 조향 적용
-  // 참고: A1 < A2 < wall_repulsion_threshold 순서로 설정해야 함
-  //       (12cm < wall_repulsion: 후진 < 반발조향)
+  // wall_repulsion_threshold: 벽 반발 시작 거리 (기본값 0.20m)
+  // 참고: 충돌 회피 우선순위: A1(후진) < A2(급조향) < wall_repulsion(반발조향)
+  //       예: 12cm < 12cm < 20cm (a1 < a2 < wall_repulsion_threshold)
   double a1_threshold_ = 0.12;             // A1 범위: 후진 트리거 거리 (meters) - 12cm (0.05 -> 0.12로 변경)
   double a2_threshold_ = 0.12;             // A2 범위: 벽 반발 거리 (meters) - 12cm
   double a2_urgent_threshold_ = 0.10;      // A2 긴급 범위: 10cm 이내시 강한 반발
@@ -204,5 +205,8 @@ private:
   
   // 벽 검색 캐싱
   mutable size_t last_wall_search_idx_ = 0;
+  
+  // 추월 안전 체크용 인덱스 캐싱
+  mutable int last_closest_idx_overtake_ = 0;
 };
 #endif  // SIMPLE_CONTROLLER_HPP_
