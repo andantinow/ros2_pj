@@ -30,7 +30,8 @@ target_include_directories(path_utils PUBLIC
 
 # FrenetConverter library (shared between opponent_detector and global_overtake_planner)
 add_library(frenet_converter src/frenet_converter.cpp)
-ament_target_dependencies(frenet_converter rclcpp nav_msgs geometry_msgs std_msgs sensor_msgs visualization_msgs)
+ament_target_dependencies(frenet_converter rclcpp nav_msgs geometry_msgs std_msgs sensor_msgs visualization_msgs tf2 tf2_ros tf2_geometry_msgs)
+target_link_libraries(frenet_converter tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(frenet_converter PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
