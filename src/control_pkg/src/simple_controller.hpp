@@ -78,6 +78,9 @@ private:
   double overtake_speed_boost_ = 1.5;        // 추월 시 속도 증가 배율 (1.5x)
   double post_overtake_speed_factor_ = 1.2;  // 추월 후 속도 유지 비율 (1.2x)
   double post_overtake_duration_ = 2.0;      // 추월 후 고속 유지 시간 (seconds)
+  double overtake_steer_max_ = 0.25;         // 추월 시 최대 조향 강도 (rad)
+  double overtake_steer_decay_ = 0.6;        // 추월 조향 감쇠율 (완료시점에 40% 유지)
+  double overtake_wall_caution_dist_ = 0.5;  // 벽 주의 거리 (이보다 가까우면 조향 강도 감소)
   rclcpp::Time overtake_start_time_ros_;     // 추월 시작 시간 (ROS Time)
   rclcpp::Time overtake_end_time_ros_;       // 추월 종료 시간 (ROS Time)
   bool is_post_overtake_ = false;            // 추월 직후 고속 유지 상태
@@ -132,6 +135,7 @@ private:
   double follow_distance_threshold_ = 3.0; // following 시작 거리 (m) - 앞 차와의 거리 감지 시작
   double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
   double follow_speed_factor_ = 0.8;       // following 시 속도 비율 (상대 속도의 80%)
+  double follow_min_speed_ratio_ = 0.05;   // 최소 속도 비율 (5%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
   

@@ -82,7 +82,11 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("overtake_speed_boost", overtake_speed_boost_);
   declare_parameter("post_overtake_speed_factor", post_overtake_speed_factor_);
   declare_parameter("post_overtake_duration", post_overtake_duration_);
+  declare_parameter("overtake_steer_max", overtake_steer_max_);
+  declare_parameter("overtake_steer_decay", overtake_steer_decay_);
+  declare_parameter("overtake_wall_caution_dist", overtake_wall_caution_dist_);
   declare_parameter("speed_smooth_factor", speed_smooth_factor_);
+  declare_parameter("follow_min_speed_ratio", follow_min_speed_ratio_);
   // 벽 데이터 파일 경로
   declare_parameter<std::string>("wall_data_file", "");
 
@@ -147,7 +151,11 @@ SimpleController::SimpleController() : Node("simple_controller")
   overtake_speed_boost_ = get_parameter("overtake_speed_boost").as_double();
   post_overtake_speed_factor_ = get_parameter("post_overtake_speed_factor").as_double();
   post_overtake_duration_ = get_parameter("post_overtake_duration").as_double();
+  overtake_steer_max_ = get_parameter("overtake_steer_max").as_double();
+  overtake_steer_decay_ = get_parameter("overtake_steer_decay").as_double();
+  overtake_wall_caution_dist_ = get_parameter("overtake_wall_caution_dist").as_double();
   speed_smooth_factor_ = get_parameter("speed_smooth_factor").as_double();
+  follow_min_speed_ratio_ = get_parameter("follow_min_speed_ratio").as_double();
   
   // 벽 데이터 로드
   std::string wall_data_file = get_parameter("wall_data_file").as_string();
@@ -689,7 +697,7 @@ double SimpleController::compute_opponent_following_speed(double base_speed)
         range = 0.01;  // Division by zero 방지
       }
       double distance_ratio = (front_dist - follow_min_distance_) / range;
-      distance_ratio = std::clamp(distance_ratio, 0.05, 1.0);  // 최소 5% 속도 유지
+      distance_ratio = std::clamp(distance_ratio, follow_min_speed_ratio_, 1.0);
       
       // 거리 비례 속도 = 기본 속도 * following 팩터 * 거리 비율
       double following_speed = base_speed * follow_speed_factor_ * distance_ratio;
@@ -730,9 +738,10 @@ double SimpleController::smooth_speed_change(double target_speed, double current
     return target_speed;
   }
   
-  // 속도 변화 제한 (속도가 급격히 올라가지 않도록)
+  // 속도 변화 제한 (speed_smooth_factor_가 변화율을 결정)
+  // max_speed_change = max_speed_ * factor (예: 2.0 * 0.1 = 0.2 m/s per cycle)
   double speed_diff = target_speed - current_adjusted_speed;
-  double max_speed_change = speed_smooth_factor_ * target_speed_;  // 기본 속도의 10% 변화율
+  double max_speed_change = speed_smooth_factor_ * max_speed_;
   
   if (std::abs(speed_diff) > max_speed_change) {
     // 급격한 속도 변화 방지
@@ -1792,15 +1801,15 @@ double SimpleController::compute_overtake_steering(double base_steering)
   double elapsed = (current_time - overtake_start_time_ros_).seconds();
   double overtake_progress = std::min(1.0, elapsed / overtake_max_duration_);
   
-  // 추월 조향 강도: 초반에 강하게 (0.25rad), 후반에 약하게 (0.1rad)
-  // 이렇게 하면 추월 시작시 빠르게 옆으로 빠지고, 완료 시점에 부드럽게 복귀
-  double steer_intensity = 0.25 * (1.0 - overtake_progress * 0.6);  // 0.25 -> 0.1
+  // 추월 조향 강도: 초반에 강하게 (overtake_steer_max_), 후반에 decay만큼 유지
+  // 예: 0.25rad에서 시작, 완료시점에 0.25 * (1 - 0.6) = 0.1rad
+  double steer_intensity = overtake_steer_max_ * (1.0 - overtake_progress * overtake_steer_decay_);
   
   // 벽까지 거리에 따른 안전 제어
   double wall_dist = (overtake_direction > 0) ? left_space : right_space;
-  if (wall_dist < 0.5) {
+  if (wall_dist < overtake_wall_caution_dist_) {
     // 벽에 너무 가까우면 조향 강도 줄임 (신중한 행동)
-    steer_intensity *= (wall_dist / 0.5);
+    steer_intensity *= (wall_dist / overtake_wall_caution_dist_);
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 300,
                           "OVERTAKE CAUTION: wall nearby %.2fm, reducing steer intensity",
                           wall_dist);
