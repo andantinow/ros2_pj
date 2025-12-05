@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -62,6 +63,7 @@ target_include_directories(generate_raceline PUBLIC
   $<INSTALL_INTERFACE:include>)
 install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
 
+<<<<<<< HEAD
 # ============================================================================
 # Frenet Overtake Planner (Sampling-based path planner with visualization)
 # ============================================================================
@@ -133,6 +135,18 @@ target_include_directories(global_overtake_planner PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 install(TARGETS global_overtake_planner DESTINATION lib/${PROJECT_NAME})
+=======
+# Frenet converter (if present)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/frenet_converter.cpp")
+  add_executable(frenet_converter src/frenet_converter.cpp)
+  ament_target_dependencies(frenet_converter rclcpp nav_msgs geometry_msgs std_msgs sensor_msgs tf2 tf2_ros tf2_geometry_msgs)
+  target_link_libraries(frenet_converter path_utils tf2_geometry_msgs::tf2_geometry_msgs)
+  target_include_directories(frenet_converter PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+  install(TARGETS frenet_converter DESTINATION lib/${PROJECT_NAME})
+endif()
+>>>>>>> 8b08a15 (Add sensor_msgs dependency and frenet_converter build support to planning_pkg)
 
 # Install resources only if they exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
@@ -169,7 +183,12 @@ install(TARGETS path_utils frenet_converter
   RUNTIME DESTINATION bin)
 
 ament_export_include_directories(include)
+<<<<<<< HEAD
 ament_export_libraries(path_utils frenet_converter)
 ament_export_dependencies(rclcpp nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs)
+=======
+ament_export_libraries(path_utils)
+ament_export_dependencies(rclcpp nav_msgs geometry_msgs std_msgs sensor_msgs tf2 tf2_ros tf2_geometry_msgs)
+>>>>>>> 8b08a15 (Add sensor_msgs dependency and frenet_converter build support to planning_pkg)
 
 ament_package()
