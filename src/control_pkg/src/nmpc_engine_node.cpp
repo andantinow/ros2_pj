@@ -922,19 +922,21 @@ public:
     declare_parameter<std::string>("scan_topic", "/scan");  // LiDAR topic
     declare_parameter<bool>("use_dual_ekf", true);  // Toggle between Dual EKF and ground truth
     
-    // A1/A2 collision avoidance parameters (Repulsive Force based)
-    declare_parameter("a1_threshold", 0.3);            // A1 range: reverse trigger distance (meters) - 30cm for safety
-    declare_parameter("a2_threshold", 0.2);            // A2 range: repulsive force activation distance (meters) - 20cm (Changed from 80cm)
-    declare_parameter("a2_urgent_threshold", 0.15);    // A2 urgent range: amplified force when < 0.15m (Changed from 0.3m)
-    declare_parameter("a1_side_factor", 0.8);         // A1 side distance factor
-    declare_parameter("a2_max_steer_ratio", 1.0);     // A2 max steering ratio - full steering for aggressive avoidance
-    declare_parameter("a2_urgent_steer_ratio", 1.0);  // A2 urgent: full steering allowed
-    declare_parameter("reverse_speed", 0.5);          // Reverse speed (m/s)
-    declare_parameter("reverse_duration", 0.8);       // Reverse duration (seconds)
-    declare_parameter("a1_steer_gain", 0.8);          // A1 steering gain during reverse
-    declare_parameter("a2_steer_gain", 1.5);          // A2 repulsive force gain - HIGH to override NMPC (Changed from 0.6)
-    declare_parameter("a2_urgent_steer_gain", 2.0);   // A2 urgent repulsive force gain - VERY HIGH (Changed from 1.2)
-    declare_parameter("enable_collision_avoidance", true);  // Enable collision avoidance
+    // A1/A2 collision avoidance parameters
+    // A1: STRONG SHORT BURST reverse when hitting front obstacle
+    // A2: Steering avoidance only (NO SLOWDOWN per user request)
+    declare_parameter("a1_threshold", 0.3);            // [m] Front obstacle distance to trigger reverse
+    declare_parameter("a2_threshold", 0.4);            // [m] Distance to trigger steering avoidance
+    declare_parameter("a2_urgent_threshold", 0.25);    // [m] Distance for urgent avoidance
+    declare_parameter("a1_side_factor", 0.8);          // NOT USED - side obstacles don't trigger reverse
+    declare_parameter("a2_max_steer_ratio", 1.0);      // Full steering allowed
+    declare_parameter("a2_urgent_steer_ratio", 1.0);   // Full steering in urgent mode
+    declare_parameter("reverse_speed", 2.5);           // [m/s] STRONG reverse speed
+    declare_parameter("reverse_duration", 0.15);       // [s] VERY SHORT burst duration
+    declare_parameter("a1_steer_gain", 1.0);           // Full steering during reverse
+    declare_parameter("a2_steer_gain", 1.5);           // High repulsive force gain
+    declare_parameter("a2_urgent_steer_gain", 2.0);    // Very high urgent gain
+    declare_parameter("enable_collision_avoidance", true);
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
@@ -1100,36 +1102,38 @@ private:
     // Update obstacle distances from LiDAR
     updateObstacleDistances();
     
-    // A1 zone check: need to reverse
+    // A1 zone check: STRONG SHORT BURST reverse when hitting front obstacle
     if (checkA1Zone()) {
       // Start or continue reversing
       if (!is_reversing_) {
         is_reversing_ = true;
         reverse_start_time_ = current_time;
-        RCLCPP_WARN(get_logger(), "A1 Zone! Starting reverse with opposite steering");
+        RCLCPP_WARN(get_logger(), 
+          "A1 COLLISION! Front=%.2fm < %.2fm -> BURST REVERSE (speed=%.1f, duration=%.2fs)",
+          last_obstacle_front_dist_, a1_threshold_, reverse_speed_, reverse_duration_);
       }
       
       double elapsed = (current_time - reverse_start_time_).seconds();
       if (elapsed < reverse_duration_) {
-        // Continue reversing
+        // STRONG SHORT BURST: Apply maximum reverse force
         double reverse_steer = computeReverseSteering();
         
         ackermann_msgs::msg::AckermannDriveStamped cmd;
         cmd.header.stamp = current_time;
         cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
-        cmd.drive.speed = -reverse_speed_;
+        cmd.drive.speed = -reverse_speed_;  // Strong negative speed
         cmd.drive.steering_angle = reverse_steer;
         
         drive_pub_->publish(cmd);
         
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-          "A1 REVERSING: speed=%.2f, steer=%.3f, elapsed=%.2fs/%.2fs",
-          -reverse_speed_, reverse_steer, elapsed, reverse_duration_);
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 50,  // Log every 50ms for short burst
+          "BURST REVERSE: speed=%.2f, steer=%.3f, %.0f%%",
+          -reverse_speed_, reverse_steer, (elapsed / reverse_duration_) * 100.0);
         return;
       } else {
-        // Reverse complete
+        // Burst complete
         is_reversing_ = false;
-        RCLCPP_INFO(get_logger(), "A1 Reverse complete, resuming forward");
+        RCLCPP_INFO(get_logger(), "Burst reverse complete, resuming forward");
       }
     } else {
       // Not in A1 zone, stop reversing if we were
@@ -1193,13 +1197,11 @@ private:
       delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
       solution.steering += delta_a2_avoidance;
       solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-      // Reduce speed in A2 zone - mild slowdown for closer obstacles (70% to 100% speed)
-      double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
-      double slowdown_factor = std::max(0.7, min_side_dist / a2_threshold_);  // 70% to 100% speed (reduced from 30%)
-      solution.speed *= slowdown_factor;
+      // Note: Speed slowdown in A2 zone removed per user request
+      // Side obstacles should not cause speed reduction
       RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
-        "A2 Zone: adding avoidance steer=%.3f, slowdown=%.1f%%", 
-        delta_a2_avoidance, slowdown_factor * 100.0);
+        "A2 Zone: adding avoidance steer=%.3f (no slowdown)", 
+        delta_a2_avoidance);
     }
     
     // Publish NMPC visualization (예측 궤적 + 레퍼런스)
@@ -1290,17 +1292,14 @@ private:
       return false;
     }
     
-    double side_threshold = a1_threshold_ * a1_side_factor_;
-    
-    is_in_a1_zone_ = (last_obstacle_front_dist_ < a1_threshold_) ||
-                     (last_obstacle_left_dist_ < side_threshold) ||
-                     (last_obstacle_right_dist_ < side_threshold);
+    // Only check front obstacle for A1 zone (reverse trigger)
+    // Side obstacles should not trigger reverse - per user request
+    is_in_a1_zone_ = (last_obstacle_front_dist_ < a1_threshold_);
     
     if (is_in_a1_zone_) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
-        "A1 Zone! Front: %.2fm, L: %.2fm, R: %.2fm (threshold: %.2fm, side: %.2fm)",
-        last_obstacle_front_dist_, last_obstacle_left_dist_, 
-        last_obstacle_right_dist_, a1_threshold_, side_threshold);
+        "A1 Zone! Front: %.2fm (threshold: %.2fm) - triggering reverse",
+        last_obstacle_front_dist_, a1_threshold_);
     }
     
     return is_in_a1_zone_;
