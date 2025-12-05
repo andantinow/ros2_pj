@@ -7,7 +7,10 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "sensor_msgs/msg/imu.hpp"
 #include "visualization_msgs/msg/marker.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
+#include "std_msgs/msg/string.hpp"
 #include <tf2/utils.h>
 #include <vector>
 #include <string>
@@ -17,27 +20,48 @@ class SimpleController : public rclcpp::Node
 public:
   SimpleController();
 
+  // === CRSM State Machine States ===
+  enum class CRSMState {
+    ST_NORMAL,            // Normal driving state
+    ST_CRASH_DETECTED,    // Collision detected, taking control
+    ST_RECOVERY_REVERSE,  // Open-loop reverse maneuver
+    ST_RECOVERY_REALIGN   // Realignment and position recovery
+  };
+  
   // === Constants for collision avoidance and overtake ===
   static constexpr double SAFETY_MARGIN = 0.3;              // General safety margin (m)
   static constexpr double WALL_SAFETY_MARGIN = 0.15;        // Wall clearance safety margin (m)
   static constexpr double MIN_OVERTAKE_DISTANCE = 0.6;      // Minimum distance for overtake consideration (m)
   static constexpr double OVERTAKE_VIS_LENGTH = 5.0;        // Overtake visualization path length (m)
   static constexpr double OVERTAKE_VIS_STEP = 0.15;         // Overtake visualization step size (m)
+  static constexpr double IMU_CRASH_ACCEL_THRESHOLD = 9.5;  // Crash detection acceleration threshold (m/s^2)
+  static constexpr double STALL_VELOCITY_THRESHOLD = 0.1;   // Stall detection velocity threshold (m/s)
+  static constexpr double STALL_CMD_VELOCITY_THRESHOLD = 0.5; // Commanded velocity for stall detection (m/s)
 
 private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;  // IMU subscription for crash detection
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;   // State visualization publisher
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr safety_zone_pub_;  // Safety zone visualization
   rclcpp::TimerBase::SharedPtr timer_;
 
   nav_msgs::msg::Odometry current_odom_;
   nav_msgs::msg::Path current_path_;
   sensor_msgs::msg::LaserScan current_scan_;
+  sensor_msgs::msg::Imu current_imu_;           // Current IMU data
   bool odom_received_ = false;
   bool path_received_ = false;
   bool scan_received_ = false;
+  bool imu_received_ = false;                    // IMU data received flag
+  
+  // === CRSM State Machine ===
+  CRSMState crsm_state_ = CRSMState::ST_NORMAL;  // Current state machine state
+  double last_cmd_velocity_ = 0.0;               // Last commanded velocity (for stall detection)
+  double imu_accel_magnitude_ = 0.0;             // Latest IMU acceleration magnitude
 
   double lookahead_distance_ = 0.0;
   double min_lookahead_ = 0.4;         // Much reduced for tight path following (0.8 -> 0.4)
@@ -138,13 +162,18 @@ private:
   double last_steering_before_reverse_ = 0.0;  // 충돌 시 조향각 (유지용)
   double planning_duration_ = 0.3;         // 경로 계획에 필요한 시간 (seconds)
   
+  // === Steering Inversion Mode (CRSM 보고서 기반) ===
+  // 후진 시 조향 모드: 0 = 중립(neutral), 1 = 반전(invert), 2 = 유지(maintain-legacy)
+  int reverse_steering_mode_ = 0;          // Default: 중립으로 후진 (가장 안전)
+  
   // === 벽 반발 조향 시스템 (수식 기반) ===
   // 벽에 가까워지면 반발력으로 조향 (속도 감소 없이)
   double wall_repulsion_gain_ = 0.8;       // 벽 반발 조향 게인
   double wall_repulsion_threshold_ = 0.20; // 벽 반발 시작 거리 (20cm)
   double wall_repulsion_max_steer_ = 0.3;  // 최대 반발 조향각 (rad, ~17도)
   
-  // === 상대 차량 Following 시스템 (거리 비례 속도 조절) ===
+  // === 상대 차량 Following 시스템 (ACC 스타일 PD 제어) ===
+  // 보고서 기반: v_cmd = v_opp + Kp*(gap - 1.5) + Kd*(v_opp - v_ego)
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
   double follow_distance_threshold_ = 1.5; // following 시작 거리 (m) - 사용자 요청에 따라 1.5m로 조정
   double follow_min_distance_ = 0.4;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
@@ -152,6 +181,14 @@ private:
   double follow_min_speed_ratio_ = 0.1;    // 최소 속도 비율 (10%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
+  
+  // === ACC PD Control Parameters (보고서 기반) ===
+  double acc_kp_ = 0.5;                    // ACC 비례 게인 (gap error)
+  double acc_kd_ = 0.2;                    // ACC 미분 게인 (relative velocity)
+  double target_follow_gap_ = 1.5;         // 목표 차간 거리 (m) - 보고서 명세
+  double estimated_opponent_velocity_ = 0.0;  // 추정된 상대 차량 속도
+  double prev_opponent_distance_ = 10.0;   // 이전 상대 차량 거리 (속도 추정용)
+  rclcpp::Time prev_opponent_time_;        // 이전 상대 차량 거리 측정 시간
   
   // === 차량 치수 (추월 경로 계산용) ===
   double vehicle_width_ = 0.3;             // 차량 넓이 (m) - 약 30cm (F1TENTH 기준)
@@ -223,6 +260,19 @@ private:
   bool validate_overtake_path(double overtake_direction);  // 추월 경로 시뮬레이션 및 안전성 검증
   std::vector<geometry_msgs::msg::Point> generate_overtake_trajectory(double overtake_direction);  // 추월 경로 생성
   
+  // === CRSM (Collision Recovery State Machine) 기능들 ===
+  void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg);  // IMU 콜백
+  bool check_imu_collision();                  // IMU 기반 충돌 감지 (저크/가속도)
+  bool check_stall_condition();                // 스톨 감지 (명령 vs 실제 속도)
+  double compute_inverted_reverse_steering();  // 반전된 후진 조향 계산 (보고서 기반)
+  void update_crsm_state();                    // CRSM 상태 머신 업데이트
+  void publish_crsm_state();                   // CRSM 상태 시각화
+  void publish_safety_zone_markers();          // 안전 구역 마커 발행 (D_forbidden 시각화)
+  
+  // === ACC (Adaptive Cruise Control) 기능들 ===
+  double compute_acc_following_speed(double base_speed);  // ACC 스타일 Following 속도 계산
+  void update_opponent_velocity_estimate();    // 상대 차량 속도 추정 업데이트
+  
   // 벽 검색 캐싱
   mutable size_t last_wall_search_idx_ = 0;
   
@@ -232,5 +282,11 @@ private:
   // 추월 경로 계획용 멤버 변수
   double planned_overtake_direction_ = 0.0;  // 계획된 추월 방향 (좌:1.0, 우:-1.0)
   bool has_valid_overtake_plan_ = false;     // 유효한 추월 계획이 있는지
+  
+  // === 상대 차량 금지 구역 모델 (보고서 기반) ===
+  // D_forbidden = [d_opp - W_car/2 - W_margin, d_opp + W_car/2 + W_margin]
+  double opponent_d_position_ = 0.0;         // 상대 차량의 횡방향 위치 (Frenet d)
+  double opponent_s_position_ = 0.0;         // 상대 차량의 종방향 위치 (Frenet s)
+  double opponent_width_with_margin_ = 0.0;  // 상대 차량 폭 + 안전 마진
 };
 #endif  // SIMPLE_CONTROLLER_HPP_
