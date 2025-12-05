@@ -36,9 +36,9 @@ simple_controller:
     # A1 범위: 좁은 범위 - 이 안에 들어오면 후진 + 반대방향 조향
     # A2 범위: 넓은 범위 - A1 밖이지만 이 안에 들어오면 조향만 반대방향으로
     # A2 긴급 범위: 0.4m 이내 - 최대 조향으로 급격히 꺾음
-    a1_threshold: 0.075        # A1 범위 (meters) - 벽에 0.075m 이내시 후진 (halved from 0.15m)
-    a2_threshold: 0.3          # A2 범위 (meters) - 측면 0.3m 이내시 반대 조향으로 회피 (halved from 0.6m)
-    a2_urgent_threshold: 0.2   # A2 긴급 범위 (meters) - 0.2m 이내시 최대 조향으로 급격히 꺾음 (halved from 0.4m)
+    a1_threshold: 0.1          # A1 범위 (meters) - 벽에 0.1m 이내시 후진
+    a2_threshold: 0.4          # A2 범위 (meters) - 측면 0.4m 이내시 반대 조향으로 회피
+    a2_urgent_threshold: 0.25  # A2 긴급 범위 (meters) - 0.25m 이내시 최대 조향으로 급격히 꺾음
     a1_side_factor: 0.8        # A1 측면 거리 팩터 (a1_threshold * 이 값)
     a2_max_steer_ratio: 1.0    # A2 최대 조향 비율 - 완전 반대 조향 (0.8 -> 1.0)
     a2_urgent_steer_ratio: 1.0 # A2 긴급시 최대 조향 비율 - 완전 반대 조향
@@ -48,3 +48,8 @@ simple_controller:
     a2_steer_gain: 1.0         # A2 범위에서 회피 조향 강도 - 완전 반대 조향 (0.8 -> 1.0)
     a2_urgent_steer_gain: 1.5  # A2 긴급시 조향 강도 - 1.5배 강화
     enable_collision_avoidance: true  # 충돌 회피 활성화
+    
+    # === 코너링 설정 (추월 및 코너 핸들링) ===
+    corner_curvature_threshold: 0.5  # 곡률이 이 값 이상이면 코너로 판단
+    corner_speed_factor: 0.5         # 코너에서 속도 감소 비율 (0.5 = 50% 속도)
+    corner_steer_amplify: 1.5        # 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)

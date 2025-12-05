@@ -57,6 +57,10 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("a2_steer_gain", a2_steer_gain_);
   declare_parameter("a2_urgent_steer_gain", a2_urgent_steer_gain_);
   declare_parameter("enable_collision_avoidance", enable_collision_avoidance_);
+  // Corner handling parameters (코너링 설정)
+  declare_parameter("corner_curvature_threshold", corner_curvature_threshold_);
+  declare_parameter("corner_speed_factor", corner_speed_factor_);
+  declare_parameter("corner_steer_amplify", corner_steer_amplify_);
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
   min_lookahead_ = get_parameter("min_lookahead").as_double();
@@ -96,6 +100,10 @@ SimpleController::SimpleController() : Node("simple_controller")
   a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
   a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
   enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
+  // Corner handling parameters (코너링 설정)
+  corner_curvature_threshold_ = get_parameter("corner_curvature_threshold").as_double();
+  corner_speed_factor_ = get_parameter("corner_speed_factor").as_double();
+  corner_steer_amplify_ = get_parameter("corner_steer_amplify").as_double();
   
   prev_time_ = this->get_clock()->now();
   reverse_start_time_ = this->get_clock()->now();
@@ -845,6 +853,17 @@ void SimpleController::control_loop()
                           delta_a2_avoidance);
   }
 
+  // 7) 코너 감지 및 조향각 증폭 - 코너에서 더 큰 각도로 회전
+  // 경로 곡률이 임계값 이상이면 코너로 판단하고 조향각을 증폭
+  bool is_corner = std::abs(path_curvature) > corner_curvature_threshold_;
+  if (is_corner) {
+    // 코너에서 조향각 증폭 (corner_steer_amplify_ 배)
+    steering_angle *= corner_steer_amplify_;
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "CORNER detected: curvature=%.3f, steer amplified by %.2fx",
+                          path_curvature, corner_steer_amplify_);
+  }
+
   // Clamp to physical steering limits
   steering_angle = std::clamp(steering_angle, -max_steer_angle_, max_steer_angle_);
 
@@ -868,10 +887,18 @@ void SimpleController::control_loop()
                 lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, steering_angle);
   }
 
-  // Speed control: Reduce speed based on curvature only
+  // Speed control: Reduce speed based on curvature and corners
   // A2 회피 시에는 반대 조향으로 회피하므로 속도 유지
   double curvature = std::abs(steering_angle) / wheelbase_;
   double speed_factor = 1.0 / (1.0 + 2.0 * curvature);
+  
+  // 코너에서 추가 속도 감소 적용
+  if (is_corner) {
+    speed_factor *= corner_speed_factor_;
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                          "CORNER speed reduction: factor=%.2f, corner_factor=%.2f",
+                          speed_factor, corner_speed_factor_);
+  }
   
   double adjusted_speed = target_speed_ * speed_factor;
   
