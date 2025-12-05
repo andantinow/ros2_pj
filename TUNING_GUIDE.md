@@ -567,3 +567,133 @@ ros2_pj/
 
 **작성일:** 2025-12-04  
 **목적:** 레포지토리가 복잡하더라도 튜닝을 효율적으로 할 수 있도록 핵심만 정리
+
+---
+
+## CRSM (Collision Recovery State Machine) 시스템
+
+### 🚗 충돌 복구 아키텍처
+
+CRSM은 벽 충돌 시 발생하는 후진 불량 및 조향 고착 현상을 해결하기 위해 설계된 상태 머신입니다.
+
+#### 상태 정의
+
+| 상태 | 설명 | 동작 |
+|------|------|------|
+| ST_NORMAL | 정상 주행 | 일반 제어기 명령 수행 |
+| ST_CRASH_DETECTED | 충돌 감지 | 즉시 정지, 제어권 탈취 |
+| ST_RECOVERY_REVERSE | 개루프 후진 | 조향 역보정 후진 |
+| ST_RECOVERY_REALIGN | 재정렬 | 정지 후 경로 재생성 |
+
+#### 충돌 감지 트리거
+
+CRSM은 다음 세 가지 방법으로 충돌을 감지합니다:
+
+1. **A1 Zone 감지**: LiDAR 전방 < 0.18m
+2. **IMU 충돌 감지**: |a_total| > 9.5 m/s² (급격한 감속)
+3. **스톨 감지**: 전진 명령 있으나 속도 0, 전방 장애물 있음
+
+#### 조향 역보정 모드
+
+`reverse_steering_mode` 파라미터로 설정:
+
+| 모드 | 값 | 동작 | 용도 |
+|------|-----|------|------|
+| NEUTRAL | 0 | δ_rec = 0 | 안전한 기본값 |
+| INVERT | 1 | δ_rec = -δ_last | 벽에서 빠른 탈출 |
+| MAINTAIN | 2 | δ_rec = δ_last | 레거시 호환 |
+
+**권장 설정:**
+```yaml
+simple_controller:
+  ros__parameters:
+    reverse_steering_mode: 0       # NEUTRAL (권장) 또는 1 (INVERT)
+    reverse_speed: 0.8             # 후진 속도 (m/s)
+    reverse_duration: 1.2          # 후진 시간 (초)
+    a1_threshold: 0.18             # 후진 트리거 거리 (m)
+```
+
+### 시각화 토픽
+
+| 토픽 | 메시지 타입 | 설명 |
+|------|-------------|------|
+| `/crsm_state` | std_msgs/String | 현재 CRSM 상태 |
+| `/wall_collision_indicator` | Marker | 충돌 시 빨간 구 |
+| `/safety_zones` | MarkerArray | 상대 차량 금지 구역 |
+
+---
+
+## ACC (Adaptive Cruise Control) Following 시스템
+
+### 🚙 1.5m 간격 적응형 팔로잉
+
+ACC 시스템은 상대 차량을 따라갈 때 1.5m 간격을 유지하면서도 추월 기회가 생기면 즉시 반응합니다.
+
+#### 제어 법칙
+
+보고서 기반 PD 제어:
+```
+v_cmd = v_opp + Kp * (gap - 1.5) + Kd * (v_opp - v_ego)
+```
+
+- 거리 > 1.5m: 가속하여 따라붙음
+- 거리 < 1.5m: 감속하여 간격 유지
+- 상대 속도에 동기화하여 안정적 Following
+
+#### 핵심 파라미터
+
+```yaml
+simple_controller:
+  ros__parameters:
+    # ACC 제어 파라미터
+    acc_kp: 0.5                    # 거리 오차 비례 게인
+    acc_kd: 0.2                    # 상대 속도 미분 게인
+    target_follow_gap: 1.5         # 목표 차간 거리 (m)
+    follow_distance_threshold: 1.5 # Following 시작 거리 (m)
+    follow_min_speed_ratio: 0.1    # 최소 속도 비율 (10%)
+```
+
+### 동적 추월/팔로잉 전환
+
+시스템은 매 제어 주기(20Hz)마다 추월 가능성을 평가합니다:
+
+1. **추월 경로 검증**: 상대 차량 폭 + 안전 마진 고려
+2. **금지 구역 계산**: D_forbidden = [d_opp - W/2 - margin, d_opp + W/2 + margin]
+3. **즉시 전환**: 유효한 추월 경로 발견 시 즉시 추월 모드
+
+#### 차량 폭 기반 추월 판단
+
+```yaml
+# 차량 치수
+vehicle_width: 0.3               # 차량 넓이 (m)
+vehicle_length: 0.5              # 차량 길이 (m)
+
+# 추월 조건 (자동 계산)
+# min_overtake_clearance = vehicle_width * 2 + SAFETY_MARGIN (0.3m)
+# 약 0.9m 이상의 간격이 있어야 추월 시도
+```
+
+### 시각화
+
+| 마커 | 색상 | 설명 |
+|------|------|------|
+| 추월 경로 | 녹색 라인 | S자 곡선 추월 경로 |
+| 추월 방향 | 노란 화살표 | 추월 방향 표시 |
+| 금지 구역 | 빨간 반투명 박스 | 상대 차량 + 안전 마진 |
+| Following 앵커 | 파란 구 | 목표 위치 (상대 차량 뒤 1.5m) |
+
+---
+
+## 데이터 및 파라미터 요약
+
+| 파라미터 | 권장값 | 설명 |
+|----------|--------|------|
+| reverse_steering_mode | 0 | 조향 모드 (0=중립, 1=반전) |
+| a1_threshold | 0.18m | 후진 트리거 거리 |
+| reverse_speed | 0.8 m/s | 후진 속도 |
+| reverse_duration | 1.2s | 후진 지속 시간 |
+| acc_kp | 0.5 | ACC 비례 게인 |
+| acc_kd | 0.2 | ACC 미분 게인 |
+| target_follow_gap | 1.5m | 목표 차간 거리 |
+| vehicle_width | 0.35m | 차량 폭 (F1TENTH) |
+| narrow_road_threshold | 2.0m | 좁은 도로 판단 기준 |

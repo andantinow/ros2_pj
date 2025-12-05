@@ -9,6 +9,8 @@
 #include <tf2/utils.h>
 #include <rclcpp/qos.hpp>
 #include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -95,6 +97,13 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("vehicle_length", vehicle_length_);
   // 벽 데이터 파일 경로
   declare_parameter<std::string>("wall_data_file", "");
+  // CRSM (Collision Recovery State Machine) 파라미터
+  declare_parameter("reverse_steering_mode", reverse_steering_mode_);  // 0=neutral, 1=invert, 2=maintain
+  declare_parameter<std::string>("imu_topic", "/imu");
+  // ACC (Adaptive Cruise Control) 파라미터
+  declare_parameter("acc_kp", acc_kp_);
+  declare_parameter("acc_kd", acc_kd_);
+  declare_parameter("target_follow_gap", target_follow_gap_);
 
   lookahead_distance_ = get_parameter("lookahead_distance").as_double();
   min_lookahead_ = get_parameter("min_lookahead").as_double();
@@ -167,10 +176,27 @@ SimpleController::SimpleController() : Node("simple_controller")
   vehicle_width_ = get_parameter("vehicle_width").as_double();
   vehicle_length_ = get_parameter("vehicle_length").as_double();
   
+  // CRSM 파라미터 로드
+  reverse_steering_mode_ = get_parameter("reverse_steering_mode").as_int();
+  std::string imu_topic = get_parameter("imu_topic").as_string();
+  
+  // ACC 파라미터 로드
+  acc_kp_ = get_parameter("acc_kp").as_double();
+  acc_kd_ = get_parameter("acc_kd").as_double();
+  target_follow_gap_ = get_parameter("target_follow_gap").as_double();
+  
+  // 상대 차량 폭 + 안전 마진 계산 (보고서 기반 D_forbidden 계산용)
+  // D_forbidden = [d_opp - W_car/2 - W_margin, d_opp + W_car/2 + W_margin]
+  opponent_width_with_margin_ = vehicle_width_ + 2.0 * SAFETY_MARGIN;  // W_car + 2*W_margin
+  
   // 차량 넓이 기반으로 최소 추월 간격 계산 (자차 + 상대 차량 + 안전 마진)
   min_overtake_clearance_ = vehicle_width_ * 2.0 + SAFETY_MARGIN;  // 두 차량 넓이 + 안전마진
   RCLCPP_INFO(this->get_logger(), "Vehicle dimensions: %.2fm x %.2fm, min_overtake_clearance: %.2fm",
               vehicle_width_, vehicle_length_, min_overtake_clearance_);
+  RCLCPP_INFO(this->get_logger(), "CRSM enabled: reverse_steering_mode=%d (0=neutral, 1=invert, 2=maintain)",
+              reverse_steering_mode_);
+  RCLCPP_INFO(this->get_logger(), "ACC enabled: Kp=%.2f, Kd=%.2f, target_gap=%.2fm",
+              acc_kp_, acc_kd_, target_follow_gap_);
   
   // 벽 데이터 로드
   std::string wall_data_file = get_parameter("wall_data_file").as_string();
@@ -187,6 +213,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   planning_start_time_ = this->get_clock()->now();
   overtake_start_time_ros_ = this->get_clock()->now();
   overtake_end_time_ros_ = this->get_clock()->now();
+  prev_opponent_time_ = this->get_clock()->now();  // ACC용 시간 초기화
 
   // Path Subscription - Use transient_local QoS to receive latched path from raceline_server
   rclcpp::QoS path_qos(rclcpp::QoS(10).transient_local().reliable());
@@ -208,6 +235,12 @@ SimpleController::SimpleController() : Node("simple_controller")
       rclcpp::SensorDataQoS(),
       std::bind(&SimpleController::scan_callback, this, std::placeholders::_1));
 
+  // IMU Subscription for crash detection (CRSM)
+  imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+      imu_topic,
+      rclcpp::SensorDataQoS(),
+      std::bind(&SimpleController::imu_callback, this, std::placeholders::_1));
+
   // Drive Publisher
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_,
@@ -228,8 +261,18 @@ SimpleController::SimpleController() : Node("simple_controller")
       "/wall_collision_indicator",
       rclcpp::QoS(1));
   
-  RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, publishing to drive: %s", 
-              odom_topic_.c_str(), path_topic_.c_str(), scan_topic_.c_str(), drive_topic_.c_str());
+  // CRSM 상태 퍼블리셔 (텍스트로 상태 표시)
+  state_pub_ = this->create_publisher<std_msgs::msg::String>(
+      "/crsm_state",
+      rclcpp::QoS(1));
+  
+  // 안전 구역 시각화 (상대 차량 금지 구역)
+  safety_zone_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+      "/safety_zones",
+      rclcpp::QoS(1));
+  
+  RCLCPP_INFO(this->get_logger(), "Subscribing to odom: %s, path: %s, scan: %s, imu: %s, publishing to drive: %s", 
+              odom_topic_.c_str(), path_topic_.c_str(), scan_topic_.c_str(), imu_topic.c_str(), drive_topic_.c_str());
   RCLCPP_INFO(this->get_logger(), "A1/A2 Collision avoidance: A1=%.2fm (reverse), A2=%.2fm (steer), reverse_speed=%.2fm/s",
               a1_threshold_, a2_threshold_, reverse_speed_);
   RCLCPP_INFO(this->get_logger(), "Lookahead point visualization: /pid_lookahead_point (RED sphere)");
@@ -273,6 +316,28 @@ void SimpleController::scan_callback(const sensor_msgs::msg::LaserScan::SharedPt
     RCLCPP_INFO(this->get_logger(), "Received first scan message. Ranges: %zu, angle: [%.2f, %.2f]",
                 msg->ranges.size(), msg->angle_min, msg->angle_max);
     scan_received_ = true;
+  }
+}
+
+/**
+ * @brief IMU 콜백 - 충돌 감지를 위한 가속도 데이터 수집
+ * 
+ * CRSM 보고서 기반: 가속도 크기가 임계값(9.5 m/s^2)을 초과하면 충돌로 판정
+ * |a_total| = sqrt(a_x^2 + a_y^2) > A_thresh
+ */
+void SimpleController::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
+{
+  current_imu_ = *msg;
+  
+  // 가속도 크기 계산
+  double ax = msg->linear_acceleration.x;
+  double ay = msg->linear_acceleration.y;
+  imu_accel_magnitude_ = std::sqrt(ax * ax + ay * ay);
+  
+  if (!imu_received_) {
+    RCLCPP_INFO(this->get_logger(), "Received first IMU message. Accel: (%.2f, %.2f) m/s^2",
+                ax, ay);
+    imu_received_ = true;
   }
 }
 
@@ -687,12 +752,14 @@ double SimpleController::compute_wall_repulsion_steering()
 }
 
 /**
- * @brief 상대 차량 Following 속도 계산 (거리 비례 속도 조절)
+ * @brief 상대 차량 Following 속도 계산 (ACC 스타일 PD 제어)
  * 
  * 전방에 상대 차량이 있을 때:
- * 1. 추월 불가능: 거리에 비례하여 속도 감소 (앞 차와 안 닿으려고 노력)
+ * 1. 추월 불가능: ACC PD 제어로 1.5m 간격 유지 (보고서 기반)
  * 2. 추월 가능: 추월 시스템 활성화
- * 3. Following 중에도 계속 추월 경로를 체크하여 가능해지면 추월
+ * 3. Following 중에도 계속 추월 경로를 체크하여 가능해지면 즉시 추월
+ * 
+ * ACC 제어 법칙: v_cmd = v_opp + Kp*(gap - 1.5) + Kd*(v_opp - v_ego)
  */
 double SimpleController::compute_opponent_following_speed(double base_speed)
 {
@@ -700,40 +767,36 @@ double SimpleController::compute_opponent_following_speed(double base_speed)
   
   // 전방 장애물이 following 거리 (1.5m) 이내이고, A1 zone 아닌 경우
   if (front_dist < follow_distance_threshold_ && front_dist > a1_threshold_) {
-    // 추월 가능 여부 확인 - Following 중에도 계속 체크!
+    // 추월 가능 여부 확인 - Following 중에도 매 제어 주기마다 체크!
+    // 보고서: "별도의 재시도 타이머 없이 기하학적 조건이 만족되는 즉시 반응"
     bool can_overtake = can_overtake_safely(front_dist, last_obstacle_angle_);
     
     if (!can_overtake || !has_valid_overtake_plan_) {
-      // 추월 불가 (유효한 추월 경로가 없음) -> Following 모드: 거리에 비례하여 속도 감소
+      // 추월 불가 (유효한 추월 경로가 없음) -> Following 모드
+      // Note: Following 상태는 is_following_opponent_ 플래그로 별도 추적
+      // CRSM 상태는 충돌 복구용이므로 Following과 독립적
       if (!is_following_opponent_) {
         is_following_opponent_ = true;
         RCLCPP_INFO(this->get_logger(), 
-                    "FOLLOWING START: No safe overtake path. front=%.2fm, checking continuously...", front_dist);
+                    "FOLLOWING START (ACC): No safe overtake path. front=%.2fm, target_gap=%.2fm",
+                    front_dist, target_follow_gap_);
       }
       
-      // 거리에 비례한 속도 조절 (부드러운 감속)
-      // front_dist가 follow_distance_threshold에 가까우면 base_speed 유지
-      // front_dist가 follow_min_distance에 가까우면 매우 느리게
-      double range = follow_distance_threshold_ - follow_min_distance_;
-      if (range < 0.01) {
-        range = 0.01;  // Division by zero 방지
-      }
-      // distance_ratio: 0~1 범위, 거리가 가까울수록 작아짐
-      // follow_min_speed_ratio_로 하한을 설정하여 완전 정지 방지
-      double distance_ratio = (front_dist - follow_min_distance_) / range;
-      distance_ratio = std::clamp(distance_ratio, follow_min_speed_ratio_, 1.0);
+      // === ACC 스타일 PD 제어 적용 (보고서 기반) ===
+      double acc_speed = compute_acc_following_speed(base_speed);
       
-      // 거리 비례 속도 = 기본 속도 * following 팩터 * 거리 비율
-      double following_speed = base_speed * follow_speed_factor_ * distance_ratio;
+      // 안전 구역 시각화 (상대 차량 금지 구역 표시)
+      publish_safety_zone_markers();
       
       // 주기적으로 상태 로그 출력 (추월 경로 계속 탐색 중임을 표시)
       RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                            "FOLLOWING: front=%.2fm, speed=%.2f/%.2f [still checking overtake path...]",
-                            front_dist, following_speed, base_speed);
+                            "FOLLOWING (ACC): gap=%.2fm, target=%.2fm, speed=%.2f [checking overtake...]",
+                            front_dist, target_follow_gap_, acc_speed);
       
-      return following_speed;
+      return acc_speed;
     } else {
       // 추월 가능! 유효한 추월 경로가 생성됨 -> 추월 시작 준비
+      // 보고서: "다음 제어 주기에서 valid_overtake_paths가 비어있지 않게 되므로 즉시 추월 모드로 전환"
       if (is_following_opponent_) {
         is_following_opponent_ = false;
         RCLCPP_WARN(this->get_logger(), 
@@ -1093,40 +1156,67 @@ void SimpleController::control_loop()
     }
   }
   
+  // === CRSM: IMU 기반 충돌 감지 추가 ===
+  bool imu_crash_detected = check_imu_collision();
+  bool stall_detected = check_stall_condition();
+  
   // A1 범위 체크: 후진 필요 (쿨다운 중에는 후진하지 않음)
-  if (check_a1_zone() && !just_finished_reverse_) {
+  // CRSM 확장: IMU 충돌 또는 스톨 감지도 후진 트리거
+  bool collision_trigger = check_a1_zone() || imu_crash_detected || stall_detected;
+  
+  if (collision_trigger && !just_finished_reverse_) {
     // Start or continue reversing
     if (!is_reversing_ && !is_pausing_after_reverse_ && !is_planning_after_pause_) {
       is_reversing_ = true;
+      crsm_state_ = CRSMState::ST_CRASH_DETECTED;
       reverse_start_time_ = current_time;
       last_steering_before_reverse_ = prev_steering_angle_;  // 충돌 시 조향각 저장
-      RCLCPP_WARN(this->get_logger(), "A1 Zone COLLISION! Starting reverse with maintained steering: %.3f", 
-                  last_steering_before_reverse_);
+      
+      const char* trigger_type = imu_crash_detected ? "IMU CRASH" : 
+                                 (stall_detected ? "STALL" : "A1 ZONE");
+      RCLCPP_WARN(this->get_logger(), 
+                  "CRSM [%s] COLLISION! mode=%d, saved_steer=%.3f", 
+                  trigger_type, reverse_steering_mode_, last_steering_before_reverse_);
     }
     
     double elapsed = (current_time - reverse_start_time_).seconds();
     if (elapsed < reverse_duration_) {
-      // Continue reversing - 조향각 그대로 유지한 채 후진
+      // === CRSM: 조향각 역보정 (Steering Inversion) 적용 ===
+      // 보고서 기반: 충돌 시 조향을 중립(0) 또는 반대(-δ_last)로 설정하여 벽에서 탈출
+      crsm_state_ = CRSMState::ST_RECOVERY_REVERSE;
+      
+      double reverse_steer = compute_inverted_reverse_steering();
+      
       ackermann_msgs::msg::AckermannDriveStamped drive_msg;
       drive_msg.header.stamp = current_time;
       drive_msg.header.frame_id = current_odom_.child_frame_id;
       drive_msg.drive.speed = -reverse_speed_;
-      drive_msg.drive.steering_angle = last_steering_before_reverse_;  // 조향각 유지!
+      drive_msg.drive.steering_angle = reverse_steer;
       
       drive_pub_->publish(drive_msg);
+      last_cmd_velocity_ = -reverse_speed_;  // 스톨 감지용
+      
+      // CRSM 상태 발행
+      publish_crsm_state();
       
       static int reverse_log_count = 0;
       if (reverse_log_count++ % 25 == 0) {
-        RCLCPP_INFO(this->get_logger(), "A1 REVERSING: speed=%.2f, steer=%.3f (maintained), elapsed=%.2fs/%.2fs",
-                    -reverse_speed_, last_steering_before_reverse_, elapsed, reverse_duration_);
+        const char* mode_str = (reverse_steering_mode_ == 0) ? "NEUTRAL" :
+                              ((reverse_steering_mode_ == 1) ? "INVERTED" : "MAINTAIN");
+        RCLCPP_INFO(this->get_logger(), 
+                    "CRSM REVERSING [%s]: speed=%.2f, steer=%.3f (orig=%.3f), elapsed=%.2fs/%.2fs",
+                    mode_str, -reverse_speed_, reverse_steer, last_steering_before_reverse_, 
+                    elapsed, reverse_duration_);
       }
       return;
     } else {
       // Reverse complete, 이제 정지 시작 (생각 시간)
       is_reversing_ = false;
       is_pausing_after_reverse_ = true;
+      crsm_state_ = CRSMState::ST_RECOVERY_REALIGN;
       pause_start_time_ = current_time;
-      RCLCPP_INFO(this->get_logger(), "A1 Reverse complete, stopping and stabilizing...");
+      RCLCPP_INFO(this->get_logger(), "CRSM Reverse complete, entering REALIGN phase...");
+      publish_crsm_state();
       return;
     }
   } else if (check_a1_zone() && just_finished_reverse_) {
@@ -1402,6 +1492,14 @@ void SimpleController::control_loop()
   drive_msg.drive.steering_angle = steering_angle;
 
   drive_pub_->publish(drive_msg);
+  
+  // CRSM: 명령된 속도 저장 (스톨 감지용)
+  last_cmd_velocity_ = adjusted_speed;
+  
+  // CRSM 상태가 정상일 때만 NORMAL로 설정
+  if (!is_reversing_ && !is_pausing_after_reverse_ && !is_planning_after_pause_) {
+    crsm_state_ = CRSMState::ST_NORMAL;
+  }
   
   static int publish_count = 0;
   if (publish_count++ % 50 == 0) {  // Every 1 second at 20ms timer
@@ -2408,4 +2506,314 @@ bool SimpleController::validate_overtake_path(double overtake_direction)
               overtake_direction > 0 ? "LEFT" : "RIGHT", trajectory.size());
   
   return true;
+}
+
+// ============================================================================
+// CRSM (Collision Recovery State Machine) 기능 구현
+// 보고서 기반: IMU 충돌 감지, 스톨 감지, 조향 역보정
+// ============================================================================
+
+/**
+ * @brief IMU 기반 충돌 감지
+ * 
+ * 보고서 기반: |a_total| = sqrt(a_x^2 + a_y^2) > A_thresh (약 9.5 m/s^2)
+ * 급격한 감속이 발생하면 충돌로 판정
+ */
+bool SimpleController::check_imu_collision()
+{
+  if (!imu_received_) {
+    return false;
+  }
+  
+  // 가속도 크기가 임계값 초과시 충돌로 판정
+  if (imu_accel_magnitude_ > IMU_CRASH_ACCEL_THRESHOLD) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 200,
+                          "CRSM: IMU crash detected! accel=%.2f m/s^2 > %.2f threshold",
+                          imu_accel_magnitude_, IMU_CRASH_ACCEL_THRESHOLD);
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * @brief 스톨 감지 (명령 vs 실제 속도)
+ * 
+ * 보고서 기반: (v_cmd > 0.5 m/s) AND (|v_act| < 0.1 m/s) AND (min(Lidar_front) < 0.2m)
+ * 전진 명령이 있으나 차량이 움직이지 않고 전방에 장애물이 있는 경우
+ */
+bool SimpleController::check_stall_condition()
+{
+  if (!odom_received_ || !scan_received_) {
+    return false;
+  }
+  
+  // 현재 실제 속도 계산
+  double actual_speed = std::sqrt(
+    current_odom_.twist.twist.linear.x * current_odom_.twist.twist.linear.x +
+    current_odom_.twist.twist.linear.y * current_odom_.twist.twist.linear.y
+  );
+  
+  // 스톨 조건 체크
+  bool cmd_forward = last_cmd_velocity_ > STALL_CMD_VELOCITY_THRESHOLD;
+  bool speed_stalled = actual_speed < STALL_VELOCITY_THRESHOLD;
+  bool front_blocked = last_obstacle_front_dist_ < 0.2;
+  
+  if (cmd_forward && speed_stalled && front_blocked) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                          "CRSM: Stall detected! cmd=%.2f, actual=%.2f, front=%.2fm",
+                          last_cmd_velocity_, actual_speed, last_obstacle_front_dist_);
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * @brief 반전된 후진 조향 계산 (CRSM 보고서 기반)
+ * 
+ * 조향각 역보정(Steering Inversion) 알고리즘:
+ * - mode 0 (NEUTRAL): δ_rec = 0 (중립으로 후진) - 가장 안전
+ * - mode 1 (INVERT): δ_rec = -δ_last (반대 방향으로 후진) - 벽에서 빠르게 탈출
+ * - mode 2 (MAINTAIN): δ_rec = δ_last (기존 방식, 레거시 호환)
+ * 
+ * 원리: 충돌 시 바퀴가 벽 쪽으로 꺾여 있는 상태에서 조향을 중립으로 풀거나 
+ * 반대로 꺾으면서 후진해야 차체가 벽에서 떨어져 나오는 궤적(Unwinding Trajectory)을 그릴 수 있음
+ */
+double SimpleController::compute_inverted_reverse_steering()
+{
+  double reverse_steer = 0.0;
+  
+  switch (reverse_steering_mode_) {
+    case 0:  // NEUTRAL - 중립으로 후진
+      reverse_steer = 0.0;
+      break;
+      
+    case 1:  // INVERT - 반대 방향으로 후진
+      reverse_steer = -last_steering_before_reverse_;
+      // 최대 조향각 제한
+      reverse_steer = std::clamp(reverse_steer, -max_steer_angle_, max_steer_angle_);
+      break;
+      
+    case 2:  // MAINTAIN - 기존 방식 (레거시)
+    default:
+      reverse_steer = last_steering_before_reverse_;
+      break;
+  }
+  
+  return reverse_steer;
+}
+
+/**
+ * @brief CRSM 상태 발행 (시각화용)
+ */
+void SimpleController::publish_crsm_state()
+{
+  std_msgs::msg::String state_msg;
+  
+  switch (crsm_state_) {
+    case CRSMState::ST_NORMAL:
+      state_msg.data = "ST_NORMAL";
+      break;
+    case CRSMState::ST_CRASH_DETECTED:
+      state_msg.data = "ST_CRASH_DETECTED";
+      break;
+    case CRSMState::ST_RECOVERY_REVERSE:
+      state_msg.data = "ST_RECOVERY_REVERSE";
+      break;
+    case CRSMState::ST_RECOVERY_REALIGN:
+      state_msg.data = "ST_RECOVERY_REALIGN";
+      break;
+  }
+  
+  state_pub_->publish(state_msg);
+}
+
+/**
+ * @brief 안전 구역 마커 발행 (상대 차량 금지 구역 시각화)
+ * 
+ * 보고서 기반: D_forbidden = [d_opp - W_car/2 - W_margin, d_opp + W_car/2 + W_margin]
+ * 상대 차량 주변에 빨간 반투명 박스로 금지 구역 표시
+ */
+void SimpleController::publish_safety_zone_markers()
+{
+  if (!is_following_opponent_ && !is_overtaking_) {
+    return;  // Following 또는 추월 중이 아니면 표시 안함
+  }
+  
+  visualization_msgs::msg::MarkerArray marker_array;
+  
+  // 상대 차량 금지 구역 (빨간 반투명 박스)
+  visualization_msgs::msg::Marker opponent_zone;
+  opponent_zone.header.frame_id = "map";
+  opponent_zone.header.stamp = this->get_clock()->now();
+  opponent_zone.ns = "opponent_forbidden_zone";
+  opponent_zone.id = 0;
+  opponent_zone.type = visualization_msgs::msg::Marker::CUBE;
+  opponent_zone.action = visualization_msgs::msg::Marker::ADD;
+  
+  // 현재 위치 기준으로 전방에 표시
+  double current_x = current_odom_.pose.pose.position.x;
+  double current_y = current_odom_.pose.pose.position.y;
+  double current_yaw = tf2::getYaw(current_odom_.pose.pose.orientation);
+  
+  // 상대 차량 위치 (전방 장애물 거리 사용)
+  double opp_dist = last_obstacle_front_dist_;
+  opponent_zone.pose.position.x = current_x + opp_dist * std::cos(current_yaw);
+  opponent_zone.pose.position.y = current_y + opp_dist * std::sin(current_yaw);
+  opponent_zone.pose.position.z = 0.25;
+  opponent_zone.pose.orientation.w = 1.0;
+  
+  // 금지 구역 크기: 차량 길이 x (차량 폭 + 2*안전마진)
+  opponent_zone.scale.x = vehicle_length_;
+  opponent_zone.scale.y = opponent_width_with_margin_;  // W_car + 2*W_margin
+  opponent_zone.scale.z = 0.5;
+  
+  // 빨간 반투명
+  opponent_zone.color.r = 1.0f;
+  opponent_zone.color.g = 0.0f;
+  opponent_zone.color.b = 0.0f;
+  opponent_zone.color.a = 0.4f;
+  
+  opponent_zone.lifetime = rclcpp::Duration::from_seconds(0.2);
+  marker_array.markers.push_back(opponent_zone);
+  
+  // Following 앵커 (파란 구 - 1.5m 뒤 목표 지점)
+  if (is_following_opponent_) {
+    visualization_msgs::msg::Marker follow_anchor;
+    follow_anchor.header = opponent_zone.header;
+    follow_anchor.ns = "follow_anchor";
+    follow_anchor.id = 1;
+    follow_anchor.type = visualization_msgs::msg::Marker::SPHERE;
+    follow_anchor.action = visualization_msgs::msg::Marker::ADD;
+    
+    // 상대 차량 뒤 1.5m 지점
+    double anchor_dist = opp_dist - target_follow_gap_;
+    if (anchor_dist > 0) {
+      follow_anchor.pose.position.x = current_x + anchor_dist * std::cos(current_yaw);
+      follow_anchor.pose.position.y = current_y + anchor_dist * std::sin(current_yaw);
+    } else {
+      follow_anchor.pose.position.x = current_x;
+      follow_anchor.pose.position.y = current_y;
+    }
+    follow_anchor.pose.position.z = 0.3;
+    follow_anchor.pose.orientation.w = 1.0;
+    
+    follow_anchor.scale.x = 0.3;
+    follow_anchor.scale.y = 0.3;
+    follow_anchor.scale.z = 0.3;
+    
+    // 파란색
+    follow_anchor.color.r = 0.0f;
+    follow_anchor.color.g = 0.0f;
+    follow_anchor.color.b = 1.0f;
+    follow_anchor.color.a = 0.9f;
+    
+    follow_anchor.lifetime = rclcpp::Duration::from_seconds(0.2);
+    marker_array.markers.push_back(follow_anchor);
+  }
+  
+  safety_zone_pub_->publish(marker_array);
+}
+
+// ============================================================================
+// ACC (Adaptive Cruise Control) 스타일 Following 기능 구현
+// 보고서 기반: v_cmd = v_opp + Kp*(gap - 1.5) + Kd*(v_opp - v_ego)
+// ============================================================================
+
+/**
+ * @brief 상대 차량 속도 추정 업데이트
+ * 
+ * 전방 장애물 거리 변화율로 상대 차량 속도 추정
+ */
+void SimpleController::update_opponent_velocity_estimate()
+{
+  if (!scan_received_) {
+    return;
+  }
+  
+  rclcpp::Time current_time = this->get_clock()->now();
+  double dt = (current_time - prev_opponent_time_).seconds();
+  
+  if (dt > 0.01 && dt < 1.0) {  // 유효한 시간 간격
+    double current_dist = last_obstacle_front_dist_;
+    double dist_change = current_dist - prev_opponent_distance_;
+    
+    // 자차 속도 고려한 상대 속도 계산
+    double ego_speed = std::sqrt(
+      current_odom_.twist.twist.linear.x * current_odom_.twist.twist.linear.x +
+      current_odom_.twist.twist.linear.y * current_odom_.twist.twist.linear.y
+    );
+    
+    // 거리 변화율 = 상대 속도 - 자차 속도
+    // 상대 속도 = 거리 변화율 + 자차 속도
+    double relative_vel = dist_change / dt;
+    double raw_opponent_vel = ego_speed + relative_vel;
+    
+    // 음수 속도는 0으로 클램프 (상대방이 후진하지 않는다고 가정)
+    raw_opponent_vel = std::max(0.0, raw_opponent_vel);
+    
+    // 스무딩 적용 (이전 값 70% + 새 값 30%)
+    estimated_opponent_velocity_ = 0.7 * estimated_opponent_velocity_ + 
+                                   0.3 * raw_opponent_vel;
+  }
+  
+  prev_opponent_distance_ = last_obstacle_front_dist_;
+  prev_opponent_time_ = current_time;
+}
+
+/**
+ * @brief ACC 스타일 Following 속도 계산
+ * 
+ * 보고서 기반 제어 법칙:
+ * v_cmd = v_opp + Kp * ((s_opp - s_ego) - 1.5) + Kd * (v_opp - v_ego)
+ * 
+ * - 거리가 1.5m보다 멀어지면 가속하여 붙음
+ * - 거리가 1.5m보다 가까우면 감속하여 간격 유지
+ * - 상대방 속도에 동기화하여 안정적인 Following
+ */
+double SimpleController::compute_acc_following_speed(double base_speed)
+{
+  double front_dist = last_obstacle_front_dist_;
+  
+  // Following 범위 체크
+  if (front_dist >= follow_distance_threshold_ || front_dist <= a1_threshold_) {
+    // Following 범위 밖 - ACC 비활성
+    return base_speed;
+  }
+  
+  // 상대 차량 속도 추정 업데이트
+  update_opponent_velocity_estimate();
+  
+  // 자차 속도
+  double ego_speed = std::sqrt(
+    current_odom_.twist.twist.linear.x * current_odom_.twist.twist.linear.x +
+    current_odom_.twist.twist.linear.y * current_odom_.twist.twist.linear.y
+  );
+  
+  // === ACC PD 제어 법칙 ===
+  // gap_error = 현재 거리 - 목표 거리 (양수면 더 멀다, 음수면 더 가깝다)
+  double gap_error = front_dist - target_follow_gap_;
+  
+  // 상대 속도 오차 = 상대 속도 - 자차 속도
+  double velocity_error = estimated_opponent_velocity_ - ego_speed;
+  
+  // ACC 속도 명령
+  // v_cmd = v_opp + Kp * gap_error + Kd * velocity_error
+  double acc_speed = estimated_opponent_velocity_ + 
+                     acc_kp_ * gap_error + 
+                     acc_kd_ * velocity_error;
+  
+  // 속도 제한 적용
+  acc_speed = std::clamp(acc_speed, 0.0, base_speed);
+  
+  // 최소 속도 보장 (완전 정지 방지)
+  double min_speed = base_speed * follow_min_speed_ratio_;
+  acc_speed = std::max(acc_speed, min_speed);
+  
+  RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                        "ACC: gap=%.2fm, v_opp=%.2f, v_ego=%.2f, gap_err=%.2f, cmd=%.2f",
+                        front_dist, estimated_opponent_velocity_, ego_speed, gap_error, acc_speed);
+  
+  return acc_speed;
 }
