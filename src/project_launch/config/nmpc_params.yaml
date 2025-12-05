@@ -127,25 +127,28 @@ nmpc_engine_node:
     # =========================================================================
     # A1/A2 COLLISION AVOIDANCE SYSTEM
     # =========================================================================
-    # A1 Zone: Very close obstacle - triggers reverse + opposite steering
-    # A2 Zone: Close obstacle - triggers steering avoidance + slowdown
-    # A2 Urgent: Within 0.4m - maximum steering for emergency avoidance
+    # A1 Zone: Very close obstacle - triggers STRONG SHORT BURST reverse
+    # A2 Zone: Close obstacle - triggers steering avoidance (NO SLOWDOWN)
+    # 
+    # User request: 
+    # 1. When hitting wall, apply strong force in opposite direction for very short time
+    # 2. Remove slowdown when side obstacles are present
+    # 3. Only front obstacles trigger reverse (not side obstacles)
     
     enable_collision_avoidance: true
     
-    # A1 Zone parameters (reverse trigger)
-    a1_threshold: 0.1            # [m] Distance triggering reverse (front) - 0.1m
-    a1_side_factor: 0.8          # Side distance = a1_threshold * factor
-    reverse_speed: 1.0           # [m/s] Reverse driving speed - increased from 0.5 for 시원한 후진
-    reverse_duration: 0.8        # [s] Duration of reverse maneuver
-    a1_steer_gain: 0.8           # Steering gain during reverse
+    # A1 Zone parameters (STRONG SHORT BURST reverse)
+    a1_threshold: 0.3            # [m] Distance triggering reverse (front only) - 30cm
+    reverse_speed: 2.5           # [m/s] STRONG reverse speed - powerful burst
+    reverse_duration: 0.15       # [s] VERY SHORT burst - quick impulse
+    a1_steer_gain: 1.0           # Full steering gain during reverse
     
-    # A2 Zone parameters (repulsive force based steering avoidance)
+    # A2 Zone parameters (steering avoidance only - NO SLOWDOWN)
     # Repulsive force: obstacles push the car away in opposite direction
-    # Force is additive to NMPC steering for smooth blending
-    a2_threshold: 0.4            # [m] Distance triggering repulsive force - 0.4m for obstacle detection
-    a2_urgent_threshold: 0.25    # [m] Distance for urgent avoidance with amplified force
-    a2_max_steer_ratio: 0.7      # Max steering ratio (normal A2) - allows partial correction
-    a2_urgent_steer_ratio: 1.0   # Max steering ratio (urgent, full allowed)
-    a2_steer_gain: 0.6           # Repulsive force gain - moderate to blend with NMPC
-    a2_urgent_steer_gain: 1.2    # Urgent repulsive force gain (2x normal)
+    # Note: Speed reduction removed per user request
+    a2_threshold: 0.4            # [m] Distance triggering repulsive force
+    a2_urgent_threshold: 0.25    # [m] Distance for urgent avoidance
+    a2_max_steer_ratio: 1.0      # Full steering allowed
+    a2_urgent_steer_ratio: 1.0   # Full steering in urgent mode
+    a2_steer_gain: 1.5           # High repulsive force gain
+    a2_urgent_steer_gain: 2.0    # Very high urgent gain
