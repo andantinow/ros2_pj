@@ -880,6 +880,13 @@ private:
 class NMPCEngineNode : public rclcpp::Node
 {
 public:
+  // Named constants for magic numbers (code review feedback)
+  static constexpr double MIN_CREEP_SPEED = 0.3;              // [m/s] Minimum speed when following
+  static constexpr double BRIEF_STOP_DURATION = 0.1;          // [s] Brief stop before transitioning states
+  static constexpr double OVERTAKE_COMPLETION_TIMEOUT = 2.0;  // [s] Time to complete overtake after passing
+  static constexpr double OVERTAKE_SAFETY_MARGIN = 0.3;       // [m] Extra clearance margin for overtaking
+  static constexpr double DEFAULT_OBSTACLE_SPEED = 0.5;       // [m/s] Assumed speed for LiDAR-detected obstacles
+  
   NMPCEngineNode()
   : Node("nmpc_engine_node")
   {
@@ -953,7 +960,7 @@ public:
     declare_parameter("overtake_path_width", 0.8);         // [m] Lateral offset for overtaking
     declare_parameter("overtake_decision_distance", 2.5);  // [m] Distance to start considering overtake
     declare_parameter("enable_overtaking", true);          // Enable/disable overtaking system
-    declare_parameter("opponent_speed_tracking_gain", 0.8);// Speed limiting when following (0.8 = 80% of opponent speed)
+    declare_parameter("opponent_speed_tracking_gain", 0.8); // Speed limiting when following (0.8 = 80% of opponent speed)
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
@@ -1213,7 +1220,7 @@ private:
           drive_pub_->publish(cmd);
           
           // After brief stop, transition to waiting
-          if (elapsed > 0.1) {  // 100ms stop
+          if (elapsed > BRIEF_STOP_DURATION) {
             collision_state_ = CollisionState::WAITING;
             collision_state_start_time_ = current_time;
             RCLCPP_INFO(get_logger(), "Stopped. Waiting %.2fs before reverse...", stop_duration_);
@@ -1319,7 +1326,7 @@ private:
         // Match opponent speed with safety margin
         double limited_speed = opponent.speed * opponent_speed_tracking_gain_;
         if (solution.speed > limited_speed) {
-          solution.speed = std::max(0.3, limited_speed);  // Minimum creep speed
+          solution.speed = std::max(MIN_CREEP_SPEED, limited_speed);
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
             "FOLLOWING: Distance=%.2fm, limiting speed to %.2f (opponent=%.2f)",
             distance_to_opponent, solution.speed, opponent.speed);
@@ -1365,7 +1372,7 @@ private:
       // No opponent ahead, end overtaking if active
       if (is_overtaking_) {
         double overtake_elapsed = (now() - overtake_start_time_).seconds();
-        if (overtake_elapsed > 2.0) {  // Overtake complete after 2 seconds without opponent
+        if (overtake_elapsed > OVERTAKE_COMPLETION_TIMEOUT) {
           is_overtaking_ = false;
           RCLCPP_INFO(get_logger(), "Overtake complete (no opponent ahead for %.1fs)", overtake_elapsed);
         }
@@ -1585,7 +1592,7 @@ private:
         opponent.is_ahead = true;
         opponent.distance = last_obstacle_front_dist_;
         opponent.relative_angle = last_obstacle_angle_;
-        opponent.speed = 0.5;  // Assume slow-moving obstacle
+        opponent.speed = DEFAULT_OBSTACLE_SPEED;
       }
     }
     
@@ -1726,8 +1733,8 @@ private:
     }
     
     // Check if we have room on at least one side
-    bool left_clear = last_obstacle_left_dist_ > overtake_path_width_ + 0.3;
-    bool right_clear = last_obstacle_right_dist_ > overtake_path_width_ + 0.3;
+    bool left_clear = last_obstacle_left_dist_ > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
+    bool right_clear = last_obstacle_right_dist_ > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
     
     return left_clear || right_clear;
   }
@@ -1738,7 +1745,7 @@ private:
   bool canOvertakeOnSide(bool left_side)
   {
     double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
-    return clearance > overtake_path_width_ + 0.3;
+    return clearance > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
   }
   
   /**
