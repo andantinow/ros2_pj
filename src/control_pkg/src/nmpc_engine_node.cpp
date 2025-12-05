@@ -1866,85 +1866,26 @@ private:
   }
   
   /**
-   * @brief Compute avoidance steering (A2 zone) - Repulsive Force based
-   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad) - used for logging
+   * @brief Compute avoidance steering (A2 zone) - DISABLED
+   * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad) - unused
    * 
-   * Uses repulsive force approach: obstacles push the car away in the opposite direction.
-   * - Left obstacle closer → steer right (negative steering)
-   * - Right obstacle closer → steer left (positive steering)
-   * - Force magnitude inversely proportional to distance (closer = stronger push)
+   * 2024-12: 사용자 요청에 따라 비활성화됨
+   * 장애물/벽 충돌 시 갑작스런 반대 방향 조향이 차량 제어를 불안정하게 만들어 제거
+   * 이제 NMPC 경로 추종 + A1 zone 후진만 동작하고, A2 zone 회피 조향은 적용되지 않음
    * 
-   * This is additive to NMPC steering, creating a smooth blend:
-   * final_steer = nmpc_steer + repulsive_force
+   * 이전 로직 설명 (참고용):
+   * - 왼쪽 장애물 가까우면 → 오른쪽으로 조향 (음수)
+   * - 오른쪽 장애물 가까우면 → 왼쪽으로 조향 (양수)
+   * - 거리에 반비례하여 조향력 증가 (가까울수록 강하게)
+   * 
+   * 문제점: 벽/장애물에 부딪힐 때 갑작스런 큰 반대 방향 힘이 차량을 불안정하게 만듦
    */
   double computeAvoidanceSteering(double lookahead_angle)
   {
-    double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-    double right_dist = std::min(last_obstacle_right_dist_, 5.0);
-    double front_dist = std::min(last_obstacle_front_dist_, 5.0);
-    double min_side_dist = std::min(left_dist, right_dist);
-    double min_dist = std::min(min_side_dist, front_dist);
-    
-    // No avoidance needed if no obstacles within A2 threshold
-    if (min_dist > a2_threshold_) {
-      return 0.0;
-    }
-    
-    // === Repulsive Force Calculation ===
-    // Force from each side: F = gain * (1/dist - 1/threshold) when dist < threshold
-    // This creates smooth force that increases as obstacle gets closer
-    
-    double repulsive_steer = 0.0;
-    
-    // Left obstacle repulsive force (pushes right = negative steering)
-    if (left_dist < a2_threshold_) {
-      // Repulsive force: stronger when closer (inverse relationship)
-      double left_force = std::max(0.0, (a2_threshold_ - left_dist) / a2_threshold_);  // 0 at threshold, 1 at 0
-      left_force = left_force * left_force;  // Quadratic for stronger response at close range
-      repulsive_steer -= left_force * a2_steer_gain_ * max_steer_;  // Push right (negative)
-    }
-    
-    // Right obstacle repulsive force (pushes left = positive steering)
-    if (right_dist < a2_threshold_) {
-      double right_force = std::max(0.0, (a2_threshold_ - right_dist) / a2_threshold_);
-      right_force = right_force * right_force;  // Quadratic
-      repulsive_steer += right_force * a2_steer_gain_ * max_steer_;  // Push left (positive)
-    }
-    
-    // Front obstacle: steer toward more open side
-    if (front_dist < a2_threshold_) {
-      double front_force = std::max(0.0, (a2_threshold_ - front_dist) / a2_threshold_);
-      front_force = front_force * front_force;
-      // Steer toward the more open side
-      if (left_dist > right_dist) {
-        repulsive_steer += front_force * a2_steer_gain_ * max_steer_ * 0.5;  // Turn left
-      } else {
-        repulsive_steer -= front_force * a2_steer_gain_ * max_steer_ * 0.5;  // Turn right
-      }
-    }
-    
-    // Urgent zone: amplify repulsive force
-    bool is_urgent = min_dist < a2_urgent_threshold_;
-    if (is_urgent) {
-      repulsive_steer *= (a2_urgent_steer_gain_ / a2_steer_gain_);  // Apply urgent multiplier
-    }
-    
-    // Clamp to maximum allowed steering
-    double max_avoidance = max_steer_ * (is_urgent ? a2_urgent_steer_ratio_ : a2_max_steer_ratio_);
-    repulsive_steer = std::clamp(repulsive_steer, -max_avoidance, max_avoidance);
-    
-    // Log repulsive force avoidance
-    if (std::abs(repulsive_steer) > 0.01) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), is_urgent ? 200 : 500,
-        "[%s REPULSE] steer=%.3f | L:%.2f R:%.2f F:%.2f (threshold:%.2f)",
-        is_urgent ? "URGENT" : "AVOID",
-        repulsive_steer, left_dist, right_dist, front_dist, a2_threshold_);
-    }
-    
-    // Suppress unused parameter warning
-    (void)lookahead_angle;
-    
-    return repulsive_steer;
+    // 비활성화됨 - 항상 0 반환
+    // 장애물/벽 충돌 시 갑작스런 조향이 불안정을 유발하므로 제거
+    (void)lookahead_angle;  // 사용되지 않음
+    return 0.0;
   }
   
   /**
