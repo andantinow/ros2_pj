@@ -29,7 +29,7 @@ class SectorSlicer(Node):
         super().__init__('sector_slicer',
                          allow_undeclared_parameters=True,
                          automatically_declare_parameters_from_overrides=False)
-        self.declare_parameter('map_name','hangar_1905_v0')
+        self.declare_parameter('map_name','small_hall_orig')
         
         self.future = future
         self.global_wpnts = None

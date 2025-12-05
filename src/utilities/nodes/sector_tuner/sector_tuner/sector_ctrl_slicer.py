@@ -49,7 +49,7 @@ class SectorSlicer(Node):
         self.future_done = future_done
 
         # ---------- Parameters ----------
-        self.declare_parameter("map_name", "hangar_1905_v0")
+        self.declare_parameter("map_name", "small_hall_orig")
         map_name = self.get_parameter("map_name").get_parameter_value().string_value
 
         # 기본 저장 위치: <repo>/race_stack/stack_master/maps/<map_name>

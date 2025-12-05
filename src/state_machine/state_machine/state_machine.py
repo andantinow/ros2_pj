@@ -140,7 +140,7 @@ class StateMachine(Node):
 
         # 런치/파라미터 파일에서 들어왔으면 그대로 쓰고, 없으면 기본값 선언
         #    (기본값은 실제 사용중인 이름에 맞춰주세요)
-        self.map_name      = self._get_or_declare_str('map_name', 'teras')
+        self.map_name      = self._get_or_declare_str('map_name', 'small_hall_orig')
         self.pp_node_name  = self._get_or_declare_str('pp_node_name', '/controller_manager_small')
         self.tln_node_name = self._get_or_declare_str('tln_node_name', '/tln_inference')
 
@@ -506,7 +506,7 @@ class StateMachine(Node):
         try:
             map_name = self.get_parameter('map_name').get_parameter_value().string_value
         except Exception:
-            map_name = 'teras'
+            map_name = 'small_hall_orig'
 
         # ament에서 stack_master의 share 경로를 가져온 뒤, 그걸 기준으로
         # - src 쪽:   <ws>/race_stack/stack_master/maps/<map_name>/ctrl_sectors.yaml

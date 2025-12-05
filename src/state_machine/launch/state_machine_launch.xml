@@ -4,7 +4,7 @@
   <arg name="log-level" default="info"/>
 
   <!-- ★ 섹터 게이팅용 파라미터 -->
-  <arg name="map_name" default="teras"/>
+  <arg name="map_name" default="small_hall_orig"/>
   <arg name="pp_node_name" default="/controller_small"/>
   <arg name="tln_node_name" default="/tln_inference"/>
 
