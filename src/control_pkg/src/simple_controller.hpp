@@ -29,15 +29,17 @@ public:
   };
   
   // === Constants for collision avoidance and overtake ===
-  // Based on F1TENTH Research Report: "Collision Recovery and Dynamic Overtaking Architecture"
-  static constexpr double SAFETY_MARGIN = 0.15;             // General safety margin (m) - Report: W_margin = 0.15~0.2m
+  // Reference: F1TENTH Research Report "Collision Recovery and Dynamic Overtaking Architecture"
+  // Based on: ros2_pj repository issue discussion on collision recovery strategies
+  // See TUNING_GUIDE.md for detailed parameter explanations
+  static constexpr double SAFETY_MARGIN = 0.15;             // General safety margin (m) - W_margin = 0.15~0.2m
   static constexpr double WALL_SAFETY_MARGIN = 0.15;        // Wall clearance safety margin (m)
   static constexpr double MIN_OVERTAKE_DISTANCE = 0.6;      // Minimum distance for overtake consideration (m)
   static constexpr double OVERTAKE_VIS_LENGTH = 5.0;        // Overtake visualization path length (m)
   static constexpr double OVERTAKE_VIS_STEP = 0.15;         // Overtake visualization step size (m)
-  static constexpr double IMU_CRASH_ACCEL_THRESHOLD = 9.5;  // Crash detection acceleration threshold (m/s^2) - Report: A_thresh = 8.0~10.0 m/s^2
-  static constexpr double STALL_VELOCITY_THRESHOLD = 0.1;   // Stall detection velocity threshold (m/s) - Report: |v_act| < 0.1 m/s
-  static constexpr double STALL_CMD_VELOCITY_THRESHOLD = 0.5; // Commanded velocity for stall detection (m/s) - Report: v_cmd > 0.5 m/s
+  static constexpr double IMU_CRASH_ACCEL_THRESHOLD = 9.5;  // Crash detection acceleration threshold (m/s^2) - A_thresh = 8.0~10.0 m/s^2
+  static constexpr double STALL_VELOCITY_THRESHOLD = 0.1;   // Stall detection velocity threshold (m/s) - |v_act| < 0.1 m/s
+  static constexpr double STALL_CMD_VELOCITY_THRESHOLD = 0.5; // Commanded velocity for stall detection (m/s) - v_cmd > 0.5 m/s
 
 private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
