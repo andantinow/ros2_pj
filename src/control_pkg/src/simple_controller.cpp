@@ -1055,58 +1055,15 @@ void SimpleController::control_loop()
                           path_curvature, corner_steer_amplify_);
   }
   
-  // 7) A2 범위 기반 회피 조향 추가 - 코너 증폭 후에 별도로 추가
-  // is_in_a1_zone_는 check_a1_zone()에서 업데이트됨 (중복 체크 방지)
+  // 7) A2 범위 기반 회피 조향 - 비활성화됨
+  // 측면 센서 A2 zone 기능이 제거됨. 장애물/벽 충돌 시 A1 zone 후진만 동작
+  // 2024-12: 사용자 요청에 따라 A2 zone 조향 및 속도 감소 기능 제거
   double delta_a2_avoidance = 0.0;
-  bool in_a2_zone = !is_in_a1_zone_ && check_a2_zone();
+  (void)delta_a2_avoidance;  // 미사용 변수 경고 방지
   
-  if (in_a2_zone) {
-    // alpha = lookahead point 방향 각도 (차량 프레임 기준)
-    delta_a2_avoidance = compute_avoidance_steering(alpha);
-    
-    // === 추월 시스템 ===
-    // 전방 장애물이 감지되면 추월 시도
-    if (!is_overtaking_ && can_overtake_safely(last_obstacle_front_dist_, last_obstacle_angle_)) {
-      is_overtaking_ = true;
-      overtake_start_time_ros_ = current_time;
-      RCLCPP_INFO(this->get_logger(), "Starting overtake maneuver");
-    }
-    
-    if (is_overtaking_) {
-      // 추월 중: 더 적극적인 회피 조향 + 속도 유지
-      delta_a2_avoidance = compute_overtake_steering(delta_a2_avoidance);
-      
-      // 추월 완료 확인
-      if (should_return_to_line()) {
-        is_overtaking_ = false;
-        RCLCPP_INFO(this->get_logger(), "Overtake complete, returning to racing line");
-      }
-    }
-    
-    steering_angle += delta_a2_avoidance;  // 회피 조향은 증폭되지 않고 그대로 추가
-    
-    // 장애물 회피 시 속도 유지 - 반대 조향으로 회피하므로 느려지지 않음
-    // 추월 중에는 더 빠르게 유지
-    
-    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                          "A2 Zone: steer=%.3f, overtaking=%s", 
-                          delta_a2_avoidance, is_overtaking_ ? "true" : "false");
-  } else if (is_overtaking_) {
-    // A2 zone을 벗어났지만 아직 추월 중이면 라인 복귀
-    double return_steer = compute_return_to_line_steering();
-    steering_angle += return_steer;
-    
-    if (should_return_to_line()) {
-      is_overtaking_ = false;
-      RCLCPP_INFO(this->get_logger(), "Returned to racing line");
-    }
-  }
-  
-  // === 벽 반발 조향 (수식 기반) ===
-  // A1/A2 zone 밖에서도 벽에 가까우면 반발력으로 조향
-  // 속도 감소 없이 조향만으로 벽에서 멀어지도록 함
-  double wall_repulsion_steer = compute_wall_repulsion_steering();
-  steering_angle += wall_repulsion_steer;
+  // 벽 반발 조향도 비활성화 (A2 관련 기능)
+  double wall_repulsion_steer = 0.0;
+  (void)wall_repulsion_steer;  // 미사용 변수 경고 방지
   
   // === 벽 충돌 시각화 ===
   // A1 zone (매우 가까움) 또는 벽 데이터 기반 충돌 감지
@@ -1135,8 +1092,8 @@ void SimpleController::control_loop()
   static int debug_count = 0;
   if (debug_count++ % 25 == 0) {  // Every 0.5 seconds
     RCLCPP_INFO(this->get_logger(), 
-                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, A2Avoid=%.3f, WallRepel=%.3f, steer=%.3f",
-                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, delta_a2_avoidance, wall_repulsion_steer, steering_angle);
+                "Hybrid: lat_err=%.3f, hdg_err=%.3f, PP=%.3f, PID=%.3f, Stanley=%.3f, FF=%.3f, steer=%.3f",
+                lateral_error, heading_error, delta_pp, delta_pid, delta_stanley, delta_ff, steering_angle);
   }
 
   // Speed control: Reduce speed based on path curvature (not amplified steering angle)
@@ -1153,9 +1110,10 @@ void SimpleController::control_loop()
   
   double adjusted_speed = target_speed_ * speed_factor;
   
-  // === 상대 차량 Following ===
-  // 추월 불가시 속도 맞춰서 following
-  adjusted_speed = compute_opponent_following_speed(adjusted_speed);
+  // === 상대 차량 Following - 비활성화됨 ===
+  // 사용자 요청에 따라 전방 장애물 감지 시 속도 감소 기능 제거
+  // 장애물/벽 충돌 시에는 A1 zone 후진만 동작
+  // adjusted_speed = compute_opponent_following_speed(adjusted_speed);  // 비활성화
   
   adjusted_speed = std::clamp(adjusted_speed, 0.0, max_speed_);
 
