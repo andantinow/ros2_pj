@@ -139,7 +139,6 @@ nmpc_engine_node:
     
     # A1 Zone parameters (STRONG SHORT BURST reverse)
     a1_threshold: 0.3            # [m] Distance triggering reverse (front only) - 30cm
-    a1_side_factor: 0.8          # NOT USED - side obstacles don't trigger reverse anymore
     reverse_speed: 2.5           # [m/s] STRONG reverse speed - powerful burst
     reverse_duration: 0.15       # [s] VERY SHORT burst - quick impulse
     a1_steer_gain: 1.0           # Full steering gain during reverse

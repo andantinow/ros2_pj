@@ -928,7 +928,6 @@ public:
     declare_parameter("a1_threshold", 0.3);            // [m] Front obstacle distance to trigger reverse
     declare_parameter("a2_threshold", 0.4);            // [m] Distance to trigger steering avoidance
     declare_parameter("a2_urgent_threshold", 0.25);    // [m] Distance for urgent avoidance
-    declare_parameter("a1_side_factor", 0.8);          // NOT USED - side obstacles don't trigger reverse
     declare_parameter("a2_max_steer_ratio", 1.0);      // Full steering allowed
     declare_parameter("a2_urgent_steer_ratio", 1.0);   // Full steering in urgent mode
     declare_parameter("reverse_speed", 2.5);           // [m/s] STRONG reverse speed
@@ -956,7 +955,6 @@ public:
     a1_threshold_ = get_parameter("a1_threshold").as_double();
     a2_threshold_ = get_parameter("a2_threshold").as_double();
     a2_urgent_threshold_ = get_parameter("a2_urgent_threshold").as_double();
-    a1_side_factor_ = get_parameter("a1_side_factor").as_double();
     a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
     a2_urgent_steer_ratio_ = get_parameter("a2_urgent_steer_ratio").as_double();
     reverse_speed_ = get_parameter("reverse_speed").as_double();
@@ -1862,18 +1860,17 @@ private:
   double max_steer_{0.436};  // 25 degrees in radians
   double prediction_horizon_{1.0};  // Store prediction horizon for reference building
   
-  // A1/A2 Collision avoidance parameters (Repulsive Force based)
-  double a1_threshold_{0.3};    // Reverse trigger at 30cm for safety
-  double a2_threshold_{0.8};    // Repulsive force activation threshold (80cm)
-  double a2_urgent_threshold_{0.3};  // Urgent threshold: amplified force when < 0.3m
-  double a1_side_factor_{0.8};
-  double a2_max_steer_ratio_{0.7};
-  double a2_urgent_steer_ratio_{1.0};  // Full steering in urgent mode
-  double reverse_speed_{0.5};
-  double reverse_duration_{0.8};
-  double a1_steer_gain_{0.8};
-  double a2_steer_gain_{0.6};          // Repulsive force gain - moderate to blend with NMPC
-  double a2_urgent_steer_gain_{1.2};   // 2x gain when in urgent zone
+  // A1/A2 Collision avoidance parameters
+  double a1_threshold_{0.3};          // [m] Front obstacle reverse trigger
+  double a2_threshold_{0.4};          // [m] Steering avoidance threshold
+  double a2_urgent_threshold_{0.25};  // [m] Urgent avoidance threshold
+  double a2_max_steer_ratio_{1.0};    // Full steering allowed
+  double a2_urgent_steer_ratio_{1.0}; // Full steering in urgent mode
+  double reverse_speed_{2.5};         // [m/s] Strong burst reverse
+  double reverse_duration_{0.15};     // [s] Short burst duration
+  double a1_steer_gain_{1.0};         // Full steering during reverse
+  double a2_steer_gain_{1.5};         // High repulsive force gain
+  double a2_urgent_steer_gain_{2.0};  // Very high urgent gain
   bool enable_collision_avoidance_{true};
   
   // Collision avoidance state
