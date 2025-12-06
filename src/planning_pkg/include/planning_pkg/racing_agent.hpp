@@ -231,7 +231,7 @@ private:
     double overtake_progress_ = 0.0;               ///< Progress along overtake trajectory [0, 1]
     
     // === Parameters ===
-    double safe_follow_distance_ = 1.5;   ///< Target following distance (m)
+    double safe_follow_distance_ = 3.0;   ///< Target following distance (m) - increased for relaxed following
     double min_stop_distance_ = 0.3;      ///< Minimum distance before emergency stop
     double cruise_speed_ = 5.0;           ///< Default cruise speed (m/s)
     double decision_rate_ = 20.0;         ///< Decision loop rate (Hz)
@@ -239,6 +239,11 @@ private:
     // === Corner Exit Smoothing Parameters ===
     double corner_exit_wall_margin_ = 0.4;    ///< Minimum distance from wall on corner exit (m)
     double corner_exit_lateral_soften_ = 0.7; ///< Factor to reduce lateral OUT on corner exit (0-1)
+    
+    // === Corner Handling Parameters ===
+    double corner_curvature_threshold_ = 0.15; ///< Curvature threshold for corner detection (1/m)
+    double corner_follow_distance_factor_ = 1.3; ///< Factor to increase follow distance in corners
+    double corner_speed_reduction_ = 0.8;      ///< Speed reduction factor in corners (0-1)
     
     // === Overtake Feasibility Parameters ===
     double opponent_width_ = 0.35;            ///< Assumed opponent vehicle width (m)
@@ -297,6 +302,20 @@ private:
     bool should_start_following() const;
     bool can_consider_overtake() const;
     void update_environment_state();
+    
+    // === Corner Handling ===
+    double compute_local_curvature(size_t raceline_idx) const;
+    bool is_in_corner() const;
+    double get_corner_adjusted_follow_distance() const;
+    
+    // === Inside/Outside Overtake Path Selection ===
+    enum class OvertakeSide { INSIDE, OUTSIDE, NONE };
+    OvertakeSide determine_best_overtake_side() const;
+    double compute_inside_overtake_offset() const;
+    double compute_outside_overtake_offset() const;
+    
+    // === Distance-based Overtake Preparation ===
+    void prepare_overtake_candidates();
     
     // === Overtake Feasibility Checks ===
     bool check_lateral_clearance_for_overtake(bool is_left_side) const;

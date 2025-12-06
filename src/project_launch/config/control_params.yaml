@@ -50,12 +50,14 @@ simple_controller:
     enable_collision_avoidance: true  # 충돌 회피 활성화
     
     # === Following 시스템 (앞 차 추적) ===
-    follow_distance_threshold: 2.5   # following 시작 거리 (m) - increased for more comfortable following distance
+    # Following distance increased for more relaxed, less nervous behavior
+    # This gives room to react and creates a clearer gap before overtaking
+    follow_distance_threshold: 4.0   # following 시작 거리 (m) - increased from 2.5 for noticeably farther following
     follow_min_distance: 0.5         # 최소 유지 거리 (m)
     follow_speed_factor: 0.4         # following 시 속도 비율 (0.2 -> 0.4, less conservative following)
     follow_min_speed_ratio: 0.15     # 최소 속도 비율 (15%) - higher min speed during follow
     speed_smooth_factor: 0.1         # 속도 변화 스무딩
-    target_follow_gap: 2.0           # 목표 차간 거리 (m) - increased from 1.5 for more comfortable gap
+    target_follow_gap: 3.0           # 목표 차간 거리 (m) - increased from 2.0 for noticeably larger gap
     
     # === 추월 조건 체크 ===
     narrow_road_threshold: 1.2       # 좁은 도로 판단 기준 (좌우 합계 m) - reduced for more overtake opportunities

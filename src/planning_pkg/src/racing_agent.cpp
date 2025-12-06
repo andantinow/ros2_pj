@@ -45,7 +45,7 @@ RacingAgent::RacingAgent()
     RCLCPP_INFO(this->get_logger(), "Initializing Racing Agent - Upper Level Strategy Controller");
     
     // === Declare Parameters ===
-    this->declare_parameter("safe_follow_distance", 1.5);
+    this->declare_parameter("safe_follow_distance", 3.0);  // Increased for more relaxed following
     this->declare_parameter("min_stop_distance", 0.3);
     this->declare_parameter("cruise_speed", 5.0);
     this->declare_parameter("decision_rate", 20.0);
@@ -55,6 +55,11 @@ RacingAgent::RacingAgent()
     // === Corner Exit Smoothing Parameters ===
     this->declare_parameter("corner_exit_wall_margin", CORNER_EXIT_WALL_MARGIN);
     this->declare_parameter("corner_exit_lateral_soften", CORNER_EXIT_LATERAL_SOFTEN);
+    
+    // === Corner Handling Parameters ===
+    this->declare_parameter("corner_curvature_threshold", 0.15);
+    this->declare_parameter("corner_follow_distance_factor", 1.3);
+    this->declare_parameter("corner_speed_reduction", 0.8);
     
     // === Overtake Feasibility Parameters ===
     this->declare_parameter("opponent_width", OPPONENT_WIDTH);
@@ -71,6 +76,11 @@ RacingAgent::RacingAgent()
     // Load corner exit parameters
     corner_exit_wall_margin_ = this->get_parameter("corner_exit_wall_margin").as_double();
     corner_exit_lateral_soften_ = this->get_parameter("corner_exit_lateral_soften").as_double();
+    
+    // Load corner handling parameters
+    corner_curvature_threshold_ = this->get_parameter("corner_curvature_threshold").as_double();
+    corner_follow_distance_factor_ = this->get_parameter("corner_follow_distance_factor").as_double();
+    corner_speed_reduction_ = this->get_parameter("corner_speed_reduction").as_double();
     
     // Load overtake feasibility parameters
     opponent_width_ = this->get_parameter("opponent_width").as_double();
@@ -420,13 +430,28 @@ void RacingAgent::execute_follow_mode()
 {
     current_command_.reference_path = generate_follow_reference_path();
     
+    // Use corner-aware following distance
+    double effective_follow_distance = get_corner_adjusted_follow_distance();
+    
     // Speed control: follow at safe distance using simple PD control
-    double gap_error = env_state_.preceding_distance - safe_follow_distance_;
+    double gap_error = env_state_.preceding_distance - effective_follow_distance;
     double target_speed = env_state_.preceding_speed + 0.5 * gap_error;
+    
+    // In corners, reduce speed further for safety
+    if (is_in_corner()) {
+        target_speed *= corner_speed_reduction_;
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+            "FOLLOW in corner: reduced speed to %.2f, follow_dist=%.2fm",
+            target_speed, effective_follow_distance);
+    }
+    
     target_speed = std::clamp(target_speed, 0.0, cruise_speed_);
     
     current_command_.speed_limit = target_speed;
     current_command_.should_stop = false;
+    
+    // Pre-prepare overtake candidates based on distance to front car
+    prepare_overtake_candidates();
 }
 
 void RacingAgent::execute_overtake_candidate_mode()
@@ -558,18 +583,7 @@ void RacingAgent::generate_default_overtake_trajectories()
     for (const auto& zone : zones_) {
         if (zone.type != ZoneType::OVERTAKE_ZONE) continue;
         
-        // Generate left overtake trajectory
-        OvertakeTrajectory left_traj;
-        left_traj.id = zone.name + "_left";
-        left_traj.zone_name = zone.name;
-        left_traj.s_start = zone.s_start;
-        left_traj.s_end = zone.s_end;
-        left_traj.is_left_side = true;
-        left_traj.lateral_offset_max = OVERTAKE_LATERAL_OFFSET;
-        left_traj.estimated_duration = (zone.s_end - zone.s_start) / cruise_speed_;
-        
-        // Generate waypoints for S-curve overtake
-        // Use SIZE_MAX as sentinel to properly detect if start_idx was found
+        // Generate waypoints indices for this zone
         size_t start_idx = std::numeric_limits<size_t>::max();
         size_t end_idx = 0;
         for (size_t i = 0; i < raceline_s_.size(); ++i) {
@@ -590,55 +604,69 @@ void RacingAgent::generate_default_overtake_trajectories()
         // Handle single waypoint case explicitly
         size_t waypoint_count = (end_idx >= start_idx) ? (end_idx - start_idx + 1) : 1;
         
-        for (size_t i = start_idx; i <= end_idx && i < global_raceline_.poses.size(); ++i) {
-            // Progress 0.0 to 1.0 over the trajectory
-            // For single waypoint, progress = 0.0 (no lateral offset)
-            double progress = (waypoint_count > 1) ? 
-                static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
+        // Generate 4 trajectories per zone:
+        // 1. Left side outside (standard offset)
+        // 2. Left side inside (reduced offset for inside-line overtake)
+        // 3. Right side outside (standard offset)
+        // 4. Right side inside (reduced offset for inside-line overtake)
+        
+        struct TrajectoryConfig {
+            std::string suffix;
+            bool is_left_side;
+            bool is_inside;
+            double offset_factor;
+        };
+        
+        std::vector<TrajectoryConfig> configs = {
+            {"_left_outside", true, false, 1.1},   // Outside: wider offset
+            {"_left_inside", true, true, 0.7},     // Inside: tighter offset
+            {"_right_outside", false, false, 1.1}, // Outside: wider offset
+            {"_right_inside", false, true, 0.7}    // Inside: tighter offset
+        };
+        
+        for (const auto& config : configs) {
+            OvertakeTrajectory traj;
+            traj.id = zone.name + config.suffix;
+            traj.zone_name = zone.name;
+            traj.s_start = zone.s_start;
+            traj.s_end = zone.s_end;
+            traj.is_left_side = config.is_left_side;
+            traj.lateral_offset_max = (config.is_left_side ? 1.0 : -1.0) * 
+                                      OVERTAKE_LATERAL_OFFSET * config.offset_factor;
+            traj.estimated_duration = (zone.s_end - zone.s_start) / cruise_speed_;
             
-            // === CORNER EXIT IMPROVEMENT ===
-            // Apply asymmetric S-curve: full offset on entry/mid, reduced offset on exit
-            // This prevents going too far "OUT" on corner exit and hitting the wall
-            // lateral_scale = 1.0 for entry phase (progress <= 0.5), computed for exit phase
-            double lateral_scale = 1.0;
-            if (progress > 0.5) {
-                // On exit phase (progress > 0.5), apply soften factor to reduce lateral offset
-                // This keeps the car further from the outer wall on exit
-                double exit_progress = (progress - 0.5) * 2.0;  // 0 to 1 in exit phase
-                lateral_scale = 1.0 - exit_progress * (1.0 - corner_exit_lateral_soften_);
+            for (size_t i = start_idx; i <= end_idx && i < global_raceline_.poses.size(); ++i) {
+                double progress = (waypoint_count > 1) ? 
+                    static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
+                
+                // Apply asymmetric S-curve for corner exit safety
+                double lateral_scale = 1.0;
+                if (progress > 0.5) {
+                    double exit_progress = (progress - 0.5) * 2.0;
+                    lateral_scale = 1.0 - exit_progress * (1.0 - corner_exit_lateral_soften_);
+                }
+                
+                double base_offset = OVERTAKE_LATERAL_OFFSET * config.offset_factor;
+                double lateral_offset = base_offset * std::sin(progress * M_PI) * lateral_scale;
+                if (!config.is_left_side) {
+                    lateral_offset = -lateral_offset;  // Flip for right side
+                }
+                
+                geometry_msgs::msg::PoseStamped pose = global_raceline_.poses[i];
+                double yaw = tf2::getYaw(pose.pose.orientation);
+                pose.pose.position.x -= lateral_offset * std::sin(yaw);
+                pose.pose.position.y += lateral_offset * std::cos(yaw);
+                
+                traj.waypoints.push_back(pose);
+                traj.speeds.push_back(cruise_speed_);
             }
             
-            double lateral_offset = OVERTAKE_LATERAL_OFFSET * std::sin(progress * M_PI) * lateral_scale;
-            
-            geometry_msgs::msg::PoseStamped pose = global_raceline_.poses[i];
-            double yaw = tf2::getYaw(pose.pose.orientation);
-            pose.pose.position.x -= lateral_offset * std::sin(yaw);
-            pose.pose.position.y += lateral_offset * std::cos(yaw);
-            
-            left_traj.waypoints.push_back(pose);
-            left_traj.speeds.push_back(cruise_speed_);
+            overtake_trajectories_.push_back(traj);
         }
-        
-        overtake_trajectories_.push_back(left_traj);
-        
-        // Generate right overtake trajectory (mirror of left)
-        OvertakeTrajectory right_traj = left_traj;
-        right_traj.id = zone.name + "_right";
-        right_traj.is_left_side = false;
-        right_traj.lateral_offset_max = -OVERTAKE_LATERAL_OFFSET;
-        
-        for (auto& pose : right_traj.waypoints) {
-            double yaw = tf2::getYaw(pose.pose.orientation);
-            // Offset to right instead of left
-            pose.pose.position.x += 2 * OVERTAKE_LATERAL_OFFSET * std::sin(yaw);
-            pose.pose.position.y -= 2 * OVERTAKE_LATERAL_OFFSET * std::cos(yaw);
-        }
-        
-        overtake_trajectories_.push_back(right_traj);
     }
     
     RCLCPP_INFO(this->get_logger(), 
-        "Generated %zu default overtake trajectories for %zu zones",
+        "Generated %zu overtake trajectories (inside/outside) for %zu zones",
         overtake_trajectories_.size(), zones_.size());
 }
 
@@ -665,22 +693,50 @@ std::optional<size_t> RacingAgent::select_best_trajectory(const std::vector<size
 {
     if (candidates.empty()) return std::nullopt;
     
-    // Simple selection: prefer side with more clearance
+    // Determine the preferred overtake side (inside vs outside)
+    OvertakeSide preferred_side = determine_best_overtake_side();
+    
+    // Score-based selection considering:
+    // 1. Inside vs outside preference based on track geometry
+    // 2. Available clearance on each side
+    // 3. Trajectory offset (smaller = safer)
+    
     size_t best_idx = candidates[0];
-    double best_clearance = 0.0;
+    double best_score = -std::numeric_limits<double>::max();
     
     for (size_t idx : candidates) {
         const auto& traj = overtake_trajectories_[idx];
         double clearance = traj.is_left_side ? env_state_.left_clearance : env_state_.right_clearance;
-        if (clearance > best_clearance) {
-            best_clearance = clearance;
+        
+        // Base score from clearance
+        double score = clearance * 1.0;
+        
+        // Bonus for matching preferred side (inside/outside)
+        bool is_inside_traj = (traj.id.find("inside") != std::string::npos);
+        if (preferred_side == OvertakeSide::INSIDE && is_inside_traj) {
+            score += 1.5;  // Bonus for inside trajectory when inside is preferred
+        } else if (preferred_side == OvertakeSide::OUTSIDE && !is_inside_traj) {
+            score += 1.0;  // Smaller bonus for outside trajectory
+        }
+        
+        // Penalty for large lateral offsets (safer to use smaller offsets)
+        score -= std::abs(traj.lateral_offset_max) * 0.5;
+        
+        if (score > best_score) {
+            best_score = score;
             best_idx = idx;
         }
     }
     
     // Only select if clearance is sufficient
+    const auto& selected_traj = overtake_trajectories_[best_idx];
+    double clearance = selected_traj.is_left_side ? env_state_.left_clearance : env_state_.right_clearance;
     double min_required = VEHICLE_WIDTH * 2 + SAFETY_MARGIN;
-    if (best_clearance > min_required) {
+    
+    if (clearance > min_required) {
+        RCLCPP_INFO(this->get_logger(), 
+            "Selected trajectory: %s (clearance: %.2fm, score: %.2f)",
+            selected_traj.id.c_str(), clearance, best_score);
         return best_idx;
     }
     
@@ -1163,6 +1219,208 @@ void RacingAgent::update_environment_state()
 {
     // Environment state is updated in callbacks
     // This function can be used for additional processing if needed
+}
+
+// === Corner Handling Implementation ===
+
+double RacingAgent::compute_local_curvature(size_t raceline_idx) const
+{
+    if (global_raceline_.poses.size() < 3 || raceline_idx < 1 || 
+        raceline_idx >= global_raceline_.poses.size() - 1) {
+        return 0.0;
+    }
+    
+    const auto& p0 = global_raceline_.poses[raceline_idx - 1].pose.position;
+    const auto& p1 = global_raceline_.poses[raceline_idx].pose.position;
+    const auto& p2 = global_raceline_.poses[raceline_idx + 1].pose.position;
+    
+    // Compute curvature using three points: kappa = 2 * |cross| / (|a||b||c|)
+    double dx1 = p1.x - p0.x;
+    double dy1 = p1.y - p0.y;
+    double dx2 = p2.x - p1.x;
+    double dy2 = p2.y - p1.y;
+    
+    double cross = dx1 * dy2 - dy1 * dx2;
+    double ds1 = std::hypot(dx1, dy1);
+    double ds2 = std::hypot(dx2, dy2);
+    
+    if (ds1 < 1e-6 || ds2 < 1e-6) {
+        return 0.0;
+    }
+    
+    double avg_ds = (ds1 + ds2) / 2.0;
+    return std::abs(cross) / (ds1 * ds2 * avg_ds);
+}
+
+bool RacingAgent::is_in_corner() const
+{
+    if (!raceline_received_ || global_raceline_.poses.empty()) {
+        return false;
+    }
+    
+    // Find current position on raceline
+    size_t current_idx = 0;
+    for (size_t i = 0; i < raceline_s_.size(); ++i) {
+        if (raceline_s_[i] >= env_state_.ego_s) {
+            current_idx = i;
+            break;
+        }
+    }
+    
+    // Check curvature at current position and ahead
+    double max_curvature = 0.0;
+    for (size_t i = current_idx; i < std::min(current_idx + 10, global_raceline_.poses.size() - 1); ++i) {
+        double curv = compute_local_curvature(i);
+        max_curvature = std::max(max_curvature, curv);
+    }
+    
+    return max_curvature > corner_curvature_threshold_;
+}
+
+double RacingAgent::get_corner_adjusted_follow_distance() const
+{
+    // In corners, increase the follow distance for safety
+    if (is_in_corner()) {
+        return safe_follow_distance_ * corner_follow_distance_factor_;
+    }
+    return safe_follow_distance_;
+}
+
+// === Inside/Outside Overtake Path Selection ===
+
+RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
+{
+    // Determine whether to overtake on inside (apex side) or outside
+    // Based on:
+    // 1. Track geometry (corner direction)
+    // 2. Opponent lateral position
+    // 3. Available clearance on each side
+    
+    if (!raceline_received_ || global_raceline_.poses.empty()) {
+        return OvertakeSide::NONE;
+    }
+    
+    // Find current position on raceline
+    size_t current_idx = find_closest_raceline_index(0, 0);  // Will use env_state
+    
+    // Determine corner direction (positive = left turn, negative = right turn)
+    double corner_direction = 0.0;
+    for (size_t i = current_idx; i < std::min(current_idx + 15, global_raceline_.poses.size() - 1); ++i) {
+        double curv = compute_local_curvature(i);
+        if (curv > corner_curvature_threshold_) {
+            // Get sign of curvature to determine corner direction
+            const auto& p0 = global_raceline_.poses[i - 1].pose.position;
+            const auto& p1 = global_raceline_.poses[i].pose.position;
+            const auto& p2 = global_raceline_.poses[i + 1].pose.position;
+            double dx1 = p1.x - p0.x;
+            double dy1 = p1.y - p0.y;
+            double dx2 = p2.x - p1.x;
+            double dy2 = p2.y - p1.y;
+            double cross = dx1 * dy2 - dy1 * dx2;
+            corner_direction = (cross > 0) ? 1.0 : -1.0;
+            break;
+        }
+    }
+    
+    // Check clearance on each side
+    bool left_clear = check_lateral_clearance_for_overtake(true);
+    bool right_clear = check_lateral_clearance_for_overtake(false);
+    
+    if (!left_clear && !right_clear) {
+        return OvertakeSide::NONE;
+    }
+    
+    // Inside overtake preference:
+    // - For left turn (corner_direction > 0): inside is RIGHT side
+    // - For right turn (corner_direction < 0): inside is LEFT side
+    // - On straight: prefer side with more clearance
+    
+    if (corner_direction > 0.1) {
+        // Left turn: inside = right
+        if (right_clear) {
+            return OvertakeSide::INSIDE;
+        } else if (left_clear) {
+            return OvertakeSide::OUTSIDE;
+        }
+    } else if (corner_direction < -0.1) {
+        // Right turn: inside = left
+        if (left_clear) {
+            return OvertakeSide::INSIDE;
+        } else if (right_clear) {
+            return OvertakeSide::OUTSIDE;
+        }
+    } else {
+        // Straight: prefer side with more clearance
+        if (env_state_.left_clearance > env_state_.right_clearance && left_clear) {
+            return OvertakeSide::OUTSIDE;  // Arbitrary - could also be INSIDE
+        } else if (right_clear) {
+            return OvertakeSide::INSIDE;
+        } else if (left_clear) {
+            return OvertakeSide::OUTSIDE;
+        }
+    }
+    
+    return OvertakeSide::NONE;
+}
+
+double RacingAgent::compute_inside_overtake_offset() const
+{
+    // Inside overtake: use a smaller offset as we're cutting the corner
+    // This is typically the apex side with less lateral deviation needed
+    return OVERTAKE_LATERAL_OFFSET * 0.7;  // 70% of normal offset for tighter inside line
+}
+
+double RacingAgent::compute_outside_overtake_offset() const
+{
+    // Outside overtake: use the full or slightly larger offset
+    // Need more room when going around the outside
+    return OVERTAKE_LATERAL_OFFSET * 1.1;  // 110% of normal offset for wider outside line
+}
+
+// === Distance-based Overtake Preparation ===
+
+void RacingAgent::prepare_overtake_candidates()
+{
+    // Pre-select candidate overtake trajectories based on distance to front car
+    // This is called during FOLLOW mode to prepare for possible overtaking
+    
+    if (!env_state_.has_preceding_vehicle) {
+        return;
+    }
+    
+    double dist_to_opponent = env_state_.preceding_distance;
+    
+    // Distance bands for overtake preparation:
+    // Band 1: Far (> 4m) - No preparation needed, just follow
+    // Band 2: Medium (2.5m - 4m) - Start evaluating trajectories
+    // Band 3: Close (1.5m - 2.5m) - Have trajectories ready, evaluate conditions
+    // Band 4: Very close (< 1.5m) - Execute if safe, otherwise maintain distance
+    
+    if (dist_to_opponent > 4.0) {
+        // Far: No overtake preparation
+        return;
+    }
+    
+    if (dist_to_opponent > 2.5) {
+        // Medium distance: Start evaluating which side is better
+        OvertakeSide best_side = determine_best_overtake_side();
+        if (best_side != OvertakeSide::NONE) {
+            RCLCPP_DEBUG(this->get_logger(), 
+                "Overtake prep (medium): Evaluating %s side overtake at distance %.2fm",
+                best_side == OvertakeSide::INSIDE ? "INSIDE" : "OUTSIDE",
+                dist_to_opponent);
+        }
+    } else if (dist_to_opponent > 1.5) {
+        // Close distance: Have trajectory ready
+        OvertakeSide best_side = determine_best_overtake_side();
+        if (best_side != OvertakeSide::NONE) {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                "Overtake ready: %s side, distance %.2fm, waiting for zone",
+                best_side == OvertakeSide::INSIDE ? "INSIDE" : "OUTSIDE",
+                dist_to_opponent);
+        }
+    }
+    // Very close: Decision is made in execute_overtake_candidate_mode
 }
 
 }  // namespace planning_pkg
