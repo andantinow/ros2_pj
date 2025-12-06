@@ -83,7 +83,7 @@ struct MPCConfig
   // than position/heading weights to prevent Bang-Bang control behavior
   double w_pos = 10.0;            // Position tracking weight (lateral error)
   double w_yaw = 10.0;            // Heading tracking weight (increased for stability)
-  double w_vel = 3.0;             // Velocity tracking weight (increased)
+  double w_vel = 5.0;             // Velocity tracking weight (v4.0: increased for strong speed control)
   double w_steer = 0.5;           // Steering effort weight (reduced to allow necessary steering)
   double w_accel = 0.3;           // Acceleration effort weight
   double w_steer_rate = 600.0;    // Steering rate weight - CRITICAL for oscillation suppression (increased)
@@ -2383,9 +2383,14 @@ private:
         size_t next_idx = (start_idx + (i + 1) * stride) % num_poses;
         double dx = poses[next_idx].pose.position.x - poses[idx].pose.position.x;
         double dy = poses[next_idx].pose.position.y - poses[idx].pose.position.y;
+        
+        // Full quaternion to yaw conversion for correctness
+        double next_qx = poses[next_idx].pose.orientation.x;
+        double next_qy = poses[next_idx].pose.orientation.y;
         double next_qz = poses[next_idx].pose.orientation.z;
         double next_qw = poses[next_idx].pose.orientation.w;
-        double next_yaw = std::atan2(2.0 * next_qw * next_qz, 1.0 - 2.0 * next_qz * next_qz);
+        double next_yaw = std::atan2(2.0 * (next_qw * next_qz + next_qx * next_qy), 
+                                      1.0 - 2.0 * (next_qy * next_qy + next_qz * next_qz));
         
         // Proper angle normalization for dyaw
         double dyaw = next_yaw - ref.yaw;
