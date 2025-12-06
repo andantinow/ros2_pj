@@ -14,6 +14,7 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <limits>
 
 namespace planning_pkg
 {
@@ -461,6 +462,11 @@ void RacingAgent::load_zones_from_config(const std::string& config_path)
 
 ZoneType RacingAgent::get_current_zone_type() const
 {
+    // Guard against division by zero when track length is not yet set
+    if (track_length_ <= 0.0) {
+        return ZoneType::NORMAL;
+    }
+    
     for (const auto& zone : zones_) {
         // Handle track wrap-around
         double s = std::fmod(env_state_.ego_s, track_length_);
@@ -473,6 +479,11 @@ ZoneType RacingAgent::get_current_zone_type() const
 
 const RacelineZone* RacingAgent::get_current_zone() const
 {
+    // Guard against division by zero when track length is not yet set
+    if (track_length_ <= 0.0) {
+        return nullptr;
+    }
+    
     for (const auto& zone : zones_) {
         double s = std::fmod(env_state_.ego_s, track_length_);
         if (zone.contains(s)) {
@@ -508,10 +519,22 @@ void RacingAgent::generate_default_overtake_trajectories()
         left_traj.estimated_duration = (zone.s_end - zone.s_start) / cruise_speed_;
         
         // Generate waypoints for S-curve overtake
-        size_t start_idx = 0, end_idx = 0;
+        // Use SIZE_MAX as sentinel to properly detect if start_idx was found
+        size_t start_idx = std::numeric_limits<size_t>::max();
+        size_t end_idx = 0;
         for (size_t i = 0; i < raceline_s_.size(); ++i) {
-            if (raceline_s_[i] >= zone.s_start && start_idx == 0) start_idx = i;
-            if (raceline_s_[i] >= zone.s_end) { end_idx = i; break; }
+            if (raceline_s_[i] >= zone.s_start && start_idx == std::numeric_limits<size_t>::max()) {
+                start_idx = i;
+            }
+            if (raceline_s_[i] >= zone.s_end) { 
+                end_idx = i; 
+                break; 
+            }
+        }
+        
+        // Skip if no valid waypoints found in zone
+        if (start_idx == std::numeric_limits<size_t>::max()) {
+            continue;
         }
         
         for (size_t i = start_idx; i <= end_idx && i < global_raceline_.poses.size(); ++i) {

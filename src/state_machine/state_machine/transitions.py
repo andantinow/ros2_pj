@@ -41,6 +41,7 @@ def head_to_head_transition(state_machine: StateMachine)->str:
         case StateType.OVERTAKE_CANDIDATE:
             return OvertakeCandidateTransition(state_machine)
         case StateType.OVERTAKE:
+            # OVERTAKE handles both modern and legacy transitions
             return OvertakeTransition(state_machine)
         case StateType.OBSTACLE_STOP:
             return ObstacleStopTransition(state_machine)
@@ -52,8 +53,6 @@ def head_to_head_transition(state_machine: StateMachine)->str:
             return SpliniTrailingTransition(state_machine)
         case StateType.TRAILING_TO_GBTRACK:
             return SpliniTrailingToGbtrackTransition(state_machine)
-        case StateType.OVERTAKE:
-            return SpliniOvertakingTransition(state_machine)
         case StateType.FTGONLY:
             return SpliniFTGOnlyTransition(state_machine)
         case default:

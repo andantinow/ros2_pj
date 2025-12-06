@@ -397,6 +397,10 @@ bool SimpleController::is_obstacle_stop_mode() const
  */
 void SimpleController::execute_obstacle_stop()
 {
+  // Steering decay factor for gradual neutralization during stop
+  // This value determines how quickly steering approaches neutral (0.95 = slow, 0.8 = fast)
+  static constexpr double OBSTACLE_STOP_STEERING_DECAY = 0.95;
+  
   rclcpp::Time current_time = this->get_clock()->now();
   
   ackermann_msgs::msg::AckermannDriveStamped drive_msg;
@@ -408,7 +412,7 @@ void SimpleController::execute_obstacle_stop()
   
   // Maintain last stable steering angle (no abrupt changes)
   // Gradually reduce steering towards neutral for stability
-  double stable_steer = prev_steering_angle_ * 0.95;  // Slowly drift to neutral
+  double stable_steer = prev_steering_angle_ * OBSTACLE_STOP_STEERING_DECAY;
   drive_msg.drive.steering_angle = stable_steer;
   
   drive_pub_->publish(drive_msg);
