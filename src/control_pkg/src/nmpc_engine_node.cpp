@@ -1456,8 +1456,7 @@ private:
         }
       }
       
-      // Update state for next cycle
-      was_in_corner_ = (current_curvature > curvature_k1_);
+      // Update curvature state for next cycle's exit detection
       last_curvature_ = current_curvature;
     }
     
@@ -2290,12 +2289,16 @@ private:
     int count = 0;
     int lookahead = std::min(static_cast<int>(reference.size()) - 1, curvature_lookahead_);
     
+    // Minimum distance threshold for valid curvature calculation
+    // Points closer than this are considered coincident and skipped to avoid division by near-zero
+    constexpr double MIN_SEGMENT_DISTANCE = 0.01;  // [m]
+    
     for (int i = 0; i < lookahead; ++i) {
       double dx = reference[i + 1].x - reference[i].x;
       double dy = reference[i + 1].y - reference[i].y;
       double dist = std::sqrt(dx * dx + dy * dy);
       
-      if (dist > 0.01) {
+      if (dist > MIN_SEGMENT_DISTANCE) {
         double dyaw = reference[i + 1].yaw - reference[i].yaw;
         // Normalize angle
         while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
@@ -2314,15 +2317,18 @@ private:
    * @brief Detect if currently exiting a corner
    * 
    * Corner exit is detected when:
-   * 1. We were recently in a corner (high curvature)
-   * 2. Current curvature is now low (straight section)
+   * 1. We were recently in a corner (high curvature, > curvature_k1)
+   * 2. Current curvature is now low (straight section, < curvature_k1)
    * 
-   * @param current_curvature Current path curvature
-   * @return true if exiting a corner
+   * Uses last_curvature_ member variable to track previous cycle's curvature.
+   * 
+   * @param current_curvature Current path curvature [1/m]
+   * @return true if transitioning from corner to straight
    */
   bool detectCornerExit(double current_curvature) const
   {
     // Exiting corner = was in corner (high curvature) and now on straight (low curvature)
+    // Use curvature_k1_ as the threshold between corner and straight sections
     bool was_in_corner = last_curvature_ > curvature_k1_;
     bool now_on_straight = current_curvature < curvature_k1_;
     
@@ -2351,6 +2357,15 @@ private:
       return;
     }
     
+    // Design constants for corner exit smoothing behavior
+    // These are fixed values that define the smoothing algorithm characteristics
+    // Lateral limit scaling: starts at INITIAL_LIMIT_SCALE * config, decreases to 1.0 * config
+    constexpr double INITIAL_LIMIT_SCALE = 2.0;
+    // Maximum steering correction factor when overshooting (50% reduction at transition start)
+    constexpr double MAX_CORRECTION_FACTOR = 0.5;
+    // Maximum wall avoidance reduction factor (50% maximum reduction when very close to wall)
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.5;
+    
     // 1. Apply steering rate limiting during corner exit transition
     // This prevents sudden large steering corrections when rejoining the straight
     // transition_factor: 0 at start (full limiting), 1 at end (no limiting)
@@ -2372,13 +2387,16 @@ private:
       double lateral_error = -dx * ref_sin + dy * ref_cos;
       
       // Check if we're pushing too far to one side (toward the wall)
-      // During corner exit, the car tends to push outward (positive or negative depending on turn direction)
-      double max_lateral = corner_exit_lateral_limit_ * (2.0 - transition_factor); // More restrictive at start
+      // During corner exit, the car tends to push outward
+      // Lateral limit is more restrictive at the start of transition (INITIAL_LIMIT_SCALE)
+      // and relaxes to the configured value (1.0) as transition completes
+      double max_lateral = corner_exit_lateral_limit_ * (INITIAL_LIMIT_SCALE - transition_factor);
       
       if (std::abs(lateral_error) > max_lateral) {
         // We're too far from the ideal line - apply correction
         // This helps prevent the car from hugging the outer wall
-        double correction_factor = 0.5 * (1.0 - transition_factor);  // Stronger at start of transition
+        // Correction is strongest at start (MAX_CORRECTION_FACTOR) and decreases over transition
+        double correction_factor = MAX_CORRECTION_FACTOR * (1.0 - transition_factor);
         
         // Steer back toward the reference (reduce magnitude if steering away from reference)
         if ((lateral_error > 0 && solution.steering < 0) ||
@@ -2400,15 +2418,17 @@ private:
     double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
     if (min_side_dist < corner_exit_wall_margin_) {
       // Too close to wall during corner exit - reduce steering toward wall
+      // Urgency increases as we get closer to the wall (0 = at margin, 1 = touching wall)
       double wall_urgency = 1.0 - (min_side_dist / corner_exit_wall_margin_);
       
       // Determine which side is closer
       bool wall_on_left = (last_obstacle_left_dist_ < last_obstacle_right_dist_);
       
       // If steering toward the wall, reduce steering
+      // Reduction combines wall urgency with transition factor (stronger at start of transition)
       if ((wall_on_left && solution.steering > 0) ||
           (!wall_on_left && solution.steering < 0)) {
-        double reduction = wall_urgency * 0.5 * (1.0 - transition_factor);
+        double reduction = wall_urgency * MAX_WALL_AVOIDANCE_FACTOR * (1.0 - transition_factor);
         solution.steering *= (1.0 - reduction);
         
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
@@ -2810,7 +2830,6 @@ private:
   bool enable_corner_exit_smoothing_{true}; // Enable/disable corner exit smoothing
   
   // Corner exit detection state
-  bool was_in_corner_{false};               // Was in corner in previous cycle
   rclcpp::Time corner_exit_start_time_;     // When corner exit started
   bool in_corner_exit_transition_{false};   // Currently transitioning from corner to straight
   double last_curvature_{0.0};              // Curvature from last cycle (for exit detection)
