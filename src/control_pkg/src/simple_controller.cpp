@@ -246,6 +246,14 @@ SimpleController::SimpleController() : Node("simple_controller")
       rclcpp::SensorDataQoS(),
       std::bind(&SimpleController::imu_callback, this, std::placeholders::_1));
 
+  // Racing Agent Mode Subscription
+  // The controller respects the mode from upper-level racing agent.
+  // In OBSTACLE_STOP mode: v_ref = 0, stable steering (no repulsion/bouncing)
+  mode_sub_ = this->create_subscription<std_msgs::msg::String>(
+      "/racing_agent/mode",
+      rclcpp::QoS(10),
+      std::bind(&SimpleController::mode_callback, this, std::placeholders::_1));
+
   // Drive Publisher
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_,
@@ -344,6 +352,71 @@ void SimpleController::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
                 ax, ay);
     imu_received_ = true;
   }
+}
+
+/**
+ * @brief Racing Agent Mode Callback
+ * 
+ * Receives the current mode from the upper-level racing agent.
+ * The controller respects this mode, especially:
+ * - OBSTACLE_STOP: Stop safely without repulsion/bouncing logic
+ * - FOLLOW: Follow reference path from upper level (no autonomous overtaking)
+ * - OVERTAKE: Execute pre-computed trajectory from upper level
+ */
+void SimpleController::mode_callback(const std_msgs::msg::String::SharedPtr msg)
+{
+  if (current_racing_mode_ != msg->data) {
+    RCLCPP_INFO(this->get_logger(), "Racing mode changed: %s -> %s",
+                current_racing_mode_.c_str(), msg->data.c_str());
+    current_racing_mode_ = msg->data;
+    
+    // If entering OBSTACLE_STOP mode, log and prepare for safe stop
+    if (current_racing_mode_ == "OBSTACLE_STOP") {
+      RCLCPP_WARN(this->get_logger(), 
+                  "OBSTACLE_STOP mode: Initiating safe stop (no repulsion/bouncing)");
+    }
+  }
+}
+
+/**
+ * @brief Check if currently in OBSTACLE_STOP mode from racing agent
+ */
+bool SimpleController::is_obstacle_stop_mode() const
+{
+  return current_racing_mode_ == "OBSTACLE_STOP";
+}
+
+/**
+ * @brief Execute safe obstacle stop behavior
+ * 
+ * As per requirements:
+ * - v_ref = 0 (target speed is zero)
+ * - Steering does NOT change abruptly (maintain last stable steering)
+ * - NO "repulsion" or "bouncing" logic is used
+ * - Wait for upper level to re-plan route
+ */
+void SimpleController::execute_obstacle_stop()
+{
+  rclcpp::Time current_time = this->get_clock()->now();
+  
+  ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+  drive_msg.header.stamp = current_time;
+  drive_msg.header.frame_id = current_odom_.child_frame_id;
+  
+  // v_ref = 0: Stop the vehicle
+  drive_msg.drive.speed = 0.0;
+  
+  // Maintain last stable steering angle (no abrupt changes)
+  // Gradually reduce steering towards neutral for stability
+  double stable_steer = prev_steering_angle_ * 0.95;  // Slowly drift to neutral
+  drive_msg.drive.steering_angle = stable_steer;
+  
+  drive_pub_->publish(drive_msg);
+  last_cmd_velocity_ = 0.0;
+  
+  RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                       "OBSTACLE_STOP: v_ref=0, steering=%.3f (stable, no repulsion)",
+                       stable_steer);
 }
 
 /**
@@ -1087,6 +1160,17 @@ void SimpleController::control_loop()
 
   // Check for collision and handle reverse mode
   rclcpp::Time current_time = this->get_clock()->now();
+  
+  // === OBSTACLE_STOP Mode from Racing Agent ===
+  // This mode is entered when the upper-level racing agent determines
+  // that a safe stop is required. In this mode:
+  // - v_ref = 0 (target speed is zero)
+  // - Steering does NOT change abruptly
+  // - NO "repulsion" or "bouncing" logic is used
+  if (is_obstacle_stop_mode()) {
+    execute_obstacle_stop();
+    return;  // Skip all other control logic when in OBSTACLE_STOP mode
+  }
   
   // === A1/A2 범위 기반 충돌 회피 ===
   // 먼저 장애물 거리 업데이트
