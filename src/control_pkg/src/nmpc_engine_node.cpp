@@ -18,6 +18,13 @@
  * - Global overtaking path generation with visualization
  * - Overtaking decision and commitment system
  * 
+ * Key Features (v4.0) - Refined Driving Philosophy:
+ * - Curvature-based speed control: slow down for corners based on raceline curvature
+ * - Explicit OVERTAKE ZONEs with s-intervals for controlled overtaking
+ * - Improved FOLLOW behavior with stable speed matching (v_follow = opponent - margin)
+ * - Committed OVERTAKE episodes with clear speed boost
+ * - Simplified collision: just stop stably (no aggressive reverse)
+ * 
  * State: [x, y, yaw, v]
  * Control: [steering_angle, acceleration]
  * 
@@ -76,7 +83,7 @@ struct MPCConfig
   // than position/heading weights to prevent Bang-Bang control behavior
   double w_pos = 10.0;            // Position tracking weight (lateral error)
   double w_yaw = 10.0;            // Heading tracking weight (increased for stability)
-  double w_vel = 3.0;             // Velocity tracking weight (increased)
+  double w_vel = 5.0;             // Velocity tracking weight (v4.0: increased for strong speed control)
   double w_steer = 0.5;           // Steering effort weight (reduced to allow necessary steering)
   double w_accel = 0.3;           // Acceleration effort weight
   double w_steer_rate = 600.0;    // Steering rate weight - CRITICAL for oscillation suppression (increased)
@@ -87,10 +94,11 @@ struct MPCConfig
   double lateral_tolerance = 0.25; // Allow ±0.25m deviation from reference (Frenet tube)
   double w_terminal = 30.0;       // Terminal cost weight for better convergence (increased)
   
-  // Soft Constraint settings (Issue 6.1: Prevent Status 4 - Infeasibility)
+  // Soft Constraint settings (v4.0: Tuned for better convergence during overtaking)
   // Slack variable weights for constraint violations
-  double w_slack_track = 1000.0;  // High penalty for track boundary violations
-  double w_slack_speed = 500.0;   // Penalty for speed constraint violations
+  // Slightly reduced penalties allow solver to find feasible solutions more easily
+  double w_slack_track = 800.0;   // Penalty for track boundary violations (reduced from 1000)
+  double w_slack_speed = 400.0;   // Penalty for speed constraint violations (reduced from 500)
   double track_boundary_margin = 0.05;  // Additional margin for track boundaries [m]
   
   // Constraints
@@ -101,10 +109,10 @@ struct MPCConfig
   double max_speed = 6.0;         // Maximum speed [m/s] (increased)
   double min_speed = 0.0;         // Minimum speed [m/s]
   
-  // Solver settings (Issue 3.1: Levenberg-Marquardt regularization)
-  int max_iterations = 20;        // Maximum SQP iterations (increased for better convergence)
-  double convergence_tol = 1e-5;  // Tighter convergence tolerance
-  double levenberg_marquardt = 1e-2;  // L-M regularization for Hessian stability (Status 3 fix)
+  // Solver settings (v4.0: Improved convergence for overtaking maneuvers)
+  int max_iterations = 25;        // Maximum SQP iterations (increased for complex maneuvers)
+  double convergence_tol = 5e-5;  // Slightly relaxed for faster convergence during overtake
+  double levenberg_marquardt = 2e-2;  // L-M regularization (increased for stability)
   double min_step_size = 1e-6;    // Minimum step size before declaring convergence
   
   // Issue 3.3: Latency compensation
@@ -372,15 +380,17 @@ public:
       solution.cost = cost;
     }
     
-    // Handle solver failures
+    // Handle solver failures (v4.0: more graceful handling during complex maneuvers)
     if (numerical_error || solution.iterations >= config_.max_iterations) {
       if (solution.iterations >= config_.max_iterations) {
         solution.status = SolverStatus::MAX_ITER;
+        // MAX_ITER is not a critical failure during overtaking - still use the solution
       }
       consecutive_failures_++;
       
       // If too many consecutive failures, reset the solver
-      if (consecutive_failures_ > 5) {
+      // Increased threshold from 5 to 8 for better stability during complex maneuvers
+      if (consecutive_failures_ > 8) {
         RCLCPP_WARN_THROTTLE(logger, *rclcpp::Clock::make_shared(), 1000,
           "NMPC: %d consecutive failures, resetting solver", consecutive_failures_);
         resetSolver();
@@ -954,13 +964,34 @@ public:
     declare_parameter("a2_urgent_steer_gain", 2.0);    // Very high urgent gain
     declare_parameter("enable_collision_avoidance", true);
     
-    // Opponent Following and Overtaking System
+    // Opponent Following and Overtaking System (v4.0 - Refined)
     declare_parameter("opponent_detection_range", 3.0);    // [m] Range to detect opponent ahead
     declare_parameter("opponent_following_distance", 1.0); // [m] Safe following distance
     declare_parameter("overtake_path_width", 0.8);         // [m] Lateral offset for overtaking
     declare_parameter("overtake_decision_distance", 2.5);  // [m] Distance to start considering overtake
     declare_parameter("enable_overtaking", true);          // Enable/disable overtaking system
     declare_parameter("opponent_speed_tracking_gain", 0.8); // Speed limiting when following (0.8 = 80% of opponent speed)
+    
+    // FOLLOW behavior parameters (v4.0 - Stable following)
+    declare_parameter("follow_margin", 0.05);              // [m/s] Speed margin below opponent when following
+    declare_parameter("v_min_follow", 0.3);                // [m/s] Minimum follow speed (avoid crawling)
+    
+    // OVERTAKE parameters (v4.0 - Committed overtaking)
+    declare_parameter("overtake_boost", 0.25);             // [m/s] Speed boost above opponent during overtake
+    declare_parameter("overtake_min_commit_time", 2.0);    // [s] Min time to commit to overtake before giving up
+    declare_parameter("overtake_completion_timeout", 3.0); // [s] Time after passing to confirm overtake complete
+    
+    // Curvature-based speed control (v4.0 - Corner behavior)
+    declare_parameter("curvature_k1", 0.2);                // [1/m] Curvature threshold: below = straight
+    declare_parameter("curvature_k2", 0.8);                // [1/m] Curvature threshold: above = tight corner
+    declare_parameter("v_max_straight", 3.0);              // [m/s] Speed on straights
+    declare_parameter("v_min_corner", 1.2);                // [m/s] Speed in tight corners
+    declare_parameter("curvature_lookahead", 5);           // [points] Lookahead for curvature calculation
+    
+    // Overtake zones (s-intervals on raceline where overtaking is allowed)
+    // Format: comma-separated pairs of start,end s-values
+    declare_parameter<std::vector<double>>("overtake_zone_starts", std::vector<double>{0.0});
+    declare_parameter<std::vector<double>>("overtake_zone_ends", std::vector<double>{1000.0}); // Full track by default
 
     // Get parameters
     double prediction_horizon = get_parameter("prediction_horizon").as_double();
@@ -998,6 +1029,24 @@ public:
     enable_overtaking_ = get_parameter("enable_overtaking").as_bool();
     opponent_speed_tracking_gain_ = get_parameter("opponent_speed_tracking_gain").as_double();
     
+    // Get v4.0 FOLLOW and OVERTAKE parameters
+    follow_margin_ = get_parameter("follow_margin").as_double();
+    v_min_follow_ = get_parameter("v_min_follow").as_double();
+    overtake_boost_ = get_parameter("overtake_boost").as_double();
+    overtake_min_commit_time_ = get_parameter("overtake_min_commit_time").as_double();
+    overtake_completion_timeout_ = get_parameter("overtake_completion_timeout").as_double();
+    
+    // Get v4.0 curvature-based speed control parameters
+    curvature_k1_ = get_parameter("curvature_k1").as_double();
+    curvature_k2_ = get_parameter("curvature_k2").as_double();
+    v_max_straight_ = get_parameter("v_max_straight").as_double();
+    v_min_corner_ = get_parameter("v_min_corner").as_double();
+    curvature_lookahead_ = get_parameter("curvature_lookahead").as_int();
+    
+    // Get overtake zone definitions
+    overtake_zone_starts_ = get_parameter("overtake_zone_starts").as_double_array();
+    overtake_zone_ends_ = get_parameter("overtake_zone_ends").as_double_array();
+    
     // Calculate recovery cooldown as 2x the reverse duration
     // This prevents immediate re-triggering of reverse after completion
     recovery_cooldown_duration_ = reverse_duration_ * 2.0;
@@ -1007,16 +1056,19 @@ public:
       odom_topic = "/car_state/odom_GT";
     }
 
-    RCLCPP_INFO(get_logger(), "=== NMPC Engine Node Initialized ===");
+    RCLCPP_INFO(get_logger(), "=== NMPC Engine Node v4.0 Initialized ===");
     RCLCPP_INFO(get_logger(), "Prediction horizon: %.2fs, steps: %d", prediction_horizon, prediction_steps);
     RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
     RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
-    RCLCPP_INFO(get_logger(), "Collision System: A1=%.2fm (stop+reverse), A2=%.2fm (avoid), stop=%.2fs, reverse=%.2fs",
-                a1_threshold_, a2_threshold_, stop_duration_, reverse_duration_);
-    RCLCPP_INFO(get_logger(), "Overtaking System: range=%.2fm, follow_dist=%.2fm, path_width=%.2fm, enabled=%s",
-                opponent_detection_range_, opponent_following_distance_, overtake_path_width_,
-                enable_overtaking_ ? "true" : "false");
+    RCLCPP_INFO(get_logger(), "Collision System: A1=%.2fm (stop), stop=%.2fs, reverse=%.2fs",
+                a1_threshold_, stop_duration_, reverse_duration_);
+    RCLCPP_INFO(get_logger(), "Curvature Speed: k1=%.2f, k2=%.2f, v_straight=%.1fm/s, v_corner=%.1fm/s",
+                curvature_k1_, curvature_k2_, v_max_straight_, v_min_corner_);
+    RCLCPP_INFO(get_logger(), "FOLLOW: margin=%.2fm/s, v_min=%.2fm/s",
+                follow_margin_, v_min_follow_);
+    RCLCPP_INFO(get_logger(), "OVERTAKE: boost=%.2fm/s, commit_time=%.1fs, zones=%zu",
+                overtake_boost_, overtake_min_commit_time_, overtake_zone_starts_.size());
 
     // Configure MPC solver with all Issue fixes
     nmpc::MPCConfig cfg;
@@ -1149,6 +1201,23 @@ private:
   };
   
   /**
+   * @brief Driving mode for high-level behavior (v4.0)
+   * 
+   * CRUISE: Normal driving on global raceline at target speed
+   * FOLLOW: Safe following behind opponent with similar speed
+   * OVERTAKE_CANDIDATE: In overtake zone, checking if safe to overtake
+   * OVERTAKE: Committed overtake using precomputed trajectory
+   * OBSTACLE_STOP: Safe stop due to collision / extremely close obstacle
+   */
+  enum class DrivingMode {
+    CRUISE,
+    FOLLOW,
+    OVERTAKE_CANDIDATE,
+    OVERTAKE,
+    OBSTACLE_STOP
+  };
+  
+  /**
    * @brief Main control cycle - called at control_rate_hz
    * 
    * Implements simplified collision handling:
@@ -1199,19 +1268,21 @@ private:
     
     switch (collision_state_) {
       case CollisionState::NORMAL:
-        // Check for front collision
+        // v4.0: Use smaller collision threshold (0.20-0.25m) for very close detection
+        // Only trigger on front collision, not side walls
         if (enable_collision_avoidance_ && last_obstacle_front_dist_ < a1_threshold_) {
           collision_state_ = CollisionState::STOPPING;
           collision_state_start_time_ = current_time;
           RCLCPP_WARN(get_logger(), 
-            "COLLISION DETECTED! Front=%.2fm < %.2fm -> STOPPING",
+            "COLLISION DETECTED! Front=%.2fm < %.2fm -> SIMPLE STOP",
             last_obstacle_front_dist_, a1_threshold_);
         }
         break;
         
       case CollisionState::STOPPING:
         {
-          // Publish STOP command
+          // v4.0: Simple STOP - speed=0, steer=0 (straight)
+          // No bouncing, no spinning, no overshooting
           ackermann_msgs::msg::AckermannDriveStamped cmd;
           cmd.header.stamp = current_time;
           cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
@@ -1223,14 +1294,14 @@ private:
           if (elapsed > BRIEF_STOP_DURATION) {
             collision_state_ = CollisionState::WAITING;
             collision_state_start_time_ = current_time;
-            RCLCPP_INFO(get_logger(), "Stopped. Waiting %.2fs before reverse...", stop_duration_);
+            RCLCPP_INFO(get_logger(), "Stopped. Holding for %.2fs...", stop_duration_);
           }
           return;
         }
         
       case CollisionState::WAITING:
         {
-          // Publish STOP command (maintain stopped state)
+          // v4.0: Hold stopped state for stability
           ackermann_msgs::msg::AckermannDriveStamped cmd;
           cmd.header.stamp = current_time;
           cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
@@ -1238,32 +1309,43 @@ private:
           cmd.drive.steering_angle = 0.0;
           drive_pub_->publish(cmd);
           
+          // v4.0: After stop_duration, check if we need to reverse or can resume
           if (elapsed > stop_duration_) {
-            collision_state_ = CollisionState::REVERSING;
-            collision_state_start_time_ = current_time;
-            RCLCPP_INFO(get_logger(), "Wait complete. Reversing straight back for %.2fs...", reverse_duration_);
+            // Check if still blocked - only reverse if absolutely necessary
+            if (last_obstacle_front_dist_ < a1_threshold_ * 0.8) {
+              // Still very close - gentle reverse
+              collision_state_ = CollisionState::REVERSING;
+              collision_state_start_time_ = current_time;
+              RCLCPP_INFO(get_logger(), "Still blocked. Gentle reverse for %.2fs...", reverse_duration_);
+            } else {
+              // Space cleared - go to cooldown
+              collision_state_ = CollisionState::COOLDOWN;
+              collision_state_start_time_ = current_time;
+              RCLCPP_INFO(get_logger(), "Space cleared. Resuming after cooldown.");
+            }
           }
           return;
         }
         
       case CollisionState::REVERSING:
         {
-          // SIMPLE STRAIGHT REVERSE - no complex steering (fixes spinning issue)
+          // v4.0: Gentle straight reverse - reduced speed for stability
           ackermann_msgs::msg::AckermannDriveStamped cmd;
           cmd.header.stamp = current_time;
           cmd.header.frame_id = latest_odom_ ? latest_odom_->child_frame_id : "base_link";
-          cmd.drive.speed = -reverse_speed_;
+          // Use reduced reverse speed (half the configured value) for gentler recovery
+          cmd.drive.speed = -reverse_speed_ * 0.5;
           cmd.drive.steering_angle = 0.0;  // STRAIGHT BACK - no steering
           drive_pub_->publish(cmd);
           
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 200,
-            "REVERSING: speed=%.2f, steer=0.0 (straight), %.0f%%",
-            -reverse_speed_, (elapsed / reverse_duration_) * 100.0);
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
+            "GENTLE REVERSE: speed=%.2f, steer=0.0", cmd.drive.speed);
           
-          if (elapsed > reverse_duration_) {
+          // Short reverse duration
+          if (elapsed > reverse_duration_ * 0.5) {
             collision_state_ = CollisionState::COOLDOWN;
             collision_state_start_time_ = current_time;
-            RCLCPP_INFO(get_logger(), "Reverse complete. Cooldown for %.2fs...", recovery_cooldown_duration_);
+            RCLCPP_INFO(get_logger(), "Reverse complete. Cooldown...");
           }
           return;
         }
@@ -1285,6 +1367,9 @@ private:
 
     // Extract current state from odometry
     nmpc::VehicleState current_state = extractState(latest_odom_);
+    
+    // v4.0: Calculate ego s-position for overtake zone checks
+    updateEgoSPosition(current_state);
     
     // Build reference trajectory
     std::vector<nmpc::ReferencePoint> reference = buildReference(current_state);
@@ -1314,69 +1399,90 @@ private:
     }
     
     // ========================================
-    // OPPONENT FOLLOWING AND OVERTAKING LOGIC
+    // v4.0 OPPONENT FOLLOWING AND OVERTAKING LOGIC
     // ========================================
+    // Key philosophy:
+    // - FOLLOW: politely track opponent at safe distance with similar speed
+    // - OVERTAKE: only in allowed zones, commit and accelerate clearly
+    // - No rapid mode switching
     
-    // Apply speed limiting when following opponent
-    if (opponent.is_detected && opponent.is_ahead) {
-      double distance_to_opponent = opponent.distance;
-      
-      // When close to opponent, limit our speed to opponent's speed
-      if (distance_to_opponent < opponent_following_distance_) {
-        // Match opponent speed with safety margin
-        double limited_speed = opponent.speed * opponent_speed_tracking_gain_;
-        if (solution.speed > limited_speed) {
-          solution.speed = std::max(MIN_CREEP_SPEED, limited_speed);
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-            "FOLLOWING: Distance=%.2fm, limiting speed to %.2f (opponent=%.2f)",
-            distance_to_opponent, solution.speed, opponent.speed);
-        }
-      }
-      
-      // Check if overtaking is feasible
-      if (enable_overtaking_ && is_overtaking_) {
-        // Commit to overtaking - use higher speed and overtake path
-        if (!overtake_left_path_.empty() || !overtake_right_path_.empty()) {
-          // Choose best overtaking path (prefer left in most cases)
-          bool use_left = canOvertakeOnSide(true);
-          bool use_right = !use_left && canOvertakeOnSide(false);
+    // Check if we are in an overtake zone (based on s-position)
+    bool in_overtake_zone = isInOvertakeZone();
+    
+    // Update driving mode state machine
+    updateDrivingMode(opponent, in_overtake_zone, current_time);
+    
+    // Apply mode-specific behavior
+    switch (driving_mode_) {
+      case DrivingMode::CRUISE:
+        // Normal driving on raceline - speed from curvature-based reference
+        // (already set in buildReference)
+        break;
+        
+      case DrivingMode::FOLLOW:
+        {
+          // v4.0: Stable following with v_follow = opponent_speed - follow_margin
+          double v_max_from_raceline = solution.speed;  // From curvature-based calculation
+          double v_follow = std::clamp(
+            opponent.speed - follow_margin_,
+            v_min_follow_,
+            v_max_from_raceline
+          );
+          solution.speed = v_follow;
           
-          if (use_left || use_right) {
-            // Apply lateral offset for overtaking
-            double lateral_offset = use_left ? overtake_path_width_ : -overtake_path_width_;
-            
-            // Modify reference trajectory for overtaking
-            for (auto& ref : reference) {
-              double cos_yaw = std::cos(ref.yaw);
-              double sin_yaw = std::sin(ref.yaw);
-              ref.x += lateral_offset * (-sin_yaw);
-              ref.y += lateral_offset * cos_yaw;
-            }
-            
-            // Increase speed during overtake
-            solution.speed = std::min(solution.speed * 1.2, nominal_speed_ * 1.3);
-            
-            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
-              "OVERTAKING %s: offset=%.2fm, speed=%.2f",
-              use_left ? "LEFT" : "RIGHT", lateral_offset, solution.speed);
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "FOLLOW: distance=%.2fm, v_follow=%.2f (opponent=%.2f, margin=%.2f)",
+            opponent.distance, solution.speed, opponent.speed, follow_margin_);
+        }
+        break;
+        
+      case DrivingMode::OVERTAKE_CANDIDATE:
+        // In overtake zone, preparing to overtake
+        // Still follow for now but may transition to OVERTAKE
+        {
+          double v_follow = std::clamp(
+            opponent.speed - follow_margin_,
+            v_min_follow_,
+            solution.speed
+          );
+          solution.speed = v_follow;
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "OVERTAKE_CANDIDATE: distance=%.2fm, evaluating...", opponent.distance);
+        }
+        break;
+        
+      case DrivingMode::OVERTAKE:
+        {
+          // v4.0: Committed overtake with clear speed boost
+          // Apply lateral offset for overtaking path
+          double lateral_offset = overtake_left_side_ ? overtake_path_width_ : -overtake_path_width_;
+          
+          for (auto& ref : reference) {
+            double cos_yaw = std::cos(ref.yaw);
+            double sin_yaw = std::sin(ref.yaw);
+            ref.x += lateral_offset * (-sin_yaw);
+            ref.y += lateral_offset * cos_yaw;
           }
+          
+          // v4.0: Clear speed boost above opponent
+          double v_overtake = std::min(
+            opponent.speed + overtake_boost_,
+            v_max_straight_  // Respect max speed
+          );
+          solution.speed = std::max(solution.speed, v_overtake);
+          
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
+            "OVERTAKE %s: offset=%.2fm, speed=%.2f (boost=%.2f above opponent)",
+            overtake_left_side_ ? "LEFT" : "RIGHT", lateral_offset, 
+            solution.speed, solution.speed - opponent.speed);
         }
-      } else if (enable_overtaking_ && canStartOvertake(opponent)) {
-        // Start overtaking
-        is_overtaking_ = true;
-        overtake_start_time_ = now();
-        RCLCPP_WARN(get_logger(), "STARTING OVERTAKE! Distance=%.2fm, clearance OK", 
-          distance_to_opponent);
-      }
-    } else {
-      // No opponent ahead, end overtaking if active
-      if (is_overtaking_) {
-        double overtake_elapsed = (now() - overtake_start_time_).seconds();
-        if (overtake_elapsed > OVERTAKE_COMPLETION_TIMEOUT) {
-          is_overtaking_ = false;
-          RCLCPP_INFO(get_logger(), "Overtake complete (no opponent ahead for %.1fs)", overtake_elapsed);
-        }
-      }
+        break;
+        
+      case DrivingMode::OBSTACLE_STOP:
+        // Emergency stop - handled by collision state machine
+        solution.speed = 0.0;
+        solution.steering = 0.0;
+        break;
     }
     
     // A2 zone: apply steering avoidance (collision avoidance state must be NORMAL or COOLDOWN)
@@ -1639,6 +1745,7 @@ private:
   /**
    * @brief Generate and publish overtaking paths
    * Creates left and right overtaking paths based on current raceline
+   * v4.0: Also shows overtake zones (GREEN) and active path (YELLOW)
    */
   void generateAndPublishOvertakePaths()
   {
@@ -1647,6 +1754,54 @@ private:
     }
     
     visualization_msgs::msg::MarkerArray marker_array;
+    
+    // v4.0: Calculate s-position along path for zone highlighting
+    double cumulative_s = 0.0;
+    std::vector<double> s_positions;
+    s_positions.push_back(0.0);
+    for (size_t i = 1; i < latest_path_->poses.size(); ++i) {
+      double dx = latest_path_->poses[i].pose.position.x - latest_path_->poses[i-1].pose.position.x;
+      double dy = latest_path_->poses[i].pose.position.y - latest_path_->poses[i-1].pose.position.y;
+      cumulative_s += std::sqrt(dx * dx + dy * dy);
+      s_positions.push_back(cumulative_s);
+    }
+    
+    // v4.0: Generate overtake zone visualization (GREEN thick line)
+    visualization_msgs::msg::Marker zone_marker;
+    zone_marker.header.frame_id = "map";
+    zone_marker.header.stamp = now();
+    zone_marker.ns = "overtake_zones";
+    zone_marker.id = 10;
+    zone_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    zone_marker.action = visualization_msgs::msg::Marker::ADD;
+    zone_marker.scale.x = 0.1;  // Thick line
+    zone_marker.color.r = 0.0f;
+    zone_marker.color.g = 0.8f;  // GREEN
+    zone_marker.color.b = 0.2f;
+    zone_marker.color.a = 0.8f;
+    zone_marker.pose.orientation.w = 1.0;
+    
+    // Add points that are within overtake zones
+    for (size_t i = 0; i < latest_path_->poses.size(); ++i) {
+      double s = s_positions[i];
+      bool in_zone = false;
+      size_t num_zones = std::min(overtake_zone_starts_.size(), overtake_zone_ends_.size());
+      for (size_t z = 0; z < num_zones; ++z) {
+        if (s >= overtake_zone_starts_[z] && s <= overtake_zone_ends_[z]) {
+          in_zone = true;
+          break;
+        }
+      }
+      if (in_zone) {
+        geometry_msgs::msg::Point p;
+        p.x = latest_path_->poses[i].pose.position.x;
+        p.y = latest_path_->poses[i].pose.position.y;
+        p.z = 0.15;  // Slightly elevated
+        zone_marker.points.push_back(p);
+      }
+    }
+    zone_marker.lifetime = rclcpp::Duration::from_seconds(2.0);
+    marker_array.markers.push_back(zone_marker);
     
     // Generate left overtaking path (MAGENTA)
     visualization_msgs::msg::Marker left_path;
@@ -1715,6 +1870,35 @@ private:
     marker_array.markers.push_back(left_path);
     marker_array.markers.push_back(right_path);
     
+    // v4.0: Add active overtake path visualization (YELLOW thick line)
+    if (driving_mode_ == DrivingMode::OVERTAKE && overtake_committed_) {
+      visualization_msgs::msg::Marker active_path;
+      active_path.header.frame_id = "map";
+      active_path.header.stamp = now();
+      active_path.ns = "active_overtake_path";
+      active_path.id = 20;
+      active_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+      active_path.action = visualization_msgs::msg::Marker::ADD;
+      active_path.scale.x = 0.12;  // Thick line
+      active_path.color.r = 1.0f;
+      active_path.color.g = 1.0f;  // YELLOW
+      active_path.color.b = 0.0f;
+      active_path.color.a = 1.0f;
+      active_path.pose.orientation.w = 1.0;
+      
+      // Copy the active overtake path (left or right based on committed side)
+      const auto& active_pts = overtake_left_side_ ? overtake_left_path_ : overtake_right_path_;
+      for (const auto& pt : active_pts) {
+        geometry_msgs::msg::Point p;
+        p.x = pt.x;
+        p.y = pt.y;
+        p.z = 0.2;  // Elevated to be clearly visible
+        active_path.points.push_back(p);
+      }
+      active_path.lifetime = rclcpp::Duration::from_seconds(0.5);
+      marker_array.markers.push_back(active_path);
+    }
+    
     overtake_path_pub_->publish(marker_array);
   }
   
@@ -1746,6 +1930,164 @@ private:
   {
     double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
     return clearance > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
+  }
+  
+  /**
+   * @brief v4.0: Check if ego is currently in an overtake zone
+   * 
+   * Overtake zones are defined by s-intervals on the raceline.
+   * Only allow OVERTAKE mode when inside these zones.
+   */
+  bool isInOvertakeZone() const
+  {
+    if (overtake_zone_starts_.empty() || overtake_zone_ends_.empty()) {
+      return false;
+    }
+    
+    // Check each zone
+    size_t num_zones = std::min(overtake_zone_starts_.size(), overtake_zone_ends_.size());
+    for (size_t i = 0; i < num_zones; ++i) {
+      if (ego_s_position_ >= overtake_zone_starts_[i] && 
+          ego_s_position_ <= overtake_zone_ends_[i]) {
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  /**
+   * @brief v4.0: Update driving mode state machine
+   * 
+   * Implements the philosophy:
+   * - CRUISE: default, no opponent ahead
+   * - FOLLOW: opponent ahead, outside overtake zone or conditions not met
+   * - OVERTAKE_CANDIDATE: in overtake zone, evaluating
+   * - OVERTAKE: committed to overtake, stay until complete
+   * - OBSTACLE_STOP: collision detected
+   */
+  void updateDrivingMode(const OpponentInfo& opponent, bool in_overtake_zone, 
+                         const rclcpp::Time& current_time)
+  {
+    // Check for collision first (highest priority)
+    if (collision_state_ != CollisionState::NORMAL && 
+        collision_state_ != CollisionState::COOLDOWN) {
+      driving_mode_ = DrivingMode::OBSTACLE_STOP;
+      return;
+    }
+    
+    double overtake_elapsed = (current_time - overtake_start_time_).seconds();
+    
+    // If we're committed to overtaking, stay committed until complete
+    if (overtake_committed_) {
+      // Check if overtake is complete
+      if (!opponent.is_ahead || !opponent.is_detected) {
+        // No opponent ahead - possible overtake complete
+        if (overtake_elapsed > overtake_completion_timeout_) {
+          // Overtake complete!
+          overtake_committed_ = false;
+          is_overtaking_ = false;
+          driving_mode_ = DrivingMode::CRUISE;
+          RCLCPP_INFO(get_logger(), "OVERTAKE COMPLETE (passed opponent for %.1fs)", 
+                      overtake_elapsed);
+          return;
+        }
+      }
+      
+      // Still overtaking
+      driving_mode_ = DrivingMode::OVERTAKE;
+      return;
+    }
+    
+    // No opponent ahead -> CRUISE
+    if (!opponent.is_detected || !opponent.is_ahead) {
+      driving_mode_ = DrivingMode::CRUISE;
+      is_overtaking_ = false;
+      return;
+    }
+    
+    // Opponent ahead
+    double distance = opponent.distance;
+    
+    // Check if in following range
+    if (distance > opponent_following_distance_ && distance > overtake_decision_distance_) {
+      // Far from opponent, continue cruising
+      driving_mode_ = DrivingMode::CRUISE;
+      return;
+    }
+    
+    // Within following/overtake range
+    if (in_overtake_zone && enable_overtaking_) {
+      // In overtake zone - check if we can start overtake
+      bool left_clear = canOvertakeOnSide(true);
+      bool right_clear = canOvertakeOnSide(false);
+      
+      if (left_clear || right_clear) {
+        // Clearance OK - transition to OVERTAKE_CANDIDATE first
+        if (driving_mode_ != DrivingMode::OVERTAKE_CANDIDATE) {
+          driving_mode_ = DrivingMode::OVERTAKE_CANDIDATE;
+          overtake_start_time_ = current_time;  // Start timing for commit
+          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true", distance);
+        }
+        
+        // Check if we should commit to overtake
+        double candidate_time = (current_time - overtake_start_time_).seconds();
+        if (candidate_time > 0.5 && distance < overtake_decision_distance_) {
+          // Commit to overtake!
+          overtake_committed_ = true;
+          is_overtaking_ = true;
+          overtake_left_side_ = left_clear;  // Prefer left if both clear
+          overtake_start_time_ = current_time;
+          driving_mode_ = DrivingMode::OVERTAKE;
+          RCLCPP_WARN(get_logger(), "OVERTAKE COMMITTED! side=%s, distance=%.2fm",
+                      overtake_left_side_ ? "LEFT" : "RIGHT", distance);
+        }
+        return;
+      }
+    }
+    
+    // Not in overtake zone or can't overtake -> FOLLOW
+    driving_mode_ = DrivingMode::FOLLOW;
+  }
+  
+  /**
+   * @brief v4.0: Update ego s-position along raceline
+   * 
+   * Calculates cumulative distance along path from start to closest point.
+   * Used for overtake zone checks.
+   */
+  void updateEgoSPosition(const nmpc::VehicleState& current_state)
+  {
+    if (!latest_path_ || latest_path_->poses.empty()) {
+      ego_s_position_ = 0.0;
+      return;
+    }
+    
+    const auto& poses = latest_path_->poses;
+    const size_t num_poses = poses.size();
+    
+    // Find closest point on path
+    size_t closest_idx = 0;
+    double min_dist_sq = std::numeric_limits<double>::max();
+    
+    for (size_t i = 0; i < num_poses; ++i) {
+      double dx = poses[i].pose.position.x - current_state.x;
+      double dy = poses[i].pose.position.y - current_state.y;
+      double dist_sq = dx * dx + dy * dy;
+      if (dist_sq < min_dist_sq) {
+        min_dist_sq = dist_sq;
+        closest_idx = i;
+      }
+    }
+    
+    // Calculate s-position as cumulative distance from start
+    double s = 0.0;
+    for (size_t i = 1; i <= closest_idx && i < num_poses; ++i) {
+      double dx = poses[i].pose.position.x - poses[i-1].pose.position.x;
+      double dy = poses[i].pose.position.y - poses[i-1].pose.position.y;
+      s += std::sqrt(dx * dx + dy * dy);
+    }
+    
+    ego_s_position_ = s;
   }
   
   /**
@@ -2032,17 +2374,23 @@ private:
       double qw = poses[idx].pose.orientation.w;
       ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       
-      // Reference speed - can be modulated based on path curvature
-      ref.v = nominal_speed_;
+      // v4.0: Curvature-based speed control using configurable thresholds
+      // Speed is determined by raceline curvature, NOT wall proximity
+      ref.v = v_max_straight_;  // Default to straight speed
       
-      // Optional: reduce reference speed for high curvature sections
+      // Calculate curvature for this point using lookahead
       if (i < NUM_REF_POINTS - 1) {
         size_t next_idx = (start_idx + (i + 1) * stride) % num_poses;
         double dx = poses[next_idx].pose.position.x - poses[idx].pose.position.x;
         double dy = poses[next_idx].pose.position.y - poses[idx].pose.position.y;
+        
+        // Full quaternion to yaw conversion for correctness
+        double next_qx = poses[next_idx].pose.orientation.x;
+        double next_qy = poses[next_idx].pose.orientation.y;
         double next_qz = poses[next_idx].pose.orientation.z;
         double next_qw = poses[next_idx].pose.orientation.w;
-        double next_yaw = std::atan2(2.0 * next_qw * next_qz, 1.0 - 2.0 * next_qz * next_qz);
+        double next_yaw = std::atan2(2.0 * (next_qw * next_qz + next_qx * next_qy), 
+                                      1.0 - 2.0 * (next_qy * next_qy + next_qz * next_qz));
         
         // Proper angle normalization for dyaw
         double dyaw = next_yaw - ref.yaw;
@@ -2053,9 +2401,19 @@ private:
         double seg_dist = std::sqrt(dx * dx + dy * dy);
         if (seg_dist > 0.01) {
           double curvature = dyaw / seg_dist;
-          // Slow down for sharp curves
-          if (curvature > 0.5) {
-            ref.v = nominal_speed_ * std::max(0.3, 1.0 - curvature * 0.5);
+          
+          // v4.0: Apply curvature-based speed profile using k1, k2 thresholds
+          // |κ| < k1 (straight): v_ref = v_max_straight
+          // k1 <= |κ| <= k2: linear interpolation
+          // |κ| > k2 (tight corner): v_ref = v_min_corner
+          if (curvature < curvature_k1_) {
+            ref.v = v_max_straight_;
+          } else if (curvature > curvature_k2_) {
+            ref.v = v_min_corner_;
+          } else {
+            // Linear interpolation between k1 and k2
+            double t = (curvature - curvature_k1_) / (curvature_k2_ - curvature_k1_);
+            ref.v = v_max_straight_ + t * (v_min_corner_ - v_max_straight_);
           }
         }
       }
@@ -2213,6 +2571,26 @@ private:
   bool enable_overtaking_{true};
   double opponent_speed_tracking_gain_{0.8};
   
+  // v4.0 FOLLOW parameters
+  double follow_margin_{0.05};              // [m/s] Speed margin below opponent
+  double v_min_follow_{0.3};                // [m/s] Minimum follow speed
+  
+  // v4.0 OVERTAKE parameters  
+  double overtake_boost_{0.25};             // [m/s] Speed boost above opponent
+  double overtake_min_commit_time_{2.0};    // [s] Min time to commit to overtake
+  double overtake_completion_timeout_{3.0}; // [s] Time after passing to confirm complete
+  
+  // v4.0 Curvature-based speed control
+  double curvature_k1_{0.2};                // [1/m] Threshold for straight
+  double curvature_k2_{0.8};                // [1/m] Threshold for tight corner
+  double v_max_straight_{3.0};              // [m/s] Speed on straights
+  double v_min_corner_{1.2};                // [m/s] Speed in tight corners
+  int curvature_lookahead_{5};              // [points] Lookahead for curvature calc
+  
+  // v4.0 Overtake zones
+  std::vector<double> overtake_zone_starts_;
+  std::vector<double> overtake_zone_ends_;
+  
   // Collision state machine
   CollisionState collision_state_{CollisionState::NORMAL};
   rclcpp::Time collision_state_start_time_;
@@ -2225,9 +2603,13 @@ private:
   double last_obstacle_angle_{0.0};
   double recovery_cooldown_duration_{0.3};
   
-  // Overtaking state
+  // v4.0 Driving mode and overtaking state
+  DrivingMode driving_mode_{DrivingMode::CRUISE};
   bool is_overtaking_{false};
+  bool overtake_committed_{false};           // Once true, stay in OVERTAKE until complete
+  bool overtake_left_side_{true};            // Which side we're overtaking on
   rclcpp::Time overtake_start_time_;
+  double ego_s_position_{0.0};               // Ego s-position on raceline (for zone checks)
   std::vector<geometry_msgs::msg::Point> overtake_left_path_;
   std::vector<geometry_msgs::msg::Point> overtake_right_path_;
   
