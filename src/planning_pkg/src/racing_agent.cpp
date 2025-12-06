@@ -215,6 +215,8 @@ void RacingAgent::raceline_callback(const nav_msgs::msg::Path::SharedPtr msg)
 void RacingAgent::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
     // Update ego state
+    env_state_.ego_x = msg->pose.pose.position.x;
+    env_state_.ego_y = msg->pose.pose.position.y;
     env_state_.ego_speed = std::hypot(
         msg->twist.twist.linear.x, 
         msg->twist.twist.linear.y);
@@ -1693,8 +1695,8 @@ nav_msgs::msg::Path RacingAgent::get_global_overtake_lane_segment(bool use_insid
     
     // Use ego position to find closest point on the overtake lane
     for (size_t i = 0; i < selected_lane.poses.size(); ++i) {
-        double dx = selected_lane.poses[i].pose.position.x - env_state_.ego_s;  // Simplified
-        double dy = selected_lane.poses[i].pose.position.y - env_state_.ego_d;  // Simplified
+        double dx = selected_lane.poses[i].pose.position.x - env_state_.ego_x;
+        double dy = selected_lane.poses[i].pose.position.y - env_state_.ego_y;
         double dist_sq = dx * dx + dy * dy;
         
         if (dist_sq < min_dist_sq) {

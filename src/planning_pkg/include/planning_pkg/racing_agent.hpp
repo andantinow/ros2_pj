@@ -154,6 +154,8 @@ struct EnvironmentState
     /// Ego vehicle state
     double ego_s;           ///< Ego position on raceline (arc length)
     double ego_d;           ///< Ego lateral deviation from raceline
+    double ego_x;           ///< Ego x position in map frame
+    double ego_y;           ///< Ego y position in map frame
     double ego_speed;       ///< Ego current speed
     double ego_heading;     ///< Ego heading
     
@@ -170,7 +172,7 @@ struct EnvironmentState
     double right_clearance;     ///< Clearance to right (wall/obstacle)
     
     EnvironmentState() 
-        : ego_s(0.0), ego_d(0.0), ego_speed(0.0), ego_heading(0.0),
+        : ego_s(0.0), ego_d(0.0), ego_x(0.0), ego_y(0.0), ego_speed(0.0), ego_heading(0.0),
           has_preceding_vehicle(false), preceding_distance(10.0), 
           preceding_speed(0.0), preceding_d(0.0),
           front_obstacle_detected(false), front_obstacle_distance(10.0),
