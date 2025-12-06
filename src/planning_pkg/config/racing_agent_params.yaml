@@ -24,12 +24,25 @@ racing_agent:
     # === Corner Exit Smoothing Parameters (v5.0) ===
     # These control how the car exits corners to prevent wall contact
     # The OUT-IN-OUT behavior is softened on exit to keep distance from outer wall
-    corner_exit_wall_margin: 0.4     # m - Minimum distance from wall on corner exit (tunable: 0.3-0.5)
-    corner_exit_lateral_soften: 0.7  # Factor (0-1) - Reduces lateral offset on exit (1.0 = no change)
+    #
+    # corner_exit_wall_margin: Influences trajectory generation to maintain this
+    #   distance from walls on corner exit. Not a hard constraint, but the trajectory
+    #   generator uses this to soften the "OUT" component. Range: 0.3-0.5m typical.
+    corner_exit_wall_margin: 0.4     # m - Target minimum distance from wall on corner exit
+    #
+    # corner_exit_lateral_soften: Factor applied to lateral offset during exit phase
+    #   - 1.0 = no softening (original aggressive OUT behavior)
+    #   - 0.7 = moderate softening (recommended for safer exits)
+    #   - 0.5 = conservative softening (very safe, less racing-optimal)
+    #   Lower values result in more conservative corner exit behavior.
+    corner_exit_lateral_soften: 0.7  # Factor (0-1) - Reduces lateral offset on exit
     
     # === Overtake Feasibility Parameters (v5.0) ===
     # These ensure overtakes only start when clearly feasible given opponent geometry
     # Being in an OVERTAKE ZONE is NOT by itself enough to start an overtake
+    #
+    # opponent_width: Assumed width of opponent vehicle. Could be made dynamic
+    #   in future if perception provides opponent size estimation.
     opponent_width: 0.35             # m - Assumed opponent vehicle width
     overtake_width_factor: 1.2       # Factor > 1.0 multiplied by opponent width for clearance
     overtake_lateral_margin: 0.25    # m - Additional safety margin for overtake path

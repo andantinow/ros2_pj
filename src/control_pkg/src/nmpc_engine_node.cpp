@@ -2024,8 +2024,12 @@ private:
    * 
    * This ensures the gap between the overtake path and opponent's footprint
    * is safely larger than the opponent width plus margin.
+   * 
+   * Note: The opponent parameter is provided for future use when opponent-specific
+   * width estimation becomes available (e.g., from perception). Currently uses
+   * the configurable overtake_opponent_width_ parameter.
    */
-  bool checkOvertakeLateralClearance(bool left_side, const OpponentInfo& /* opponent */) const
+  bool checkOvertakeLateralClearance(bool left_side, [[maybe_unused]] const OpponentInfo& opponent) const
   {
     double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
     
@@ -2045,6 +2049,13 @@ private:
    */
   bool checkOvertakeLongitudinalWindow() const
   {
+    // Validate zone vectors have matching sizes
+    if (overtake_zone_starts_.size() != overtake_zone_ends_.size()) {
+      RCLCPP_WARN_ONCE(get_logger(), 
+        "Overtake zone vectors have mismatched sizes: starts=%zu, ends=%zu",
+        overtake_zone_starts_.size(), overtake_zone_ends_.size());
+    }
+    
     // Find the current overtake zone
     size_t num_zones = std::min(overtake_zone_starts_.size(), overtake_zone_ends_.size());
     for (size_t i = 0; i < num_zones; ++i) {
