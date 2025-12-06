@@ -94,10 +94,11 @@ struct MPCConfig
   double lateral_tolerance = 0.25; // Allow ±0.25m deviation from reference (Frenet tube)
   double w_terminal = 30.0;       // Terminal cost weight for better convergence (increased)
   
-  // Soft Constraint settings (Issue 6.1: Prevent Status 4 - Infeasibility)
+  // Soft Constraint settings (v4.0: Tuned for better convergence during overtaking)
   // Slack variable weights for constraint violations
-  double w_slack_track = 1000.0;  // High penalty for track boundary violations
-  double w_slack_speed = 500.0;   // Penalty for speed constraint violations
+  // Slightly reduced penalties allow solver to find feasible solutions more easily
+  double w_slack_track = 800.0;   // Penalty for track boundary violations (reduced from 1000)
+  double w_slack_speed = 400.0;   // Penalty for speed constraint violations (reduced from 500)
   double track_boundary_margin = 0.05;  // Additional margin for track boundaries [m]
   
   // Constraints
@@ -108,10 +109,10 @@ struct MPCConfig
   double max_speed = 6.0;         // Maximum speed [m/s] (increased)
   double min_speed = 0.0;         // Minimum speed [m/s]
   
-  // Solver settings (Issue 3.1: Levenberg-Marquardt regularization)
-  int max_iterations = 20;        // Maximum SQP iterations (increased for better convergence)
-  double convergence_tol = 1e-5;  // Tighter convergence tolerance
-  double levenberg_marquardt = 1e-2;  // L-M regularization for Hessian stability (Status 3 fix)
+  // Solver settings (v4.0: Improved convergence for overtaking maneuvers)
+  int max_iterations = 25;        // Maximum SQP iterations (increased for complex maneuvers)
+  double convergence_tol = 5e-5;  // Slightly relaxed for faster convergence during overtake
+  double levenberg_marquardt = 2e-2;  // L-M regularization (increased for stability)
   double min_step_size = 1e-6;    // Minimum step size before declaring convergence
   
   // Issue 3.3: Latency compensation
@@ -379,15 +380,17 @@ public:
       solution.cost = cost;
     }
     
-    // Handle solver failures
+    // Handle solver failures (v4.0: more graceful handling during complex maneuvers)
     if (numerical_error || solution.iterations >= config_.max_iterations) {
       if (solution.iterations >= config_.max_iterations) {
         solution.status = SolverStatus::MAX_ITER;
+        // MAX_ITER is not a critical failure during overtaking - still use the solution
       }
       consecutive_failures_++;
       
       // If too many consecutive failures, reset the solver
-      if (consecutive_failures_ > 5) {
+      // Increased threshold from 5 to 8 for better stability during complex maneuvers
+      if (consecutive_failures_ > 8) {
         RCLCPP_WARN_THROTTLE(logger, *rclcpp::Clock::make_shared(), 1000,
           "NMPC: %d consecutive failures, resetting solver", consecutive_failures_);
         resetSolver();
