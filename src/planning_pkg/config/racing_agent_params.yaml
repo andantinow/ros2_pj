@@ -6,6 +6,8 @@
 # 1. OVERTAKE ZONEs - Pre-defined sections on the raceline where overtaking is allowed
 # 2. Overtake trajectory parameters
 # 3. Mode transition parameters
+# 4. Corner exit smoothing parameters (v5.0)
+# 5. Overtake feasibility parameters (v5.0)
 
 racing_agent:
   ros__parameters:
@@ -19,12 +21,41 @@ racing_agent:
     safe_follow_distance: 1.5  # m - Target following distance (ACC style)
     min_stop_distance: 0.3     # m - Emergency stop threshold
     
+    # === Corner Exit Smoothing Parameters (v5.0) ===
+    # These control how the car exits corners to prevent wall contact
+    # The OUT-IN-OUT behavior is softened on exit to keep distance from outer wall
+    #
+    # corner_exit_wall_margin: Used by NMPC node's applyCornerExitSmoothing function
+    #   to limit steering toward wall when exiting corners. Also declared in racing_agent
+    #   for consistency but primarily affects real-time control. Range: 0.3-0.5m typical.
+    corner_exit_wall_margin: 0.4     # m - Target minimum distance from wall on corner exit
+    #
+    # corner_exit_lateral_soften: Factor applied to lateral offset during exit phase
+    #   in overtake trajectory generation (racing_agent).
+    #   - 1.0 = no softening (original aggressive OUT behavior)
+    #   - 0.7 = moderate softening (recommended for safer exits)
+    #   - 0.5 = conservative softening (very safe, less racing-optimal)
+    #   Lower values result in more conservative corner exit behavior.
+    corner_exit_lateral_soften: 0.7  # Factor (0-1) - Reduces lateral offset on exit
+    
+    # === Overtake Feasibility Parameters (v5.0) ===
+    # These ensure overtakes only start when clearly feasible given opponent geometry
+    # Being in an OVERTAKE ZONE is NOT by itself enough to start an overtake
+    #
+    # opponent_width: Assumed width of opponent vehicle. Could be made dynamic
+    #   in future if perception provides opponent size estimation.
+    opponent_width: 0.35             # m - Assumed opponent vehicle width
+    overtake_width_factor: 1.2       # Factor > 1.0 multiplied by opponent width for clearance
+    overtake_lateral_margin: 0.25    # m - Additional safety margin for overtake path
+    min_longitudinal_window: 5.0     # m - Minimum longitudinal distance to complete overtake
+    
     # === Overtake Zone Definitions ===
     # Each zone is defined by (s_start, s_end) on the raceline
     # s is arc length in meters from the start of the track
     # 
     # IMPORTANT: Overtaking is ONLY allowed in these pre-defined zones.
     # The agent will NOT attempt ad-hoc overtaking outside these zones.
+    # Even inside a zone, overtake only starts when feasibility checks pass.
     #
     # Zone types:
     # - NORMAL: Normal driving zone, no overtaking allowed
@@ -47,7 +78,8 @@ racing_agent:
     # === Pre-computed Overtake Trajectories ===
     # Each OVERTAKE_ZONE has multiple trajectory candidates
     # These are selected at runtime based on:
-    # - Clearance on left/right side
+    # - Clearance on left/right side (must exceed opponent_width * factor + margin)
+    # - Longitudinal window (must exceed min_longitudinal_window)
     # - Relative speed to preceding vehicle
     # - Obstacle proximity
     #

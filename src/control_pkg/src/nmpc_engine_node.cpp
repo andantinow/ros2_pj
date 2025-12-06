@@ -981,6 +981,13 @@ public:
     declare_parameter("overtake_min_commit_time", 2.0);    // [s] Min time to commit to overtake before giving up
     declare_parameter("overtake_completion_timeout", 3.0); // [s] Time after passing to confirm overtake complete
     
+    // Overtake feasibility parameters (v5.0 - Stricter overtake decision)
+    // These ensure overtakes only start when clearly feasible given opponent geometry
+    declare_parameter("overtake_opponent_width", 0.35);    // [m] Assumed opponent vehicle width
+    declare_parameter("overtake_width_factor", 1.2);       // Factor multiplied by opponent width for clearance
+    declare_parameter("overtake_safety_margin", 0.25);     // [m] Additional safety margin for overtake
+    declare_parameter("overtake_min_longitudinal_window", 5.0); // [m] Min distance to complete overtake
+    
     // Curvature-based speed control (v4.0 - Corner behavior)
     declare_parameter("curvature_k1", 0.2);                // [1/m] Curvature threshold: below = straight
     declare_parameter("curvature_k2", 0.8);                // [1/m] Curvature threshold: above = tight corner
@@ -1043,6 +1050,12 @@ public:
     overtake_boost_ = get_parameter("overtake_boost").as_double();
     overtake_min_commit_time_ = get_parameter("overtake_min_commit_time").as_double();
     overtake_completion_timeout_ = get_parameter("overtake_completion_timeout").as_double();
+    
+    // Get v5.0 overtake feasibility parameters
+    overtake_opponent_width_ = get_parameter("overtake_opponent_width").as_double();
+    overtake_width_factor_ = get_parameter("overtake_width_factor").as_double();
+    overtake_safety_margin_ = get_parameter("overtake_safety_margin").as_double();
+    overtake_min_longitudinal_window_ = get_parameter("overtake_min_longitudinal_window").as_double();
     
     // Get v4.0 curvature-based speed control parameters
     curvature_k1_ = get_parameter("curvature_k1").as_double();
@@ -1966,6 +1979,11 @@ private:
   
   /**
    * @brief Check if overtaking can be started
+   * 
+   * v5.0: Stricter feasibility check that considers:
+   * - Opponent vehicle width
+   * - Required lateral clearance = opponent_width * width_factor + safety_margin
+   * - Longitudinal window to complete overtake
    */
   bool canStartOvertake(const OpponentInfo& opponent)
   {
@@ -1978,20 +1996,114 @@ private:
       return false;
     }
     
-    // Check if we have room on at least one side
-    bool left_clear = last_obstacle_left_dist_ > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
-    bool right_clear = last_obstacle_right_dist_ > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
+    // === IMPORTANT: Being in OVERTAKE ZONE is NOT enough ===
+    // Must also verify lateral clearance and longitudinal feasibility
     
-    return left_clear || right_clear;
+    // Check if we have room on at least one side with stricter criteria
+    // Required clearance considers opponent width, not just our path width
+    bool left_clear = checkOvertakeLateralClearance(true, opponent);
+    bool right_clear = checkOvertakeLateralClearance(false, opponent);
+    
+    if (!left_clear && !right_clear) {
+      return false;
+    }
+    
+    // Check longitudinal window - ensure enough distance to complete overtake
+    if (!checkOvertakeLongitudinalWindow()) {
+      return false;
+    }
+    
+    return true;
   }
   
   /**
-   * @brief Check if we can overtake on specified side
+   * @brief Check lateral clearance for overtake considering opponent width
+   * 
+   * Lateral clearance requirement:
+   *   clearance >= opponent_width * factor + safety_margin
+   * 
+   * This ensures the gap between the overtake path and opponent's footprint
+   * is safely larger than the opponent width plus margin.
+   * 
+   * Note: The opponent parameter is provided for future use when opponent-specific
+   * width estimation becomes available (e.g., from perception). Currently uses
+   * the configurable overtake_opponent_width_ parameter.
+   */
+  bool checkOvertakeLateralClearance(bool left_side, [[maybe_unused]] const OpponentInfo& opponent) const
+  {
+    double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
+    
+    // Calculate minimum required clearance considering opponent geometry
+    // Required = opponent_width * factor (e.g. 1.2) + safety_margin + our_path_width
+    double min_required = overtake_opponent_width_ * overtake_width_factor_ + 
+                          overtake_safety_margin_ + overtake_path_width_;
+    
+    return clearance > min_required;
+  }
+  
+  /**
+   * @brief Check longitudinal window for overtake completion
+   * 
+   * Ensures there's enough distance to complete the overtake before
+   * the next corner or narrow section.
+   */
+  bool checkOvertakeLongitudinalWindow() const
+  {
+    // Validate zone vectors have matching sizes
+    if (overtake_zone_starts_.size() != overtake_zone_ends_.size()) {
+      RCLCPP_WARN_ONCE(get_logger(), 
+        "Overtake zone vectors have mismatched sizes: starts=%zu, ends=%zu",
+        overtake_zone_starts_.size(), overtake_zone_ends_.size());
+      return false;  // Cannot safely check with mismatched vectors
+    }
+    
+    // Find the current overtake zone
+    size_t num_zones = overtake_zone_starts_.size();
+    for (size_t i = 0; i < num_zones; ++i) {
+      if (ego_s_position_ >= overtake_zone_starts_[i] && 
+          ego_s_position_ <= overtake_zone_ends_[i]) {
+        // Calculate remaining distance in this zone
+        double remaining = overtake_zone_ends_[i] - ego_s_position_;
+        return remaining >= overtake_min_longitudinal_window_;
+      }
+    }
+    return false;
+  }
+  
+  /**
+   * @brief Check if we can overtake on specified side (simplified check)
    */
   bool canOvertakeOnSide(bool left_side)
   {
     double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
-    return clearance > overtake_path_width_ + OVERTAKE_SAFETY_MARGIN;
+    // Use stricter requirement with opponent width consideration
+    double min_required = overtake_opponent_width_ * overtake_width_factor_ + 
+                          overtake_safety_margin_ + overtake_path_width_;
+    return clearance > min_required;
+  }
+  
+  /**
+   * @brief Check if current overtake should be aborted due to unsafe conditions
+   */
+  bool shouldAbortOvertake() const
+  {
+    if (!overtake_committed_) {
+      return false;
+    }
+    
+    // Check if clearance on the committed side is still sufficient
+    double clearance = overtake_left_side_ ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
+    double min_required = overtake_opponent_width_ * overtake_width_factor_ + 
+                          overtake_safety_margin_ + overtake_path_width_;
+    
+    if (clearance < min_required) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+        "Overtake abort check: clearance=%.2fm < required=%.2fm", 
+        clearance, min_required);
+      return true;
+    }
+    
+    return false;
   }
   
   /**
@@ -2041,6 +2153,15 @@ private:
     
     // If we're committed to overtaking, stay committed until complete
     if (overtake_committed_) {
+      // Check if overtake conditions become unsafe - abort and return to FOLLOW
+      if (shouldAbortOvertake()) {
+        RCLCPP_WARN(get_logger(), "OVERTAKE ABORTED: clearance became unsafe");
+        overtake_committed_ = false;
+        is_overtaking_ = false;
+        driving_mode_ = DrivingMode::FOLLOW;
+        return;
+      }
+      
       // Check if overtake is complete
       if (!opponent.is_ahead || !opponent.is_detected) {
         // No opponent ahead - possible overtake complete
@@ -2080,15 +2201,19 @@ private:
     // Within following/overtake range
     if (in_overtake_zone && enable_overtaking_) {
       // In overtake zone - check if we can start overtake
+      // v5.0: Use stricter feasibility checks
       bool left_clear = canOvertakeOnSide(true);
       bool right_clear = canOvertakeOnSide(false);
+      bool longitudinal_ok = checkOvertakeLongitudinalWindow();
       
-      if (left_clear || right_clear) {
+      // Must have BOTH lateral clearance AND longitudinal window
+      if ((left_clear || right_clear) && longitudinal_ok) {
         // Clearance OK - transition to OVERTAKE_CANDIDATE first
         if (driving_mode_ != DrivingMode::OVERTAKE_CANDIDATE) {
           driving_mode_ = DrivingMode::OVERTAKE_CANDIDATE;
           overtake_start_time_ = current_time;  // Start timing for commit
-          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true", distance);
+          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true, left=%d, right=%d", 
+                      distance, left_clear, right_clear);
         }
         
         // Check if we should commit to overtake
@@ -2104,6 +2229,10 @@ private:
                       overtake_left_side_ ? "LEFT" : "RIGHT", distance);
         }
         return;
+      } else if (!longitudinal_ok) {
+        // In zone but not enough longitudinal window - stay in FOLLOW
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+          "In overtake zone but longitudinal window insufficient, staying in FOLLOW");
       }
     }
     
@@ -2814,6 +2943,12 @@ private:
   double overtake_boost_{0.25};             // [m/s] Speed boost above opponent
   double overtake_min_commit_time_{2.0};    // [s] Min time to commit to overtake
   double overtake_completion_timeout_{3.0}; // [s] Time after passing to confirm complete
+  
+  // v5.0 Overtake feasibility parameters (stricter decision logic)
+  double overtake_opponent_width_{0.35};    // [m] Assumed opponent vehicle width
+  double overtake_width_factor_{1.2};       // Factor for clearance calculation
+  double overtake_safety_margin_{0.25};     // [m] Additional safety margin
+  double overtake_min_longitudinal_window_{5.0}; // [m] Min distance to complete overtake
   
   // v4.0 Curvature-based speed control
   double curvature_k1_{0.2};                // [1/m] Threshold for straight

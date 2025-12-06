@@ -27,6 +27,18 @@ static constexpr double OVERTAKE_LATERAL_OFFSET = 0.8;  // Default lateral offse
 static constexpr double LOOKAHEAD_DISTANCE = 3.0;   // Default lookahead for reference path (m)
 static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in reference path
 
+// === Corner Exit Safety ===
+static constexpr double CORNER_EXIT_WALL_MARGIN = 0.4;  // Minimum distance from wall on corner exit (m)
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.7;  // Factor to reduce lateral OUT on corner exit (0-1)
+
+// === Overtake Feasibility Constants (defaults, overridden by parameters) ===
+// NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
+// are similar. The parameter "opponent_width" can be configured differently if needed.
+static constexpr double OPPONENT_WIDTH = 0.35;          // Default opponent vehicle width (m)
+static constexpr double OVERTAKE_WIDTH_FACTOR = 1.2;    // Factor multiplied by opponent width for clearance
+static constexpr double OVERTAKE_LATERAL_MARGIN = 0.25; // Additional safety margin for overtake (m)
+static constexpr double MIN_LONGITUDINAL_WINDOW = 5.0;  // Minimum longitudinal distance to complete overtake (m)
+
 RacingAgent::RacingAgent()
 : Node("racing_agent")
 {
@@ -40,11 +52,31 @@ RacingAgent::RacingAgent()
     this->declare_parameter("zones_config_file", "");
     this->declare_parameter("trajectories_config_file", "");
     
+    // === Corner Exit Smoothing Parameters ===
+    this->declare_parameter("corner_exit_wall_margin", CORNER_EXIT_WALL_MARGIN);
+    this->declare_parameter("corner_exit_lateral_soften", CORNER_EXIT_LATERAL_SOFTEN);
+    
+    // === Overtake Feasibility Parameters ===
+    this->declare_parameter("opponent_width", OPPONENT_WIDTH);
+    this->declare_parameter("overtake_width_factor", OVERTAKE_WIDTH_FACTOR);
+    this->declare_parameter("overtake_lateral_margin", OVERTAKE_LATERAL_MARGIN);
+    this->declare_parameter("min_longitudinal_window", MIN_LONGITUDINAL_WINDOW);
+    
     // Load parameters
     safe_follow_distance_ = this->get_parameter("safe_follow_distance").as_double();
     min_stop_distance_ = this->get_parameter("min_stop_distance").as_double();
     cruise_speed_ = this->get_parameter("cruise_speed").as_double();
     decision_rate_ = this->get_parameter("decision_rate").as_double();
+    
+    // Load corner exit parameters
+    corner_exit_wall_margin_ = this->get_parameter("corner_exit_wall_margin").as_double();
+    corner_exit_lateral_soften_ = this->get_parameter("corner_exit_lateral_soften").as_double();
+    
+    // Load overtake feasibility parameters
+    opponent_width_ = this->get_parameter("opponent_width").as_double();
+    overtake_width_factor_ = this->get_parameter("overtake_width_factor").as_double();
+    overtake_lateral_margin_ = this->get_parameter("overtake_lateral_margin").as_double();
+    min_longitudinal_window_ = this->get_parameter("min_longitudinal_window").as_double();
     
     // === Subscriptions ===
     global_raceline_sub_ = this->create_subscription<nav_msgs::msg::Path>(
@@ -325,6 +357,14 @@ RacingMode RacingAgent::compute_next_mode()
                 active_trajectory_idx_ = std::nullopt;
                 return RacingMode::OBSTACLE_STOP;
             }
+            // Check if overtake conditions become invalid (clearance too narrow, unsafe)
+            // If so, abort overtake and return to safe FOLLOW mode
+            if (should_abort_overtake()) {
+                RCLCPP_WARN(this->get_logger(), 
+                    "Aborting overtake: clearance or conditions became unsafe");
+                active_trajectory_idx_ = std::nullopt;
+                return RacingMode::FOLLOW;
+            }
             return RacingMode::OVERTAKE;
             
         case RacingMode::OBSTACLE_STOP:
@@ -555,7 +595,20 @@ void RacingAgent::generate_default_overtake_trajectories()
             // For single waypoint, progress = 0.0 (no lateral offset)
             double progress = (waypoint_count > 1) ? 
                 static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
-            double lateral_offset = OVERTAKE_LATERAL_OFFSET * std::sin(progress * M_PI);
+            
+            // === CORNER EXIT IMPROVEMENT ===
+            // Apply asymmetric S-curve: full offset on entry/mid, reduced offset on exit
+            // This prevents going too far "OUT" on corner exit and hitting the wall
+            // lateral_scale = 1.0 for entry phase (progress <= 0.5), computed for exit phase
+            double lateral_scale = 1.0;
+            if (progress > 0.5) {
+                // On exit phase (progress > 0.5), apply soften factor to reduce lateral offset
+                // This keeps the car further from the outer wall on exit
+                double exit_progress = (progress - 0.5) * 2.0;  // 0 to 1 in exit phase
+                lateral_scale = 1.0 - exit_progress * (1.0 - corner_exit_lateral_soften_);
+            }
+            
+            double lateral_offset = OVERTAKE_LATERAL_OFFSET * std::sin(progress * M_PI) * lateral_scale;
             
             geometry_msgs::msg::PoseStamped pose = global_raceline_.poses[i];
             double yaw = tf2::getYaw(pose.pose.orientation);
@@ -973,12 +1026,17 @@ size_t RacingAgent::find_closest_raceline_index(double x, double y) const
 
 bool RacingAgent::is_overtake_safe(const OvertakeTrajectory& trajectory) const
 {
-    // Check clearance on the overtake side
-    double clearance = trajectory.is_left_side ? 
-                       env_state_.left_clearance : env_state_.right_clearance;
+    // Use the new stricter lateral clearance check that considers opponent width
+    if (!check_lateral_clearance_for_overtake(trajectory.is_left_side)) {
+        return false;
+    }
     
-    double min_required = VEHICLE_WIDTH * 2 + SAFETY_MARGIN;
-    return clearance > min_required;
+    // Also check longitudinal window
+    if (!check_longitudinal_window_for_overtake()) {
+        return false;
+    }
+    
+    return true;
 }
 
 bool RacingAgent::should_stop_for_obstacle() const
@@ -1004,12 +1062,101 @@ bool RacingAgent::can_consider_overtake() const
         return false;
     }
     
-    // Must have sufficient clearance on at least one side
-    double min_required = VEHICLE_WIDTH * 2 + SAFETY_MARGIN;
-    bool left_ok = env_state_.left_clearance > min_required;
-    bool right_ok = env_state_.right_clearance > min_required;
+    // === IMPORTANT: Being in OVERTAKE ZONE is NOT enough ===
+    // Must also check lateral clearance and longitudinal window
     
-    return left_ok || right_ok;
+    // Check if overtake is actually feasible given opponent width and position
+    if (!is_overtake_feasible()) {
+        return false;
+    }
+    
+    return true;
+}
+
+bool RacingAgent::check_lateral_clearance_for_overtake(bool is_left_side) const
+{
+    // Get clearance on the specified side
+    // Note: clearance is measured from the vehicle center to the wall/obstacle
+    double clearance = is_left_side ? env_state_.left_clearance : env_state_.right_clearance;
+    
+    // Calculate minimum required clearance considering opponent width
+    // Required clearance = opponent_width * factor + safety_margin + lateral_offset
+    // The lateral_offset (OVERTAKE_LATERAL_OFFSET) represents how far the overtake
+    // path deviates from the raceline, which accounts for the space our vehicle needs
+    double min_required = opponent_width_ * overtake_width_factor_ + 
+                          overtake_lateral_margin_ + OVERTAKE_LATERAL_OFFSET;
+    
+    return clearance > min_required;
+}
+
+bool RacingAgent::check_longitudinal_window_for_overtake() const
+{
+    // Check if there is enough longitudinal distance to complete the overtake
+    // before the next corner or narrow section
+    
+    // Get current zone
+    const RacelineZone* current_zone = get_current_zone();
+    if (!current_zone) {
+        return false;
+    }
+    
+    // Calculate remaining distance in the overtake zone
+    double remaining_zone_length = current_zone->s_end - env_state_.ego_s;
+    if (remaining_zone_length < 0) {
+        // Handle track wrap-around
+        remaining_zone_length += track_length_;
+    }
+    
+    // Must have enough longitudinal distance to complete the overtake
+    // This prevents starting overtakes too close to the end of an overtake zone
+    // or near a tight corner
+    return remaining_zone_length >= min_longitudinal_window_;
+}
+
+bool RacingAgent::is_overtake_feasible() const
+{
+    // Overtake is feasible only if BOTH lateral clearance AND longitudinal window are sufficient
+    
+    // Check lateral clearance on at least one side
+    bool left_clearance_ok = check_lateral_clearance_for_overtake(true);
+    bool right_clearance_ok = check_lateral_clearance_for_overtake(false);
+    
+    if (!left_clearance_ok && !right_clearance_ok) {
+        // Neither side has sufficient clearance
+        return false;
+    }
+    
+    // Check longitudinal window
+    if (!check_longitudinal_window_for_overtake()) {
+        return false;
+    }
+    
+    return true;
+}
+
+bool RacingAgent::should_abort_overtake() const
+{
+    // During OVERTAKE mode, check if conditions become unsafe
+    // If so, should abort overtake and return to FOLLOW
+    
+    if (!active_trajectory_idx_.has_value()) {
+        return true;  // No active trajectory, abort
+    }
+    
+    const auto& traj = overtake_trajectories_[*active_trajectory_idx_];
+    
+    // Check if clearance on the overtake side is still sufficient
+    if (!check_lateral_clearance_for_overtake(traj.is_left_side)) {
+        // Clearance has become insufficient - abort
+        return true;
+    }
+    
+    // Check for immediate collision risk
+    if (should_stop_for_obstacle()) {
+        return true;
+    }
+    
+    return false;
 }
 
 void RacingAgent::update_environment_state()

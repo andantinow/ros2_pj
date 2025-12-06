@@ -236,6 +236,16 @@ private:
     double cruise_speed_ = 5.0;           ///< Default cruise speed (m/s)
     double decision_rate_ = 20.0;         ///< Decision loop rate (Hz)
     
+    // === Corner Exit Smoothing Parameters ===
+    double corner_exit_wall_margin_ = 0.4;    ///< Minimum distance from wall on corner exit (m)
+    double corner_exit_lateral_soften_ = 0.7; ///< Factor to reduce lateral OUT on corner exit (0-1)
+    
+    // === Overtake Feasibility Parameters ===
+    double opponent_width_ = 0.35;            ///< Assumed opponent vehicle width (m)
+    double overtake_width_factor_ = 1.2;      ///< Factor multiplied by opponent width for clearance
+    double overtake_lateral_margin_ = 0.25;   ///< Additional safety margin for overtake (m)
+    double min_longitudinal_window_ = 5.0;    ///< Minimum distance to complete overtake (m)
+    
     // === Callbacks ===
     void raceline_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
@@ -287,6 +297,12 @@ private:
     bool should_start_following() const;
     bool can_consider_overtake() const;
     void update_environment_state();
+    
+    // === Overtake Feasibility Checks ===
+    bool check_lateral_clearance_for_overtake(bool is_left_side) const;
+    bool check_longitudinal_window_for_overtake() const;
+    bool is_overtake_feasible() const;
+    bool should_abort_overtake() const;
 };
 
 }  // namespace planning_pkg
