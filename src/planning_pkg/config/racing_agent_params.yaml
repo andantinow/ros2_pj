@@ -15,7 +15,7 @@ racing_agent:
     decision_rate: 20.0  # Hz - How often the agent makes decisions
 
     # === Speed Parameters ===
-    cruise_speed: 5.0  # m/s - Default cruise speed
+    cruise_speed: 6.0  # m/s - Default cruise speed (increased from 5.0 for faster racing)
     
     # === Following Parameters ===
     safe_follow_distance: 1.5  # m - Target following distance (ACC style)
@@ -28,15 +28,16 @@ racing_agent:
     # corner_exit_wall_margin: Used by NMPC node's applyCornerExitSmoothing function
     #   to limit steering toward wall when exiting corners. Also declared in racing_agent
     #   for consistency but primarily affects real-time control. Range: 0.3-0.5m typical.
-    corner_exit_wall_margin: 0.4     # m - Target minimum distance from wall on corner exit
+    corner_exit_wall_margin: 0.35    # m - Target minimum distance from wall on corner exit (reduced from 0.4 for more racing character)
     #
     # corner_exit_lateral_soften: Factor applied to lateral offset during exit phase
     #   in overtake trajectory generation (racing_agent).
     #   - 1.0 = no softening (original aggressive OUT behavior)
-    #   - 0.7 = moderate softening (recommended for safer exits)
+    #   - 0.85 = slight softening (balanced: visible OUT-IN-OUT with safety margin)
+    #   - 0.7 = moderate softening (too conservative - kills racing line)
     #   - 0.5 = conservative softening (very safe, less racing-optimal)
     #   Lower values result in more conservative corner exit behavior.
-    corner_exit_lateral_soften: 0.7  # Factor (0-1) - Reduces lateral offset on exit
+    corner_exit_lateral_soften: 0.85  # Factor (0-1) - Slight reduction on exit, keeps visible OUT-IN-OUT
     
     # === Overtake Feasibility Parameters (v5.0) ===
     # These ensure overtakes only start when clearly feasible given opponent geometry
@@ -45,9 +46,9 @@ racing_agent:
     # opponent_width: Assumed width of opponent vehicle. Could be made dynamic
     #   in future if perception provides opponent size estimation.
     opponent_width: 0.35             # m - Assumed opponent vehicle width
-    overtake_width_factor: 1.2       # Factor > 1.0 multiplied by opponent width for clearance
-    overtake_lateral_margin: 0.25    # m - Additional safety margin for overtake path
-    min_longitudinal_window: 5.0     # m - Minimum longitudinal distance to complete overtake
+    overtake_width_factor: 1.1       # Factor > 1.0 multiplied by opponent width (reduced from 1.2 for more overtake opportunities)
+    overtake_lateral_margin: 0.20    # m - Additional safety margin for overtake path (reduced from 0.25 for balanced behavior)
+    min_longitudinal_window: 4.0     # m - Minimum longitudinal distance to complete overtake (reduced from 5.0 for more opportunities)
     
     # === Overtake Zone Definitions ===
     # Each zone is defined by (s_start, s_end) on the raceline
@@ -89,8 +90,8 @@ racing_agent:
     # - right_lane_aggressive: Quick right overtake
     # - right_lane_soft: Gradual right overtake
     
-    overtake_lateral_offset: 0.8  # m - Maximum lateral offset during overtake
-    overtake_speed_boost: 1.2     # Factor - Speed boost during overtake (1.2 = 20% faster)
+    overtake_lateral_offset: 0.75  # m - Maximum lateral offset during overtake (slightly reduced for safety)
+    overtake_speed_boost: 1.3     # Factor - Speed boost during overtake (1.3 = 30% faster for decisive overtakes)
     
     # Trajectory generation parameters
     trajectory_s_curve_steepness: 0.5  # How sharp the S-curve is (0.0-1.0)
