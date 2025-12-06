@@ -35,6 +35,16 @@ static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.85;  // Factor to reduce 
 static constexpr double INSIDE_OVERTAKE_FACTOR = 0.7;   // Tighter offset for inside-line overtake (apex side)
 static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.1;  // Wider offset for outside-line overtake
 
+// === Following Control Constants ===
+static constexpr double FOLLOW_CONTROL_GAIN_STRAIGHT = 0.5;  // Control gain for following on straights
+static constexpr double FOLLOW_CONTROL_GAIN_CORNER = 0.8;    // Control gain for following in corners (more aggressive)
+static constexpr double FOLLOW_CLOSE_THRESHOLD = -0.5;       // Distance error threshold for "too close" (m)
+static constexpr double FOLLOW_CLOSE_SPEED_FACTOR = 0.8;     // Additional speed reduction when too close in corner
+
+// === Overtake Trajectory Shaping Constants ===
+static constexpr double OVERTAKE_ENTRY_PHASE_END = 0.3;      // Progress value where entry phase ends
+static constexpr double OVERTAKE_EXIT_PHASE_START = 0.7;     // Progress value where exit phase starts
+
 // === Overtake Feasibility Constants (defaults, overridden by parameters) ===
 // NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
 // are similar. The parameter "opponent_width" can be configured differently if needed.
@@ -444,10 +454,10 @@ void RacingAgent::execute_follow_mode()
     
     // In corners, be more aggressive about maintaining distance
     // If we're getting too close, reduce speed more strongly
-    double speed_control_gain = 0.5;
+    double speed_control_gain = FOLLOW_CONTROL_GAIN_STRAIGHT;
     if (is_in_corner()) {
         // In corners, increase control gain to maintain distance better
-        speed_control_gain = 0.8;  // More aggressive distance control in corners
+        speed_control_gain = FOLLOW_CONTROL_GAIN_CORNER;  // More aggressive distance control in corners
     }
     
     double target_speed = env_state_.preceding_speed + speed_control_gain * gap_error;
@@ -458,8 +468,8 @@ void RacingAgent::execute_follow_mode()
         
         // Additional distance-based speed reduction in corners
         // If too close in corner, reduce speed even more
-        if (gap_error < -0.5) {  // Getting 0.5m too close
-            target_speed *= 0.8;  // Further 20% reduction
+        if (gap_error < FOLLOW_CLOSE_THRESHOLD) {  // Getting too close
+            target_speed *= FOLLOW_CLOSE_SPEED_FACTOR;  // Additional reduction
         }
         
         RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
@@ -662,20 +672,21 @@ void RacingAgent::generate_default_overtake_trajectories()
                     static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
                 
                 // Enhanced S-curve for more pronounced OUT-IN-OUT
-                // Entry phase (0.0 - 0.3): Gradually move OUT
-                // Mid phase (0.3 - 0.7): IN (at apex)
-                // Exit phase (0.7 - 1.0): Return OUT but with smoothing
+                // Entry phase (0.0 - OVERTAKE_ENTRY_PHASE_END): Gradually move OUT
+                // Mid phase (OVERTAKE_ENTRY_PHASE_END - OVERTAKE_EXIT_PHASE_START): IN (at apex)
+                // Exit phase (OVERTAKE_EXIT_PHASE_START - 1.0): Return OUT but with smoothing
                 double lateral_scale;
-                if (progress < 0.3) {
+                if (progress < OVERTAKE_ENTRY_PHASE_END) {
                     // Entry: ramp up smoothly
-                    double entry_progress = progress / 0.3;
+                    double entry_progress = progress / OVERTAKE_ENTRY_PHASE_END;
                     lateral_scale = std::sin(entry_progress * M_PI / 2.0);  // Smooth entry
-                } else if (progress < 0.7) {
+                } else if (progress < OVERTAKE_EXIT_PHASE_START) {
                     // Mid: full offset (apex/IN phase)
                     lateral_scale = 1.0;
                 } else {
                     // Exit: apply corner exit smoothing
-                    double exit_progress = (progress - 0.7) / 0.3;
+                    double exit_progress = (progress - OVERTAKE_EXIT_PHASE_START) / 
+                                          (1.0 - OVERTAKE_EXIT_PHASE_START);
                     lateral_scale = 1.0 - exit_progress * (1.0 - corner_exit_lateral_soften_);
                 }
                 
