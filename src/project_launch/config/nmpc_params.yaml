@@ -209,3 +209,37 @@ nmpc_engine_node:
     v_max_straight: 3.0               # [m/s] Speed on straights
     v_min_corner: 1.2                 # [m/s] Speed in tight corners
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
+    
+    # =========================================================================
+    # CORNER EXIT SMOOTHING (V5.0)
+    # =========================================================================
+    # Reduces excessive lateral movement when exiting corners and rejoining straights.
+    # Problem being solved:
+    #   1. Car hugs outer wall too much on corner exit
+    #   2. Large steering corrections when rejoining the straight
+    #
+    # Solution:
+    #   1. Wall margin constraint: keep distance from outer wall on exit
+    #   2. Steering rate limiting: smoother transitions to straight
+    #   3. Lateral deviation limiting: prevent overshooting the raceline
+    
+    enable_corner_exit_smoothing: true
+    
+    # Wall margin constraint
+    # On corner exit, enforce minimum distance from wall to avoid hugging it
+    corner_exit_wall_margin: 0.4      # [m] Min distance from wall during exit
+    
+    # Lateral deviation limit
+    # Maximum allowed lateral deviation from reference during corner exit
+    # Prevents the car from pushing too far to one side
+    corner_exit_lateral_limit: 0.15   # [m] Max lateral deviation during transition
+    
+    # Steering rate limiting
+    # Reduces steering magnitude during corner exit to prevent jerky corrections
+    # 0.0 = no steering allowed, 1.0 = full steering allowed
+    corner_exit_steer_rate_limit: 0.8 # [ratio] Steering limit factor (0-1)
+    
+    # Transition time
+    # Duration of the smoothing period after exiting a corner
+    # Longer = more gradual transition, shorter = quicker return to normal
+    corner_exit_transition_time: 1.0  # [s] Duration of smoothing effect
