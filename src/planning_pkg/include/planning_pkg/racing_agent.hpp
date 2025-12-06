@@ -297,6 +297,8 @@ private:
     nav_msgs::msg::Path create_overtaking_lane(double lateral_offset, const std::string& lane_name);
     void publish_global_overtaking_lanes();
     visualization_msgs::msg::MarkerArray create_overtaking_lane_markers() const;
+    nav_msgs::msg::Path get_global_overtake_lane_segment(bool use_inside_lane) const;
+    bool should_use_global_overtake_lane() const;
     
     // === Reference Path Generation ===
     nav_msgs::msg::Path generate_cruise_reference_path() const;

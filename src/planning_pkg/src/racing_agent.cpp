@@ -504,7 +504,27 @@ void RacingAgent::execute_overtake_candidate_mode()
     current_command_.reference_path = generate_follow_reference_path();
     current_command_.speed_limit = std::min(cruise_speed_, env_state_.preceding_speed + 0.5);
     
-    // Evaluate available trajectories
+    // Check if global overtake lane should be used
+    if (should_use_global_overtake_lane()) {
+        // Determine which side to overtake (inside or outside)
+        OvertakeSide preferred_side = determine_best_overtake_side();
+        
+        if (preferred_side != OvertakeSide::NONE) {
+            // Use global overtake lane instead of pre-computed trajectories
+            bool use_inside = (preferred_side == OvertakeSide::INSIDE);
+            
+            RCLCPP_INFO(this->get_logger(), 
+                "Global overtake lane available: using %s lane",
+                use_inside ? "INSIDE" : "OUTSIDE");
+            
+            // Signal that we're ready to overtake using global lane
+            // We'll use active_trajectory_idx_ as a flag (set to 0 means "use global lane")
+            active_trajectory_idx_ = 0;
+            return;
+        }
+    }
+    
+    // Fallback to original trajectory-based overtaking
     auto valid_trajectories = get_valid_trajectories_for_current_zone();
     
     if (!valid_trajectories.empty()) {
@@ -525,6 +545,30 @@ void RacingAgent::execute_overtake_mode()
         return;
     }
     
+    // Check if we should use global overtake lane
+    if (should_use_global_overtake_lane()) {
+        // Determine which lane to use
+        OvertakeSide preferred_side = determine_best_overtake_side();
+        bool use_inside = (preferred_side == OvertakeSide::INSIDE);
+        
+        // Get segment from global overtake lane
+        current_command_.reference_path = get_global_overtake_lane_segment(use_inside);
+        current_command_.speed_limit = cruise_speed_ * 1.25;  // Speed boost during overtake
+        current_command_.should_stop = false;
+        
+        // Update progress based on distance to opponent
+        // If we've passed the opponent, overtake is complete
+        if (env_state_.preceding_distance > safe_follow_distance_ * 1.5) {
+            overtake_progress_ = 1.0;  // Mark as complete
+        } else {
+            // Continue overtaking
+            overtake_progress_ = 0.5;  // In progress
+        }
+        
+        return;
+    }
+    
+    // Fallback to trajectory-based overtaking
     current_command_.reference_path = get_current_overtake_path();
     current_command_.speed_limit = cruise_speed_ * 1.2;  // Slight speed boost during overtake
     current_command_.should_stop = false;
@@ -1627,6 +1671,79 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_overtaking_lane_markers
     }
     
     return markers;
+}
+
+nav_msgs::msg::Path RacingAgent::get_global_overtake_lane_segment(bool use_inside_lane) const
+{
+    nav_msgs::msg::Path segment;
+    segment.header.frame_id = "map";
+    segment.header.stamp = this->now();
+    
+    // Select which global lane to use
+    const nav_msgs::msg::Path& selected_lane = use_inside_lane ? 
+        global_inside_overtake_lane_ : global_outside_overtake_lane_;
+    
+    if (selected_lane.poses.empty() || !raceline_received_) {
+        return segment;
+    }
+    
+    // Find current position on the selected lane
+    size_t current_idx = 0;
+    double min_dist_sq = std::numeric_limits<double>::max();
+    
+    // Use ego position to find closest point on the overtake lane
+    for (size_t i = 0; i < selected_lane.poses.size(); ++i) {
+        double dx = selected_lane.poses[i].pose.position.x - env_state_.ego_s;  // Simplified
+        double dy = selected_lane.poses[i].pose.position.y - env_state_.ego_d;  // Simplified
+        double dist_sq = dx * dx + dy * dy;
+        
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq = dist_sq;
+            current_idx = i;
+        }
+    }
+    
+    // Extract lookahead segment from the lane
+    for (int i = 0; i < REFERENCE_PATH_POINTS && (current_idx + i) < selected_lane.poses.size(); ++i) {
+        segment.poses.push_back(selected_lane.poses[current_idx + i]);
+    }
+    
+    return segment;
+}
+
+bool RacingAgent::should_use_global_overtake_lane() const
+{
+    // Conditions for using global overtake lane:
+    // 1. Must be in overtake zone
+    if (get_current_zone_type() != ZoneType::OVERTAKE_ZONE) {
+        return false;
+    }
+    
+    // 2. Must have preceding vehicle to overtake
+    if (!env_state_.has_preceding_vehicle) {
+        return false;
+    }
+    
+    // 3. Must have sufficient lateral clearance
+    bool left_clear = check_lateral_clearance_for_overtake(true);
+    bool right_clear = check_lateral_clearance_for_overtake(false);
+    
+    if (!left_clear && !right_clear) {
+        return false;
+    }
+    
+    // 4. Must have sufficient longitudinal window
+    if (!check_longitudinal_window_for_overtake()) {
+        return false;
+    }
+    
+    // 5. Distance to opponent should be in reasonable range for overtaking
+    // Not too far (no need to overtake) and not too close (unsafe)
+    if (env_state_.preceding_distance > 6.0 || env_state_.preceding_distance < 1.0) {
+        return false;
+    }
+    
+    return true;
 }
 
 }  // namespace planning_pkg
