@@ -2054,10 +2054,11 @@ private:
       RCLCPP_WARN_ONCE(get_logger(), 
         "Overtake zone vectors have mismatched sizes: starts=%zu, ends=%zu",
         overtake_zone_starts_.size(), overtake_zone_ends_.size());
+      return false;  // Cannot safely check with mismatched vectors
     }
     
     // Find the current overtake zone
-    size_t num_zones = std::min(overtake_zone_starts_.size(), overtake_zone_ends_.size());
+    size_t num_zones = overtake_zone_starts_.size();
     for (size_t i = 0; i < num_zones; ++i) {
       if (ego_s_position_ >= overtake_zone_starts_[i] && 
           ego_s_position_ <= overtake_zone_ends_[i]) {

@@ -25,12 +25,13 @@ racing_agent:
     # These control how the car exits corners to prevent wall contact
     # The OUT-IN-OUT behavior is softened on exit to keep distance from outer wall
     #
-    # corner_exit_wall_margin: Influences trajectory generation to maintain this
-    #   distance from walls on corner exit. Not a hard constraint, but the trajectory
-    #   generator uses this to soften the "OUT" component. Range: 0.3-0.5m typical.
+    # corner_exit_wall_margin: Used by NMPC node's applyCornerExitSmoothing function
+    #   to limit steering toward wall when exiting corners. Also declared in racing_agent
+    #   for consistency but primarily affects real-time control. Range: 0.3-0.5m typical.
     corner_exit_wall_margin: 0.4     # m - Target minimum distance from wall on corner exit
     #
     # corner_exit_lateral_soften: Factor applied to lateral offset during exit phase
+    #   in overtake trajectory generation (racing_agent).
     #   - 1.0 = no softening (original aggressive OUT behavior)
     #   - 0.7 = moderate softening (recommended for safer exits)
     #   - 0.5 = conservative softening (very safe, less racing-optimal)

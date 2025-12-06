@@ -599,6 +599,7 @@ void RacingAgent::generate_default_overtake_trajectories()
             // === CORNER EXIT IMPROVEMENT ===
             // Apply asymmetric S-curve: full offset on entry/mid, reduced offset on exit
             // This prevents going too far "OUT" on corner exit and hitting the wall
+            // lateral_scale = 1.0 for entry phase (progress <= 0.5), computed for exit phase
             double lateral_scale = 1.0;
             if (progress > 0.5) {
                 // On exit phase (progress > 0.5), apply soften factor to reduce lateral offset
@@ -1075,13 +1076,15 @@ bool RacingAgent::can_consider_overtake() const
 bool RacingAgent::check_lateral_clearance_for_overtake(bool is_left_side) const
 {
     // Get clearance on the specified side
+    // Note: clearance is measured from the vehicle center to the wall/obstacle
     double clearance = is_left_side ? env_state_.left_clearance : env_state_.right_clearance;
     
     // Calculate minimum required clearance considering opponent width
-    // Required clearance = opponent_width * factor + safety_margin + vehicle_width
-    // This ensures there's enough space to pass with margin
+    // Required clearance = opponent_width * factor + safety_margin + lateral_offset
+    // The lateral_offset (OVERTAKE_LATERAL_OFFSET) represents how far the overtake
+    // path deviates from the raceline, which accounts for the space our vehicle needs
     double min_required = opponent_width_ * overtake_width_factor_ + 
-                          overtake_lateral_margin_ + VEHICLE_WIDTH;
+                          overtake_lateral_margin_ + OVERTAKE_LATERAL_OFFSET;
     
     return clearance > min_required;
 }
