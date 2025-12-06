@@ -1,0 +1,88 @@
+# Racing Agent Configuration
+# ===========================
+# Configuration for the Racing Agent upper-level strategy controller
+#
+# This file defines:
+# 1. OVERTAKE ZONEs - Pre-defined sections on the raceline where overtaking is allowed
+# 2. Overtake trajectory parameters
+# 3. Mode transition parameters
+
+racing_agent:
+  ros__parameters:
+    # === Decision Rate ===
+    decision_rate: 20.0  # Hz - How often the agent makes decisions
+
+    # === Speed Parameters ===
+    cruise_speed: 5.0  # m/s - Default cruise speed
+    
+    # === Following Parameters ===
+    safe_follow_distance: 1.5  # m - Target following distance (ACC style)
+    min_stop_distance: 0.3     # m - Emergency stop threshold
+    
+    # === Overtake Zone Definitions ===
+    # Each zone is defined by (s_start, s_end) on the raceline
+    # s is arc length in meters from the start of the track
+    # 
+    # IMPORTANT: Overtaking is ONLY allowed in these pre-defined zones.
+    # The agent will NOT attempt ad-hoc overtaking outside these zones.
+    #
+    # Zone types:
+    # - NORMAL: Normal driving zone, no overtaking allowed
+    # - OVERTAKE_ZONE: Overtaking is allowed with pre-computed trajectories
+    
+    n_overtake_zones: 2
+    
+    overtake_zone_0:
+      name: "straight_1"
+      s_start: 0.0     # meters (arc length)
+      s_end: 15.0      # meters
+      type: "OVERTAKE_ZONE"
+      
+    overtake_zone_1:
+      name: "straight_2"  
+      s_start: 50.0    # meters
+      s_end: 65.0      # meters
+      type: "OVERTAKE_ZONE"
+    
+    # === Pre-computed Overtake Trajectories ===
+    # Each OVERTAKE_ZONE has multiple trajectory candidates
+    # These are selected at runtime based on:
+    # - Clearance on left/right side
+    # - Relative speed to preceding vehicle
+    # - Obstacle proximity
+    #
+    # Trajectory types:
+    # - left_lane_aggressive: Quick left overtake
+    # - left_lane_soft: Gradual left overtake
+    # - right_lane_aggressive: Quick right overtake
+    # - right_lane_soft: Gradual right overtake
+    
+    overtake_lateral_offset: 0.8  # m - Maximum lateral offset during overtake
+    overtake_speed_boost: 1.2     # Factor - Speed boost during overtake (1.2 = 20% faster)
+    
+    # Trajectory generation parameters
+    trajectory_s_curve_steepness: 0.5  # How sharp the S-curve is (0.0-1.0)
+    trajectory_min_points: 20          # Minimum waypoints per trajectory
+    
+    # === Safety Parameters ===
+    vehicle_width: 0.35    # m - F1TENTH vehicle width
+    safety_margin: 0.15    # m - Additional safety margin
+    min_overtake_clearance: 0.85  # m - Minimum clearance for overtake (2*width + margin)
+    
+    # === Obstacle Stop Parameters ===
+    # IMPORTANT: When in OBSTACLE_STOP mode:
+    # - v_ref = 0 (target speed is zero)
+    # - Steering does NOT change abruptly
+    # - NO "repulsion" or "bouncing" logic is used
+    # - Vehicle stops safely and waits for upper-level re-planning
+    
+    obstacle_stop_decel_rate: 5.0  # m/s^2 - Deceleration rate when stopping
+    obstacle_stop_steering_hold: true  # Hold steering angle when stopping
+    
+    # === Visualization ===
+    enable_visualization: true
+    raceline_color: [0.3, 0.3, 1.0, 0.8]       # RGBA - Global raceline (blue)
+    overtake_zone_color: [0.0, 1.0, 0.0, 0.9]  # RGBA - Overtake zones (green)
+    overtake_traj_left_color: [0.0, 0.5, 1.0, 0.5]   # RGBA - Left trajectories (blue)
+    overtake_traj_right_color: [0.0, 1.0, 0.5, 0.5]  # RGBA - Right trajectories (cyan)
+    active_traj_color: [1.0, 1.0, 0.0, 1.0]    # RGBA - Active trajectory (yellow)

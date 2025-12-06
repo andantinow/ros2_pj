@@ -7,11 +7,12 @@
 ## 📋 목차
 
 1. [빌드 및 실행 기본 원칙](#빌드-및-실행-기본-원칙)
-2. [글로벌 레이스라인 튜닝](#글로벌-레이스라인-튜닝)
-3. [센서 설정 튜닝](#센서-설정-튜닝)
-4. [컨트롤러 파라미터 튜닝](#컨트롤러-파라미터-튜닝)
-5. [NMPC 아키텍처 (v2.0)](#nmpc-아키텍처-v20)
-6. [트러블슈팅](#트러블슈팅)
+2. [Racing Agent 아키텍처 (v3.0)](#racing-agent-아키텍처-v30)
+3. [글로벌 레이스라인 튜닝](#글로벌-레이스라인-튜닝)
+4. [센서 설정 튜닝](#센서-설정-튜닝)
+5. [컨트롤러 파라미터 튜닝](#컨트롤러-파라미터-튜닝)
+6. [NMPC 아키텍처 (v2.0)](#nmpc-아키텍처-v20)
+7. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -43,6 +44,89 @@ ros2 run planning_pkg <노드이름> ...
 colcon build --symlink-install      # 전체 빌드
 
 source install/setup.bash
+```
+
+---
+
+## Racing Agent 아키텍처 (v3.0)
+
+### 🏎️ 핵심 철학
+
+Racing Agent는 경로 계획 + 추월 의사결정 + 장애물 대응을 담당하는 상위 레벨 컨트롤러입니다.
+
+**핵심 원칙:**
+
+1. **추월은 임기응변이 아닙니다** - 글로벌 레이스 라인 상에 미리 정의된 OVERTAKE ZONE에서만, 사전에 준비된 추월 경로 후보들 중 하나를 선택하여 수행합니다.
+
+2. **앞차/장애물 대응은 안전 우선** - 무리하게 피하려 하지 않고, "안전 추종 + 필요시 정지"를 기본 전략으로 합니다.
+
+3. **로컬 컨트롤러는 추종에만 집중** - NMPC/로컬 컨트롤러는 상위 레벨이 준 모드/참조 경로/속도를 안정적으로 추종하며, 자기 멋대로 추월이나 급격한 회피를 시도하지 않습니다.
+
+### 모드(State/Mode) 구조
+
+| 모드 | 설명 |
+|------|------|
+| **CRUISE** | 글로벌 레이스 라인을 기준으로 목표 속도로 일반 주행 |
+| **FOLLOW** | 앞차를 안전거리 내에서 부드럽게 추종 (ACC 스타일) |
+| **OVERTAKE_CANDIDATE** | OVERTAKE ZONE에서 추월 경로 후보 평가 중 |
+| **OVERTAKE** | 사전 계산된 추월 궤적 실행 중 |
+| **OBSTACLE_STOP** | 장애물/충돌 위험 감지로 안전 정지 (v_ref=0) |
+
+### OVERTAKE ZONE 구조
+
+```yaml
+# racing_agent_params.yaml 예시
+n_overtake_zones: 2
+
+overtake_zone_0:
+  name: "straight_1"
+  s_start: 0.0     # 시작 위치 (arc length, m)
+  s_end: 15.0      # 종료 위치
+  type: "OVERTAKE_ZONE"
+  
+overtake_zone_1:
+  name: "straight_2"  
+  s_start: 50.0
+  s_end: 65.0
+  type: "OVERTAKE_ZONE"
+```
+
+### 추월 궤적 구조
+
+각 OVERTAKE_ZONE에 대해 여러 개의 추월 궤적 후보가 사전 계산됩니다:
+
+| 궤적 ID | 설명 |
+|---------|------|
+| `zone_name_left` | 왼쪽으로 추월하는 S자 곡선 |
+| `zone_name_right` | 오른쪽으로 추월하는 S자 곡선 |
+
+### OBSTACLE_STOP 동작
+
+⚠️ **중요**: 장애물/벽 충돌 시 **절대로** 다음을 하지 않습니다:
+- "반대 방향으로 강한 힘/토크를 줘서 튕겨나가는" 반발 로직
+- 급격한 조향 변경
+
+대신:
+- **v_ref = 0**: 속도 목표를 0으로 설정
+- **안정적 조향**: 조향은 급변하지 않고 천천히 중립으로 이동
+- **상위 레벨 대기**: 재경로 계획 또는 수동 개입을 기다림
+
+### 시각화 토픽
+
+| 토픽 | 설명 |
+|------|------|
+| `/racing_agent/visualization` | 레이스라인, OVERTAKE ZONE, 추월 궤적 마커 |
+| `/racing_agent/mode` | 현재 모드 (String) |
+| `/racing_agent/reference_path` | 로컬 컨트롤러에 전달되는 참조 경로 |
+
+### Racing Agent 실행
+
+```bash
+# Racing Agent 실행
+ros2 run planning_pkg racing_agent --ros-args \
+  -p decision_rate:=20.0 \
+  -p cruise_speed:=5.0 \
+  -p safe_follow_distance:=1.5
 ```
 
 ---

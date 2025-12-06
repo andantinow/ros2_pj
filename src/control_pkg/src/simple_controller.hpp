@@ -46,6 +46,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;  // IMU subscription for crash detection
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;  // Racing agent mode subscription
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;   // State visualization publisher
@@ -56,6 +57,7 @@ private:
   nav_msgs::msg::Path current_path_;
   sensor_msgs::msg::LaserScan current_scan_;
   sensor_msgs::msg::Imu current_imu_;           // Current IMU data
+  std::string current_racing_mode_ = "CRUISE";  // Current mode from racing agent
   bool odom_received_ = false;
   bool path_received_ = false;
   bool scan_received_ = false;
@@ -223,7 +225,15 @@ private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  void mode_callback(const std_msgs::msg::String::SharedPtr msg);  // Racing agent mode callback
   void control_loop();
+  
+  // === Racing Agent Mode Handling ===
+  // The controller respects the mode from upper-level racing agent.
+  // In OBSTACLE_STOP mode: v_ref = 0, stable steering (no repulsion/bouncing)
+  bool is_obstacle_stop_mode() const;  // Check if in OBSTACLE_STOP mode
+  void execute_obstacle_stop();        // Execute safe stop (no abrupt steering changes)
+  
   int find_target_point_index(const nav_msgs::msg::Odometry& odom, const nav_msgs::msg::Path& path, double adaptive_lookahead);
   double compute_adaptive_lookahead(double speed);
   double compute_lateral_error(double current_x, double current_y, double current_yaw, const nav_msgs::msg::Path& path, int closest_idx);

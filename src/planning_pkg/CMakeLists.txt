@@ -77,6 +77,33 @@ target_include_directories(frenet_overtake_planner PUBLIC
   $<INSTALL_INTERFACE:include>)
 install(TARGETS frenet_overtake_planner DESTINATION lib/${PROJECT_NAME})
 
+# ============================================================================
+# Racing Agent - Upper Level Strategy Controller
+# ============================================================================
+# Implements five-mode state machine (CRUISE, FOLLOW, OVERTAKE_CANDIDATE, 
+# OVERTAKE, OBSTACLE_STOP) with pre-defined OVERTAKE ZONEs and pre-computed
+# overtake trajectory selection.
+# ============================================================================
+
+find_package(sensor_msgs REQUIRED)
+
+add_executable(racing_agent src/racing_agent.cpp)
+ament_target_dependencies(racing_agent
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  std_msgs
+  visualization_msgs
+  sensor_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+)
+target_include_directories(racing_agent PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+install(TARGETS racing_agent DESTINATION lib/${PROJECT_NAME})
+
 # Install resources only if they exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
   install(DIRECTORY config
