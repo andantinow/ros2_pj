@@ -988,6 +988,14 @@ public:
     declare_parameter("v_min_corner", 1.2);                // [m/s] Speed in tight corners
     declare_parameter("curvature_lookahead", 5);           // [points] Lookahead for curvature calculation
     
+    // Corner exit smoothing parameters (v5.0)
+    // These control how the car behaves when exiting a corner and rejoining the straight
+    declare_parameter("corner_exit_wall_margin", 0.4);     // [m] Min distance from wall on corner exit
+    declare_parameter("corner_exit_lateral_limit", 0.15);  // [m] Max lateral deviation during exit transition
+    declare_parameter("corner_exit_steer_rate_limit", 0.8);// [ratio] Steering rate limit factor (0-1) on exit
+    declare_parameter("corner_exit_transition_time", 1.0); // [s] Time to transition from corner to straight
+    declare_parameter("enable_corner_exit_smoothing", true);// Enable/disable corner exit smoothing
+    
     // Overtake zones (s-intervals on raceline where overtaking is allowed)
     // Format: comma-separated pairs of start,end s-values
     declare_parameter<std::vector<double>>("overtake_zone_starts", std::vector<double>{0.0});
@@ -1042,6 +1050,13 @@ public:
     v_max_straight_ = get_parameter("v_max_straight").as_double();
     v_min_corner_ = get_parameter("v_min_corner").as_double();
     curvature_lookahead_ = get_parameter("curvature_lookahead").as_int();
+    
+    // Get v5.0 corner exit smoothing parameters
+    corner_exit_wall_margin_ = get_parameter("corner_exit_wall_margin").as_double();
+    corner_exit_lateral_limit_ = get_parameter("corner_exit_lateral_limit").as_double();
+    corner_exit_steer_rate_limit_ = get_parameter("corner_exit_steer_rate_limit").as_double();
+    corner_exit_transition_time_ = get_parameter("corner_exit_transition_time").as_double();
+    enable_corner_exit_smoothing_ = get_parameter("enable_corner_exit_smoothing").as_bool();
     
     // Get overtake zone definitions
     overtake_zone_starts_ = get_parameter("overtake_zone_starts").as_double_array();
@@ -1184,8 +1199,12 @@ public:
     // Initialize time stamps
     collision_state_start_time_ = now();
     overtake_start_time_ = now();
+    corner_exit_start_time_ = now();
     
     RCLCPP_INFO(get_logger(), "NMPC control loop running at %.1f Hz", control_rate_hz_);
+    RCLCPP_INFO(get_logger(), "Corner exit smoothing: %s (margin=%.2fm, lateral_limit=%.2fm, steer_limit=%.1f%%)",
+                enable_corner_exit_smoothing_ ? "ENABLED" : "DISABLED",
+                corner_exit_wall_margin_, corner_exit_lateral_limit_, corner_exit_steer_rate_limit_ * 100);
   }
 
 private:
@@ -1396,6 +1415,49 @@ private:
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
         "NMPC Solver: %s after %d iterations, slack_violation=%.4f",
         status_str, solution.iterations, solution.slack_violation);
+    }
+    
+    // ========================================
+    // v5.0 CORNER EXIT SMOOTHING
+    // ========================================
+    // Detects when exiting a corner and applies:
+    // 1. Wall margin constraint to avoid pushing to the outer wall
+    // 2. Steering rate limiting for smoother transition to straight
+    // 3. Lateral deviation limiting to prevent overshooting
+    
+    if (enable_corner_exit_smoothing_) {
+      // Calculate current curvature from reference trajectory
+      double current_curvature = calculateCurrentCurvature(reference);
+      
+      // Detect corner exit transition
+      bool is_corner_exit = detectCornerExit(current_curvature);
+      
+      if (is_corner_exit && !in_corner_exit_transition_) {
+        // Just started exiting a corner
+        in_corner_exit_transition_ = true;
+        corner_exit_start_time_ = current_time;
+        RCLCPP_INFO(get_logger(), 
+          "CORNER EXIT detected: curvature %.3f -> %.3f, applying smoothing for %.1fs",
+          last_curvature_, current_curvature, corner_exit_transition_time_);
+      }
+      
+      if (in_corner_exit_transition_) {
+        // Calculate transition progress
+        double elapsed = (current_time - corner_exit_start_time_).seconds();
+        double transition_factor = std::min(1.0, elapsed / corner_exit_transition_time_);
+        
+        // Apply corner exit smoothing to reduce lateral movement and steering corrections
+        applyCornerExitSmoothing(solution, reference, current_state, transition_factor);
+        
+        // Check if transition is complete
+        if (elapsed >= corner_exit_transition_time_) {
+          in_corner_exit_transition_ = false;
+          RCLCPP_INFO(get_logger(), "Corner exit transition complete");
+        }
+      }
+      
+      // Update curvature state for next cycle's exit detection
+      last_curvature_ = current_curvature;
     }
     
     // ========================================
@@ -2208,6 +2270,179 @@ private:
   }
   
   /**
+   * @brief Calculate current curvature from reference trajectory
+   * 
+   * Uses the first few reference points to estimate the local curvature.
+   * This helps detect when we're in a corner vs on a straight section.
+   * 
+   * @param reference The reference trajectory
+   * @return The estimated curvature at the current position [1/m]
+   */
+  double calculateCurrentCurvature(const std::vector<nmpc::ReferencePoint>& reference) const
+  {
+    if (reference.size() < 3) {
+      return 0.0;
+    }
+    
+    // Use the first few points to estimate curvature
+    double total_curvature = 0.0;
+    int count = 0;
+    int lookahead = std::min(static_cast<int>(reference.size()) - 1, curvature_lookahead_);
+    
+    // Minimum distance threshold for valid curvature calculation
+    // Points closer than this are considered coincident and skipped to avoid division by near-zero
+    constexpr double MIN_SEGMENT_DISTANCE = 0.01;  // [m]
+    
+    for (int i = 0; i < lookahead; ++i) {
+      double dx = reference[i + 1].x - reference[i].x;
+      double dy = reference[i + 1].y - reference[i].y;
+      double dist = std::sqrt(dx * dx + dy * dy);
+      
+      if (dist > MIN_SEGMENT_DISTANCE) {
+        double dyaw = reference[i + 1].yaw - reference[i].yaw;
+        // Normalize angle
+        while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
+        while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
+        
+        double curvature = std::abs(dyaw) / dist;
+        total_curvature += curvature;
+        count++;
+      }
+    }
+    
+    return (count > 0) ? total_curvature / count : 0.0;
+  }
+  
+  /**
+   * @brief Detect if currently exiting a corner
+   * 
+   * Corner exit is detected when:
+   * 1. We were recently in a corner (high curvature, > curvature_k1)
+   * 2. Current curvature is now low (straight section, < curvature_k1)
+   * 
+   * Uses last_curvature_ member variable to track previous cycle's curvature.
+   * 
+   * @param current_curvature Current path curvature [1/m]
+   * @return true if transitioning from corner to straight
+   */
+  bool detectCornerExit(double current_curvature) const
+  {
+    // Exiting corner = was in corner (high curvature) and now on straight (low curvature)
+    // Use curvature_k1_ as the threshold between corner and straight sections
+    bool was_in_corner = last_curvature_ > curvature_k1_;
+    bool now_on_straight = current_curvature < curvature_k1_;
+    
+    return was_in_corner && now_on_straight;
+  }
+  
+  /**
+   * @brief Apply corner exit smoothing to NMPC solution
+   * 
+   * When exiting a corner, this function:
+   * 1. Limits lateral deviation to stay away from the wall
+   * 2. Applies steering rate limiting for smoother transitions
+   * 
+   * @param solution The NMPC solution to modify
+   * @param reference The reference trajectory
+   * @param current_state The current vehicle state
+   * @param transition_factor How far along the transition we are (0=start, 1=end)
+   */
+  void applyCornerExitSmoothing(
+    nmpc::MPCSolution& solution,
+    const std::vector<nmpc::ReferencePoint>& reference,
+    const nmpc::VehicleState& current_state,
+    double transition_factor)
+  {
+    if (reference.empty() || !enable_corner_exit_smoothing_) {
+      return;
+    }
+    
+    // Design constants for corner exit smoothing behavior
+    // These are fixed values that define the smoothing algorithm characteristics
+    // Lateral limit scaling: starts at INITIAL_LIMIT_SCALE * config, decreases to 1.0 * config
+    constexpr double INITIAL_LIMIT_SCALE = 2.0;
+    // Maximum steering correction factor when overshooting (50% reduction at transition start)
+    constexpr double MAX_CORRECTION_FACTOR = 0.5;
+    // Maximum wall avoidance reduction factor (50% maximum reduction when very close to wall)
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.5;
+    
+    // 1. Apply steering rate limiting during corner exit transition
+    // This prevents sudden large steering corrections when rejoining the straight
+    // transition_factor: 0 at start (full limiting), 1 at end (no limiting)
+    double steer_rate_factor = corner_exit_steer_rate_limit_ + 
+                               (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
+    
+    // Apply the limit by blending toward center (reduce magnitude)
+    solution.steering *= steer_rate_factor;
+    
+    // 2. Limit lateral position to maintain wall margin
+    // Calculate current lateral error from reference
+    if (!reference.empty()) {
+      double dx = current_state.x - reference[0].x;
+      double dy = current_state.y - reference[0].y;
+      
+      // Project to lateral direction (perpendicular to reference heading)
+      double ref_cos = std::cos(reference[0].yaw);
+      double ref_sin = std::sin(reference[0].yaw);
+      double lateral_error = -dx * ref_sin + dy * ref_cos;
+      
+      // Check if we're pushing too far to one side (toward the wall)
+      // During corner exit, the car tends to push outward
+      // Lateral limit is more restrictive at the start of transition (INITIAL_LIMIT_SCALE)
+      // and relaxes to the configured value (1.0) as transition completes
+      double max_lateral = corner_exit_lateral_limit_ * (INITIAL_LIMIT_SCALE - transition_factor);
+      
+      if (std::abs(lateral_error) > max_lateral) {
+        // We're too far from the ideal line - apply correction
+        // This helps prevent the car from hugging the outer wall
+        // Correction is strongest at start (MAX_CORRECTION_FACTOR) and decreases over transition
+        double correction_factor = MAX_CORRECTION_FACTOR * (1.0 - transition_factor);
+        
+        // Steer back toward the reference (reduce magnitude if steering away from reference)
+        if ((lateral_error > 0 && solution.steering < 0) ||
+            (lateral_error < 0 && solution.steering > 0)) {
+          // Steering is already correcting - no change needed
+        } else {
+          // Steering is making it worse - reduce steering magnitude
+          solution.steering *= (1.0 - correction_factor);
+        }
+        
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
+          "Corner exit: lateral=%.2fm > limit=%.2fm, reducing steer by %.0f%%",
+          std::abs(lateral_error), max_lateral, correction_factor * 100);
+      }
+    }
+    
+    // 3. Check wall distance and apply margin constraint
+    // Use the side obstacle distances to enforce wall margin
+    double min_side_dist = std::min(last_obstacle_left_dist_, last_obstacle_right_dist_);
+    if (min_side_dist < corner_exit_wall_margin_) {
+      // Too close to wall during corner exit - reduce steering toward wall
+      // Urgency increases as we get closer to the wall (0 = at margin, 1 = touching wall)
+      double wall_urgency = 1.0 - (min_side_dist / corner_exit_wall_margin_);
+      
+      // Determine which side is closer
+      bool wall_on_left = (last_obstacle_left_dist_ < last_obstacle_right_dist_);
+      
+      // If steering toward the wall, reduce steering
+      // Reduction combines wall urgency with transition factor (stronger at start of transition)
+      if ((wall_on_left && solution.steering > 0) ||
+          (!wall_on_left && solution.steering < 0)) {
+        double reduction = wall_urgency * MAX_WALL_AVOIDANCE_FACTOR * (1.0 - transition_factor);
+        solution.steering *= (1.0 - reduction);
+        
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
+          "Corner exit: wall dist=%.2fm < margin=%.2fm, reducing steer toward wall by %.0f%%",
+          min_side_dist, corner_exit_wall_margin_, reduction * 100);
+      }
+    }
+    
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 300,
+      "Corner exit smoothing: transition=%.1f%%, steer_factor=%.2f, final_steer=%.3f",
+      transition_factor * 100, steer_rate_factor, solution.steering);
+  }
+  
+  /**
    * @brief Compute avoidance steering (A2 zone) - DISABLED
    * 
    * 2024-12: 사용자 요청에 따라 비활성화됨
@@ -2586,6 +2821,18 @@ private:
   double v_max_straight_{3.0};              // [m/s] Speed on straights
   double v_min_corner_{1.2};                // [m/s] Speed in tight corners
   int curvature_lookahead_{5};              // [points] Lookahead for curvature calc
+  
+  // v5.0 Corner exit smoothing parameters
+  double corner_exit_wall_margin_{0.4};     // [m] Min distance from wall on corner exit
+  double corner_exit_lateral_limit_{0.15};  // [m] Max lateral deviation during exit transition
+  double corner_exit_steer_rate_limit_{0.8};// [ratio] Steering rate limit factor (0-1) on exit
+  double corner_exit_transition_time_{1.0}; // [s] Time to transition from corner to straight
+  bool enable_corner_exit_smoothing_{true}; // Enable/disable corner exit smoothing
+  
+  // Corner exit detection state
+  rclcpp::Time corner_exit_start_time_;     // When corner exit started
+  bool in_corner_exit_transition_{false};   // Currently transitioning from corner to straight
+  double last_curvature_{0.0};              // Curvature from last cycle (for exit detection)
   
   // v4.0 Overtake zones
   std::vector<double> overtake_zone_starts_;

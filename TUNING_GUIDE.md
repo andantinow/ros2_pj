@@ -449,6 +449,39 @@ nmpc_engine_node:
 | Status 3 오류 (NaN) | 헤시안 특이점 | `levenberg_marquardt` 0.01~0.1 |
 | Status 4 오류 (Infeasible) | 제약 조건 불만족 | Soft constraint가 자동 처리됨 |
 | 고속 코너링 언더스티어 | 기구학 모델 한계 | `dynamic_model_threshold` 낮추기 |
+| 코너 출구에서 벽에 너무 가까움 | 코너 출구 스무딩 비활성화 또는 마진 부족 | `corner_exit_wall_margin` 0.4~0.6으로 설정 |
+| 직선 복귀 시 급격한 조향 보정 | 스무딩 설정 부족 | `corner_exit_steer_rate_limit` 0.6~0.8로 낮춤 |
+| 코너 출구에서 S자 보정 | 측면 편차 한계 초과 | `corner_exit_lateral_limit` 0.1~0.15로 설정 |
+
+### 코너 출구 스무딩 (v5.0)
+
+코너를 빠져나와 직선 구간에 진입할 때 과도한 횡방향 움직임을 줄여줍니다.
+
+**주요 파라미터:**
+
+```yaml
+# 코너 출구 스무딩 활성화/비활성화
+enable_corner_exit_smoothing: true
+
+# 벽과의 최소 거리 (m) - 코너 출구에서 벽에 너무 가까이 가지 않도록
+corner_exit_wall_margin: 0.4
+
+# 최대 횡방향 편차 (m) - 레퍼런스 경로에서 얼마나 벗어날 수 있는지
+corner_exit_lateral_limit: 0.15
+
+# 조향 제한 비율 (0-1) - 코너 출구에서 조향 크기 제한
+corner_exit_steer_rate_limit: 0.8
+
+# 전환 시간 (s) - 스무딩 효과 지속 시간
+corner_exit_transition_time: 1.0
+```
+
+**작동 원리:**
+1. 곡률 변화를 감지하여 코너 출구를 인식 (높은 곡률 → 낮은 곡률)
+2. 전환 구간 동안:
+   - 조향 크기를 제한하여 급격한 보정 방지
+   - 횡방향 편차를 모니터링하여 벽에 너무 가까이 가지 않도록
+   - 점진적으로 정상 제어로 복귀
 
 ### Pure Pursuit 파라미터 (백업 제어기)
 
