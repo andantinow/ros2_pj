@@ -231,6 +231,10 @@ def _should_stop_for_obstacle(state_machine: StateMachine) -> bool:
     # This is the emergency stop threshold
     MIN_STOP_DISTANCE = 0.3  # meters
     
+    # Guard against division by zero when track_length is not set
+    if state_machine.track_length <= 0.0:
+        return False
+    
     # Check if obstacles exist and are within emergency stop distance
     for obs in state_machine.obstacles:
         gap = (obs.s_center - state_machine.cur_s) % state_machine.track_length

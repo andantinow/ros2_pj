@@ -422,11 +422,14 @@ void RacingAgent::execute_overtake_mode()
     // Update progress (simplified - based on arc length)
     const auto& traj = overtake_trajectories_[*active_trajectory_idx_];
     double traj_length = traj.s_end - traj.s_start;
-    if (traj_length > 0) {
+    if (traj_length > 0 && track_length_ > 0) {
         double progress_s = env_state_.ego_s - traj.s_start;
-        // Handle track wrap-around
+        // Handle track wrap-around only if track_length is valid
         if (progress_s < 0) progress_s += track_length_;
         overtake_progress_ = std::clamp(progress_s / traj_length, 0.0, 1.0);
+    } else {
+        // Invalid trajectory or track length - mark as complete
+        overtake_progress_ = 1.0;
     }
 }
 
@@ -456,8 +459,14 @@ void RacingAgent::load_zones_from_config(const std::string& config_path)
         return;
     }
     
-    // TODO: Parse YAML/JSON config
-    // For now, zones will be generated after raceline is received
+    // NOTE: YAML/JSON config parsing is not yet implemented.
+    // Currently, the system relies on default zone generation after raceline is received.
+    // For production use, implement parsing here or use the racing_agent_params.yaml
+    // via ROS2 parameters instead of file-based configuration.
+    // TODO: Implement YAML parsing using yaml-cpp or similar library
+    RCLCPP_WARN(this->get_logger(), 
+        "Zone config file parsing not implemented. Using default zone generation.");
+    file.close();
 }
 
 ZoneType RacingAgent::get_current_zone_type() const
@@ -537,8 +546,14 @@ void RacingAgent::generate_default_overtake_trajectories()
             continue;
         }
         
+        // Handle single waypoint case explicitly
+        size_t waypoint_count = (end_idx >= start_idx) ? (end_idx - start_idx + 1) : 1;
+        
         for (size_t i = start_idx; i <= end_idx && i < global_raceline_.poses.size(); ++i) {
-            double progress = static_cast<double>(i - start_idx) / std::max(1.0, static_cast<double>(end_idx - start_idx));
+            // Progress 0.0 to 1.0 over the trajectory
+            // For single waypoint, progress = 0.0 (no lateral offset)
+            double progress = (waypoint_count > 1) ? 
+                static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
             double lateral_offset = OVERTAKE_LATERAL_OFFSET * std::sin(progress * M_PI);
             
             geometry_msgs::msg::PoseStamped pose = global_raceline_.poses[i];
