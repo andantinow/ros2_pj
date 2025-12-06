@@ -29,7 +29,7 @@ static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in refer
 
 // === Corner Exit Safety ===
 static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
-static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.95;  // Factor to reduce lateral OUT on corner exit (0-1), minimal reduction for clear OUT-IN-OUT
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.95;  // Factor to reduce lateral OUT on corner exit (0-1). Higher = less softening, more pronounced OUT-IN-OUT
 
 // === Inside/Outside Overtake Factors ===
 static constexpr double INSIDE_OVERTAKE_FACTOR = 0.7;   // Tighter offset for inside-line overtake (apex side)
