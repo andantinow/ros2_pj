@@ -178,9 +178,10 @@ private:
   double wall_repulsion_max_steer_ = 0.3;  // 최대 반발 조향각 (rad, ~17도)
   
   // === 상대 차량 Following 시스템 (ACC 스타일 PD 제어) ===
-  // 보고서 기반: v_cmd = v_opp + Kp*(gap - 1.5) + Kd*(v_opp - v_ego)
+  // 보고서 기반: v_cmd = v_opp + Kp*(gap - target_gap) + Kd*(v_opp - v_ego)
+  // Following distance increased for more relaxed, less nervous behavior
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
-  double follow_distance_threshold_ = 2.5; // following 시작 거리 (m) - 더 편안한 거리에서 시작
+  double follow_distance_threshold_ = 4.0; // following 시작 거리 (m) - increased for farther following
   double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
   double follow_speed_factor_ = 0.4;       // following 시 속도 비율 (덜 보수적)
   double follow_min_speed_ratio_ = 0.15;   // 최소 속도 비율 (15%) - 완전 정지 방지
@@ -190,7 +191,7 @@ private:
   // === ACC PD Control Parameters (보고서 기반) ===
   double acc_kp_ = 0.5;                    // ACC 비례 게인 (gap error)
   double acc_kd_ = 0.2;                    // ACC 미분 게인 (relative velocity)
-  double target_follow_gap_ = 2.0;         // 목표 차간 거리 (m) - 조금 더 여유있게
+  double target_follow_gap_ = 3.0;         // 목표 차간 거리 (m) - increased for larger following gap
   double estimated_opponent_velocity_ = 0.0;  // 추정된 상대 차량 속도
   double prev_opponent_distance_ = 10.0;   // 이전 상대 차량 거리 (속도 추정용)
   rclcpp::Time prev_opponent_time_;        // 이전 상대 차량 거리 측정 시간

@@ -18,7 +18,9 @@ racing_agent:
     cruise_speed: 6.0  # m/s - Default cruise speed (increased from 5.0 for faster racing)
     
     # === Following Parameters ===
-    safe_follow_distance: 1.5  # m - Target following distance (ACC style)
+    # Following distance increased for more relaxed, less nervous following behavior
+    # This gives more room to react and creates a clearer gap before overtaking
+    safe_follow_distance: 3.0  # m - Target following distance (ACC style) - increased from 1.5m
     min_stop_distance: 0.3     # m - Emergency stop threshold
     
     # === Corner Exit Smoothing Parameters (v5.0) ===
@@ -38,6 +40,13 @@ racing_agent:
     #   - 0.5 = conservative softening (very safe, less racing-optimal)
     #   Lower values result in more conservative corner exit behavior.
     corner_exit_lateral_soften: 0.85  # Factor (0-1) - Slight reduction on exit, keeps visible OUT-IN-OUT
+    
+    # === Corner Handling Parameters ===
+    # These ensure the car handles corners well while following an opponent
+    # The car maintains awareness of the opponent even in high-curvature sections
+    corner_curvature_threshold: 0.15  # 1/m - Curvature threshold for corner detection
+    corner_follow_distance_factor: 1.3  # Factor to increase follow distance in corners (30% increase)
+    corner_speed_reduction: 0.8       # Speed reduction factor in corners (0-1)
     
     # === Overtake Feasibility Parameters (v5.0) ===
     # These ensure overtakes only start when clearly feasible given opponent geometry
