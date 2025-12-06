@@ -991,7 +991,7 @@ public:
     // Curvature-based speed control (v4.0 - Corner behavior)
     declare_parameter("curvature_k1", 0.2);                // [1/m] Curvature threshold: below = straight
     declare_parameter("curvature_k2", 0.8);                // [1/m] Curvature threshold: above = tight corner
-    declare_parameter("v_max_straight", 3.0);              // [m/s] Speed on straights
+    declare_parameter("v_max_straight", 4.5);              // [m/s] Speed on straights (increased for higher straight speed)
     declare_parameter("v_min_corner", 1.2);                // [m/s] Speed in tight corners
     declare_parameter("curvature_lookahead", 5);           // [points] Lookahead for curvature calculation
     
@@ -2953,7 +2953,7 @@ private:
   // v4.0 Curvature-based speed control
   double curvature_k1_{0.2};                // [1/m] Threshold for straight
   double curvature_k2_{0.8};                // [1/m] Threshold for tight corner
-  double v_max_straight_{3.0};              // [m/s] Speed on straights
+  double v_max_straight_{4.5};              // [m/s] Speed on straights (increased for higher straight speed)
   double v_min_corner_{1.2};                // [m/s] Speed in tight corners
   int curvature_lookahead_{5};              // [points] Lookahead for curvature calc
   

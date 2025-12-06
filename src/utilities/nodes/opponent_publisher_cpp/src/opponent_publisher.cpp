@@ -18,7 +18,7 @@ public:
   {
     // Parameters
     lookahead_s_ = declare_parameter<double>("lookahead_s", 0.75);
-    speed_       = declare_parameter<double>("speed",       3.5);  // Increased from 1.0 for faster opponent
+    speed_       = declare_parameter<double>("speed",       3.0);  // Slightly reduced for easier overtaking
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
