@@ -903,19 +903,34 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_mode_marker() const
     // Color based on mode
     switch (current_mode_) {
         case RacingMode::CRUISE:
-            text_marker.color = {0.0f, 1.0f, 0.0f, 1.0f};  // Green
+            text_marker.color.r = 0.0f;
+            text_marker.color.g = 1.0f;
+            text_marker.color.b = 0.0f;
+            text_marker.color.a = 1.0f;  // Green
             break;
         case RacingMode::FOLLOW:
-            text_marker.color = {0.0f, 0.0f, 1.0f, 1.0f};  // Blue
+            text_marker.color.r = 0.0f;
+            text_marker.color.g = 0.0f;
+            text_marker.color.b = 1.0f;
+            text_marker.color.a = 1.0f;  // Blue
             break;
         case RacingMode::OVERTAKE_CANDIDATE:
-            text_marker.color = {1.0f, 1.0f, 0.0f, 1.0f};  // Yellow
+            text_marker.color.r = 1.0f;
+            text_marker.color.g = 1.0f;
+            text_marker.color.b = 0.0f;
+            text_marker.color.a = 1.0f;  // Yellow
             break;
         case RacingMode::OVERTAKE:
-            text_marker.color = {1.0f, 0.5f, 0.0f, 1.0f};  // Orange
+            text_marker.color.r = 1.0f;
+            text_marker.color.g = 0.5f;
+            text_marker.color.b = 0.0f;
+            text_marker.color.a = 1.0f;  // Orange
             break;
         case RacingMode::OBSTACLE_STOP:
-            text_marker.color = {1.0f, 0.0f, 0.0f, 1.0f};  // Red
+            text_marker.color.r = 1.0f;
+            text_marker.color.g = 0.0f;
+            text_marker.color.b = 0.0f;
+            text_marker.color.a = 1.0f;  // Red
             break;
     }
     
