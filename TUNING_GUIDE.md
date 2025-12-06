@@ -97,8 +97,35 @@ overtake_zone_1:
 
 | 궤적 ID | 설명 |
 |---------|------|
-| `zone_name_left` | 왼쪽으로 추월하는 S자 곡선 |
-| `zone_name_right` | 오른쪽으로 추월하는 S자 곡선 |
+| `zone_name_left_outside` | 왼쪽 외곽 라인으로 추월 (110% 오프셋) |
+| `zone_name_left_inside` | 왼쪽 내곽 라인으로 추월 (70% 오프셋, apex 근처) |
+| `zone_name_right_outside` | 오른쪽 외곽 라인으로 추월 (110% 오프셋) |
+| `zone_name_right_inside` | 오른쪽 내곽 라인으로 추월 (70% 오프셋, apex 근처) |
+
+### 인-코스(Inside) vs 아웃-코스(Outside) 추월
+
+추월 시 내곽(inside)과 외곽(outside) 중 어디로 추월할지는 다음 요소를 기반으로 결정됩니다:
+
+1. **트랙 지오메트리**: 코너 방향 (좌회전/우회전)
+2. **상대 차량 위치**: 상대방의 횡방향 위치
+3. **벽 거리**: 각 방향의 여유 공간
+
+| 코너 방향 | 인사이드 추월 | 아웃사이드 추월 |
+|-----------|---------------|-----------------|
+| 좌회전 | 오른쪽으로 | 왼쪽으로 |
+| 우회전 | 왼쪽으로 | 오른쪽으로 |
+| 직선 | 공간이 더 넓은 쪽 | 반대쪽 |
+
+### 거리 기반 추월 준비
+
+앞차와의 거리에 따라 추월 경로가 사전 준비됩니다:
+
+| 거리 구간 | 동작 |
+|-----------|------|
+| > 4.0m | 준비 없음, 단순 FOLLOW |
+| 2.5m ~ 4.0m | 추월 경로 후보 평가 시작 |
+| 1.5m ~ 2.5m | 추월 경로 준비 완료, 조건 대기 |
+| < 1.5m | OVERTAKE ZONE 진입 시 즉시 실행 |
 
 ### OBSTACLE_STOP 동작
 
@@ -111,6 +138,16 @@ overtake_zone_1:
 - **안정적 조향**: 조향은 급변하지 않고 천천히 중립으로 이동
 - **상위 레벨 대기**: 재경로 계획 또는 수동 개입을 기다림
 
+### 코너 핸들링 (Corner Handling)
+
+코너에서 앞차를 추종할 때 더 안전하게 동작합니다:
+
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `corner_curvature_threshold` | 0.15 1/m | 코너 감지 곡률 임계값 |
+| `corner_follow_distance_factor` | 1.3 | 코너에서 추종 거리 증가율 (30% 증가) |
+| `corner_speed_reduction` | 0.8 | 코너에서 속도 감소율 (80%) |
+
 ### 시각화 토픽
 
 | 토픽 | 설명 |
@@ -122,11 +159,11 @@ overtake_zone_1:
 ### Racing Agent 실행
 
 ```bash
-# Racing Agent 실행
+# Racing Agent 실행 (증가된 추종 거리 사용)
 ros2 run planning_pkg racing_agent --ros-args \
   -p decision_rate:=20.0 \
   -p cruise_speed:=5.0 \
-  -p safe_follow_distance:=1.5
+  -p safe_follow_distance:=3.0
 ```
 
 ---
