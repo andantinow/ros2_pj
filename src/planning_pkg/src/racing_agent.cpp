@@ -1238,7 +1238,9 @@ double RacingAgent::compute_local_curvature(size_t raceline_idx) const
     const auto& p1 = global_raceline_.poses[raceline_idx].pose.position;
     const auto& p2 = global_raceline_.poses[raceline_idx + 1].pose.position;
     
-    // Compute curvature using three points: kappa = 2 * |cross| / (|a||b||c|)
+    // Compute curvature using three-point approximation
+    // kappa ≈ |cross(v1, v2)| / (|v1| * |v2| * avg_ds)
+    // where v1 = (p1-p0), v2 = (p2-p1), and cross is the 2D cross product
     double dx1 = p1.x - p0.x;
     double dy1 = p1.y - p0.y;
     double dx2 = p2.x - p1.x;
@@ -1313,7 +1315,8 @@ RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
         double curv = compute_local_curvature(i);
         if (curv > corner_curvature_threshold_) {
             // Get sign of curvature to determine corner direction
-            // Bounds checking: compute_local_curvature already checks i > 0 and i < size - 1
+            // Note: We need to access poses[i-1] and poses[i+1], so check bounds here
+            // even though compute_local_curvature returns 0 for boundary indices
             if (i > 0 && i < global_raceline_.poses.size() - 1) {
                 const auto& p0 = global_raceline_.poses[i - 1].pose.position;
                 const auto& p1 = global_raceline_.poses[i].pose.position;
@@ -1357,13 +1360,15 @@ RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
             return OvertakeSide::OUTSIDE;
         }
     } else {
-        // Straight: prefer side with more clearance
+        // Straight: prefer side with more clearance for inside overtake
+        // On straights, inside/outside distinction is less meaningful,
+        // so we use the side with more clearance and label it INSIDE (tighter offset)
         if (env_state_.left_clearance > env_state_.right_clearance && left_clear) {
-            return OvertakeSide::OUTSIDE;  // Arbitrary - could also be INSIDE
+            return OvertakeSide::INSIDE;  // More clearance on left, use tighter offset
         } else if (right_clear) {
-            return OvertakeSide::INSIDE;
+            return OvertakeSide::INSIDE;  // More clearance on right, use tighter offset
         } else if (left_clear) {
-            return OvertakeSide::OUTSIDE;
+            return OvertakeSide::OUTSIDE; // Fallback to left with wider offset
         }
     }
     
