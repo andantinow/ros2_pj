@@ -1550,8 +1550,18 @@ void RacingAgent::generate_global_overtaking_lanes()
     }
     
     // Generate inside and outside overtaking lanes
-    // Inside lane: tighter offset for apex-side overtaking
-    // Outside lane: wider offset for outside overtaking
+    // Both lanes are offset to the left of the raceline, with different magnitudes:
+    // - Inside lane: tighter offset for apex-side overtaking (~0.56m)
+    // - Outside lane: wider offset for outside overtaking (~0.88m)
+    // 
+    // Note: While both lanes are on the left in this implementation, the selection
+    // logic in determine_best_overtake_side() considers track curvature and clearance
+    // on both sides to choose the appropriate lane. The "inside" vs "outside" naming
+    // refers to the offset magnitude (tight vs wide), not the absolute side.
+    // 
+    // For a track-specific implementation, you could create separate left/right lanes
+    // or use curvature to determine which side is actually inside/outside at each point.
+    
     double inside_offset = OVERTAKE_LATERAL_OFFSET * INSIDE_OVERTAKE_FACTOR;   // ~0.56m
     double outside_offset = OVERTAKE_LATERAL_OFFSET * OUTSIDE_OVERTAKE_FACTOR; // ~0.88m
     
@@ -1576,28 +1586,20 @@ nav_msgs::msg::Path RacingAgent::create_overtaking_lane(double lateral_offset, c
         return lane;
     }
     
-    // Create both left and right overtaking lanes by offsetting the raceline
-    // We'll create both sides and use them based on track conditions
+    // Create overtaking lane by offsetting the raceline laterally
+    // The lateral_offset is applied to the left side of the raceline
+    // (perpendicular to the heading, positive = left)
     
     for (size_t i = 0; i < global_raceline_.poses.size(); ++i) {
         const auto& raceline_pose = global_raceline_.poses[i];
         double yaw = tf2::getYaw(raceline_pose.pose.orientation);
         
-        // Compute local curvature to determine inside/outside
-        double curvature = compute_local_curvature(i);
-        
-        // For each point, create left offset (positive) and right offset (negative)
-        // The actual selection will depend on track geometry
-        
-        // Left offset version
-        geometry_msgs::msg::PoseStamped left_pose = raceline_pose;
-        left_pose.pose.position.x -= lateral_offset * std::sin(yaw);
-        left_pose.pose.position.y += lateral_offset * std::cos(yaw);
-        lane.poses.push_back(left_pose);
-        
-        // Note: In a more sophisticated implementation, we would also create
-        // right offset lanes and select based on curvature direction
-        // For now, we create symmetric lanes on both sides
+        // Create offset pose
+        // Offset perpendicular to heading: left is positive
+        geometry_msgs::msg::PoseStamped offset_pose = raceline_pose;
+        offset_pose.pose.position.x -= lateral_offset * std::sin(yaw);
+        offset_pose.pose.position.y += lateral_offset * std::cos(yaw);
+        lane.poses.push_back(offset_pose);
     }
     
     return lane;
