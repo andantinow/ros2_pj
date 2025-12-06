@@ -37,7 +37,7 @@ nmpc_engine_node:
     # nominal_speed: Target racing speed - can be increased for faster racing
     # Default: 2.5 m/s (matched to nmpc_engine_node.cpp)
     # For competitive racing, consider increasing to 3.0-4.0 m/s
-    nominal_speed: 3.5           # [m/s] Target racing speed (increased from 2.5 for faster racing)
+    nominal_speed: 4.5           # [m/s] Target racing speed (increased for faster racing)
     solver_wheelbase: 0.33       # [m] F1TENTH wheelbase
     
     # =========================================================================
@@ -206,8 +206,8 @@ nmpc_engine_node:
     
     curvature_k1: 0.2                 # [1/m] Curvature threshold: below = straight
     curvature_k2: 0.8                 # [1/m] Curvature threshold: above = tight corner
-    v_max_straight: 4.0               # [m/s] Speed on straights (increased from 3.0 for faster racing)
-    v_min_corner: 1.8                 # [m/s] Speed in tight corners (increased from 1.2 for faster corners)
+    v_max_straight: 6.5               # [m/s] Speed on straights (increased for much faster racing)
+    v_min_corner: 2.5                 # [m/s] Speed in tight corners (increased for faster corners)
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
     
     # =========================================================================

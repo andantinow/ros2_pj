@@ -426,7 +426,9 @@ void RacingAgent::transition_to_mode(RacingMode new_mode)
 void RacingAgent::execute_cruise_mode()
 {
     current_command_.reference_path = generate_cruise_reference_path();
-    current_command_.speed_limit = cruise_speed_;
+    // In cruise mode without opponents, use higher speed
+    // This allows the car to race at full potential on clear track
+    current_command_.speed_limit = cruise_speed_ * 1.1;  // 10% boost when cruising freely
     current_command_.should_stop = false;
 }
 
@@ -439,14 +441,30 @@ void RacingAgent::execute_follow_mode()
     
     // Speed control: follow at safe distance using simple PD control
     double gap_error = env_state_.preceding_distance - effective_follow_distance;
-    double target_speed = env_state_.preceding_speed + 0.5 * gap_error;
+    
+    // In corners, be more aggressive about maintaining distance
+    // If we're getting too close, reduce speed more strongly
+    double speed_control_gain = 0.5;
+    if (is_in_corner()) {
+        // In corners, increase control gain to maintain distance better
+        speed_control_gain = 0.8;  // More aggressive distance control in corners
+    }
+    
+    double target_speed = env_state_.preceding_speed + speed_control_gain * gap_error;
     
     // In corners, reduce speed further for safety
     if (is_in_corner()) {
         target_speed *= corner_speed_reduction_;
+        
+        // Additional distance-based speed reduction in corners
+        // If too close in corner, reduce speed even more
+        if (gap_error < -0.5) {  // Getting 0.5m too close
+            target_speed *= 0.8;  // Further 20% reduction
+        }
+        
         RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-            "FOLLOW in corner: reduced speed to %.2f, follow_dist=%.2fm",
-            target_speed, effective_follow_distance);
+            "FOLLOW in corner: gap_error=%.2fm, target_speed=%.2f, follow_dist=%.2fm",
+            gap_error, target_speed, effective_follow_distance);
     }
     
     target_speed = std::clamp(target_speed, 0.0, cruise_speed_);
@@ -643,10 +661,21 @@ void RacingAgent::generate_default_overtake_trajectories()
                 double progress = (waypoint_count > 1) ? 
                     static_cast<double>(i - start_idx) / static_cast<double>(waypoint_count - 1) : 0.0;
                 
-                // Apply asymmetric S-curve for corner exit safety
-                double lateral_scale = 1.0;
-                if (progress > 0.5) {
-                    double exit_progress = (progress - 0.5) * 2.0;
+                // Enhanced S-curve for more pronounced OUT-IN-OUT
+                // Entry phase (0.0 - 0.3): Gradually move OUT
+                // Mid phase (0.3 - 0.7): IN (at apex)
+                // Exit phase (0.7 - 1.0): Return OUT but with smoothing
+                double lateral_scale;
+                if (progress < 0.3) {
+                    // Entry: ramp up smoothly
+                    double entry_progress = progress / 0.3;
+                    lateral_scale = std::sin(entry_progress * M_PI / 2.0);  // Smooth entry
+                } else if (progress < 0.7) {
+                    // Mid: full offset (apex/IN phase)
+                    lateral_scale = 1.0;
+                } else {
+                    // Exit: apply corner exit smoothing
+                    double exit_progress = (progress - 0.7) / 0.3;
                     lateral_scale = 1.0 - exit_progress * (1.0 - corner_exit_lateral_soften_);
                 }
                 
@@ -950,28 +979,31 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_overtake_trajectory_mar
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
         
-        // Color based on side and whether active
+        // Color based on inside/outside, side, and whether active
         bool is_active = active_trajectory_idx_.has_value() && 
                         *active_trajectory_idx_ == traj_idx;
+        bool is_inside = (traj.id.find("inside") != std::string::npos);
         
         if (is_active) {
-            marker.scale.x = 0.12;  // Thick for active
+            marker.scale.x = 0.15;  // Thick for active
             marker.color.r = 1.0f;
             marker.color.g = 1.0f;
             marker.color.b = 0.0f;  // Yellow for active
             marker.color.a = 1.0f;
-        } else if (traj.is_left_side) {
-            marker.scale.x = 0.05;
-            marker.color.r = 0.0f;
-            marker.color.g = 0.5f;
-            marker.color.b = 1.0f;  // Blue for left
-            marker.color.a = 0.5f;
+        } else if (is_inside) {
+            // Inside trajectories: MAGENTA (tighter racing line)
+            marker.scale.x = 0.06;
+            marker.color.r = 1.0f;
+            marker.color.g = 0.0f;
+            marker.color.b = 1.0f;  // Magenta for inside
+            marker.color.a = 0.7f;
         } else {
-            marker.scale.x = 0.05;
+            // Outside trajectories: CYAN (wider arc)
+            marker.scale.x = 0.06;
             marker.color.r = 0.0f;
             marker.color.g = 1.0f;
-            marker.color.b = 0.5f;  // Cyan for right
-            marker.color.a = 0.5f;
+            marker.color.b = 1.0f;  // Cyan for outside
+            marker.color.a = 0.6f;
         }
         
         for (const auto& pose : traj.waypoints) {
