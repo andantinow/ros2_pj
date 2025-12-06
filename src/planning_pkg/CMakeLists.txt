@@ -99,6 +99,7 @@ ament_target_dependencies(racing_agent
   tf2_ros
   tf2_geometry_msgs
 )
+target_link_libraries(racing_agent tf2_geometry_msgs::tf2_geometry_msgs)
 target_include_directories(racing_agent PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
