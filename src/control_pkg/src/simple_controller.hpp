@@ -101,14 +101,14 @@ private:
   
   // === Out-In-Out 코너링 (레이싱 라인) ===
   double corner_approach_distance_ = 1.5;    // 코너 접근 감지 거리 (m)
-  double out_in_out_offset_ = 0.35;          // 아웃-인-아웃 오프셋 (m) - slightly increased for more visible racing line
+  double out_in_out_offset_ = 0.35;          // 아웃-인-아웃 오프셋 (m) - increased from 0.3 for more visible racing line
   bool enable_out_in_out_ = true;            // 아웃-인-아웃 활성화
   
   // === 추월 시스템 (Opponent Overtaking) ===
   bool is_overtaking_ = false;               // 현재 추월 중인지
   double overtake_start_time_ = 0.0;         // 추월 시작 시간
   double overtake_max_duration_ = 3.0;       // 최대 추월 지속 시간 (seconds)
-  double overtake_lateral_offset_ = 0.55;    // 추월 시 횡방향 오프셋 (m) - balanced value
+  double overtake_lateral_offset_ = 0.55;    // 추월 시 횡방향 오프셋 (m) - increased from 0.5 for clearer overtake path
   double return_to_line_distance_ = 2.0;     // 추월 후 라인 복귀 거리 (m)
   double min_overtake_gap_ = 1.0;            // 최소 추월 가능 간격 (m) - reduced for more opportunities
   double overtake_speed_boost_ = 1.4;        // 추월 시 속도 증가 배율 (1.4x for decisive overtakes)
