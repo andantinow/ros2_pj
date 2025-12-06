@@ -29,17 +29,18 @@ static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in refer
 
 // === Corner Exit Safety ===
 static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
-static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.85;  // Factor to reduce lateral OUT on corner exit (0-1), balanced value
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.95;  // Factor to reduce lateral OUT on corner exit (0-1), minimal reduction for clear OUT-IN-OUT
 
 // === Inside/Outside Overtake Factors ===
 static constexpr double INSIDE_OVERTAKE_FACTOR = 0.7;   // Tighter offset for inside-line overtake (apex side)
 static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.1;  // Wider offset for outside-line overtake
 
 // === Following Control Constants ===
-static constexpr double FOLLOW_CONTROL_GAIN_STRAIGHT = 0.5;  // Control gain for following on straights
-static constexpr double FOLLOW_CONTROL_GAIN_CORNER = 0.8;    // Control gain for following in corners (more aggressive)
-static constexpr double FOLLOW_CLOSE_THRESHOLD = -0.5;       // Distance error threshold for "too close" (m)
-static constexpr double FOLLOW_CLOSE_SPEED_FACTOR = 0.8;     // Additional speed reduction when too close in corner
+// Reduced gains for smoother, less aggressive following behavior
+static constexpr double FOLLOW_CONTROL_GAIN_STRAIGHT = 0.3;  // Control gain for following on straights (reduced from 0.5)
+static constexpr double FOLLOW_CONTROL_GAIN_CORNER = 0.4;    // Control gain for following in corners (reduced from 0.8 for less aggressive behavior)
+static constexpr double FOLLOW_CLOSE_THRESHOLD = -1.0;       // Distance error threshold for "too close" (m) - increased tolerance
+static constexpr double FOLLOW_CLOSE_SPEED_FACTOR = 0.9;     // Additional speed reduction when too close in corner (less severe)
 
 // === Overtake Trajectory Shaping Constants ===
 static constexpr double OVERTAKE_ENTRY_PHASE_END = 0.3;      // Progress value where entry phase ends
@@ -48,10 +49,11 @@ static constexpr double OVERTAKE_EXIT_PHASE_START = 0.7;     // Progress value w
 // === Overtake Feasibility Constants (defaults, overridden by parameters) ===
 // NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
 // are similar. The parameter "opponent_width" can be configured differently if needed.
+// BASELINE: Set conservatively to effectively disable overtaking until baseline is stable
 static constexpr double OPPONENT_WIDTH = 0.35;          // Default opponent vehicle width (m)
-static constexpr double OVERTAKE_WIDTH_FACTOR = 1.1;    // Factor multiplied by opponent width for clearance (reduced for more overtakes)
-static constexpr double OVERTAKE_LATERAL_MARGIN = 0.20; // Additional safety margin for overtake (m)
-static constexpr double MIN_LONGITUDINAL_WINDOW = 4.0;  // Minimum longitudinal distance to complete overtake (m)
+static constexpr double OVERTAKE_WIDTH_FACTOR = 2.5;    // Factor multiplied by opponent width for clearance (very conservative)
+static constexpr double OVERTAKE_LATERAL_MARGIN = 0.5;  // Additional safety margin for overtake (m) (very conservative)
+static constexpr double MIN_LONGITUDINAL_WINDOW = 15.0; // Minimum longitudinal distance to complete overtake (m) (very conservative)
 
 RacingAgent::RacingAgent()
 : Node("racing_agent")
@@ -59,9 +61,9 @@ RacingAgent::RacingAgent()
     RCLCPP_INFO(this->get_logger(), "Initializing Racing Agent - Upper Level Strategy Controller");
     
     // === Declare Parameters ===
-    this->declare_parameter("safe_follow_distance", 3.0);  // Increased for more relaxed following
-    this->declare_parameter("min_stop_distance", 0.3);
-    this->declare_parameter("cruise_speed", 5.0);
+    this->declare_parameter("safe_follow_distance", 4.5);  // Increased significantly for more relaxed following
+    this->declare_parameter("min_stop_distance", 0.5);     // Increased for safety buffer
+    this->declare_parameter("cruise_speed", 6.0);          // Balanced speed - not too fast, not too slow
     this->declare_parameter("decision_rate", 20.0);
     this->declare_parameter("zones_config_file", "");
     this->declare_parameter("trajectories_config_file", "");
@@ -72,8 +74,8 @@ RacingAgent::RacingAgent()
     
     // === Corner Handling Parameters ===
     this->declare_parameter("corner_curvature_threshold", 0.15);
-    this->declare_parameter("corner_follow_distance_factor", 1.3);
-    this->declare_parameter("corner_speed_reduction", 0.8);
+    this->declare_parameter("corner_follow_distance_factor", 1.5);  // Increased from 1.3 for more safety margin
+    this->declare_parameter("corner_speed_reduction", 0.9);         // Increased from 0.8 for less aggressive reduction
     
     // === Overtake Feasibility Parameters ===
     this->declare_parameter("opponent_width", OPPONENT_WIDTH);
@@ -438,7 +440,7 @@ void RacingAgent::execute_cruise_mode()
     current_command_.reference_path = generate_cruise_reference_path();
     // In cruise mode without opponents, use higher speed
     // This allows the car to race at full potential on clear track
-    current_command_.speed_limit = cruise_speed_ * 1.1;  // 10% boost when cruising freely
+    current_command_.speed_limit = cruise_speed_ * 1.15;  // 15% boost when cruising freely (increased from 10%)
     current_command_.should_stop = false;
 }
 
