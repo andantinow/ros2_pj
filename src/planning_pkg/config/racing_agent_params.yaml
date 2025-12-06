@@ -15,7 +15,7 @@ racing_agent:
     decision_rate: 20.0  # Hz - How often the agent makes decisions
 
     # === Speed Parameters ===
-    cruise_speed: 6.0  # m/s - Default cruise speed (increased from 5.0 for faster racing)
+    cruise_speed: 7.0  # m/s - Default cruise speed (increased for faster racing)
     
     # === Following Parameters ===
     # Following distance increased for more relaxed, less nervous following behavior
