@@ -2085,7 +2085,7 @@ private:
   /**
    * @brief Check if current overtake should be aborted due to unsafe conditions
    */
-  bool shouldAbortOvertake() const
+  bool shouldAbortOvertake()
   {
     if (!overtake_committed_) {
       return false;
