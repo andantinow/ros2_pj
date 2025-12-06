@@ -31,6 +31,10 @@ static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in refer
 static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
 static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.85;  // Factor to reduce lateral OUT on corner exit (0-1), balanced value
 
+// === Inside/Outside Overtake Factors ===
+static constexpr double INSIDE_OVERTAKE_FACTOR = 0.7;   // Tighter offset for inside-line overtake (apex side)
+static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.1;  // Wider offset for outside-line overtake
+
 // === Overtake Feasibility Constants (defaults, overridden by parameters) ===
 // NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
 // are similar. The parameter "opponent_width" can be configured differently if needed.
@@ -618,10 +622,10 @@ void RacingAgent::generate_default_overtake_trajectories()
         };
         
         std::vector<TrajectoryConfig> configs = {
-            {"_left_outside", true, false, 1.1},   // Outside: wider offset
-            {"_left_inside", true, true, 0.7},     // Inside: tighter offset
-            {"_right_outside", false, false, 1.1}, // Outside: wider offset
-            {"_right_inside", false, true, 0.7}    // Inside: tighter offset
+            {"_left_outside", true, false, OUTSIDE_OVERTAKE_FACTOR},   // Outside: wider offset
+            {"_left_inside", true, true, INSIDE_OVERTAKE_FACTOR},      // Inside: tighter offset
+            {"_right_outside", false, false, OUTSIDE_OVERTAKE_FACTOR}, // Outside: wider offset
+            {"_right_inside", false, true, INSIDE_OVERTAKE_FACTOR}     // Inside: tighter offset
         };
         
         for (const auto& config : configs) {
@@ -1254,22 +1258,19 @@ double RacingAgent::compute_local_curvature(size_t raceline_idx) const
 
 bool RacingAgent::is_in_corner() const
 {
-    if (!raceline_received_ || global_raceline_.poses.empty()) {
+    if (!raceline_received_ || global_raceline_.poses.empty() || raceline_s_.empty()) {
         return false;
     }
     
-    // Find current position on raceline
-    size_t current_idx = 0;
-    for (size_t i = 0; i < raceline_s_.size(); ++i) {
-        if (raceline_s_[i] >= env_state_.ego_s) {
-            current_idx = i;
-            break;
-        }
-    }
+    // Find current position on raceline using binary search (O(log n))
+    auto it = std::lower_bound(raceline_s_.begin(), raceline_s_.end(), env_state_.ego_s);
+    size_t current_idx = (it != raceline_s_.end()) ? 
+        std::distance(raceline_s_.begin(), it) : raceline_s_.size() - 1;
     
     // Check curvature at current position and ahead
     double max_curvature = 0.0;
-    for (size_t i = current_idx; i < std::min(current_idx + 10, global_raceline_.poses.size() - 1); ++i) {
+    size_t search_limit = std::min(current_idx + 10, global_raceline_.poses.size() - 1);
+    for (size_t i = current_idx; i < search_limit; ++i) {
         double curv = compute_local_curvature(i);
         max_curvature = std::max(max_curvature, curv);
     }
@@ -1296,28 +1297,34 @@ RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
     // 2. Opponent lateral position
     // 3. Available clearance on each side
     
-    if (!raceline_received_ || global_raceline_.poses.empty()) {
+    if (!raceline_received_ || global_raceline_.poses.empty() || raceline_s_.empty()) {
         return OvertakeSide::NONE;
     }
     
-    // Find current position on raceline
-    size_t current_idx = find_closest_raceline_index(0, 0);  // Will use env_state
+    // Find current position on raceline using binary search (O(log n))
+    auto it = std::lower_bound(raceline_s_.begin(), raceline_s_.end(), env_state_.ego_s);
+    size_t current_idx = (it != raceline_s_.end()) ? 
+        std::distance(raceline_s_.begin(), it) : raceline_s_.size() - 1;
     
     // Determine corner direction (positive = left turn, negative = right turn)
     double corner_direction = 0.0;
-    for (size_t i = current_idx; i < std::min(current_idx + 15, global_raceline_.poses.size() - 1); ++i) {
+    size_t search_limit = std::min(current_idx + 15, global_raceline_.poses.size());
+    for (size_t i = current_idx; i < search_limit; ++i) {
         double curv = compute_local_curvature(i);
         if (curv > corner_curvature_threshold_) {
             // Get sign of curvature to determine corner direction
-            const auto& p0 = global_raceline_.poses[i - 1].pose.position;
-            const auto& p1 = global_raceline_.poses[i].pose.position;
-            const auto& p2 = global_raceline_.poses[i + 1].pose.position;
-            double dx1 = p1.x - p0.x;
-            double dy1 = p1.y - p0.y;
-            double dx2 = p2.x - p1.x;
-            double dy2 = p2.y - p1.y;
-            double cross = dx1 * dy2 - dy1 * dx2;
-            corner_direction = (cross > 0) ? 1.0 : -1.0;
+            // Bounds checking: compute_local_curvature already checks i > 0 and i < size - 1
+            if (i > 0 && i < global_raceline_.poses.size() - 1) {
+                const auto& p0 = global_raceline_.poses[i - 1].pose.position;
+                const auto& p1 = global_raceline_.poses[i].pose.position;
+                const auto& p2 = global_raceline_.poses[i + 1].pose.position;
+                double dx1 = p1.x - p0.x;
+                double dy1 = p1.y - p0.y;
+                double dx2 = p2.x - p1.x;
+                double dy2 = p2.y - p1.y;
+                double cross = dx1 * dy2 - dy1 * dx2;
+                corner_direction = (cross > 0) ? 1.0 : -1.0;
+            }
             break;
         }
     }
@@ -1367,14 +1374,14 @@ double RacingAgent::compute_inside_overtake_offset() const
 {
     // Inside overtake: use a smaller offset as we're cutting the corner
     // This is typically the apex side with less lateral deviation needed
-    return OVERTAKE_LATERAL_OFFSET * 0.7;  // 70% of normal offset for tighter inside line
+    return OVERTAKE_LATERAL_OFFSET * INSIDE_OVERTAKE_FACTOR;  // Tighter inside line
 }
 
 double RacingAgent::compute_outside_overtake_offset() const
 {
     // Outside overtake: use the full or slightly larger offset
     // Need more room when going around the outside
-    return OVERTAKE_LATERAL_OFFSET * 1.1;  // 110% of normal offset for wider outside line
+    return OVERTAKE_LATERAL_OFFSET * OUTSIDE_OVERTAKE_FACTOR;  // Wider outside line
 }
 
 // === Distance-based Overtake Preparation ===
