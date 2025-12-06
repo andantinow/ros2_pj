@@ -154,6 +154,8 @@ struct EnvironmentState
     /// Ego vehicle state
     double ego_s;           ///< Ego position on raceline (arc length)
     double ego_d;           ///< Ego lateral deviation from raceline
+    double ego_x;           ///< Ego x position in map frame
+    double ego_y;           ///< Ego y position in map frame
     double ego_speed;       ///< Ego current speed
     double ego_heading;     ///< Ego heading
     
@@ -170,7 +172,7 @@ struct EnvironmentState
     double right_clearance;     ///< Clearance to right (wall/obstacle)
     
     EnvironmentState() 
-        : ego_s(0.0), ego_d(0.0), ego_speed(0.0), ego_heading(0.0),
+        : ego_s(0.0), ego_d(0.0), ego_x(0.0), ego_y(0.0), ego_speed(0.0), ego_heading(0.0),
           has_preceding_vehicle(false), preceding_distance(10.0), 
           preceding_speed(0.0), preceding_d(0.0),
           front_obstacle_detected(false), front_obstacle_distance(10.0),
@@ -207,6 +209,10 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr mode_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr viz_pub_;
     
+    // Publishers for global overtaking lanes
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr inside_overtake_lane_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr outside_overtake_lane_pub_;
+    
     rclcpp::TimerBase::SharedPtr decision_timer_;
     
     // === State ===
@@ -221,6 +227,12 @@ private:
     std::vector<double> raceline_speeds_; ///< Reference speed at each waypoint
     double track_length_ = 0.0;           ///< Total track length
     bool raceline_received_ = false;
+    
+    // === Global Overtaking Lanes ===
+    nav_msgs::msg::Path global_inside_overtake_lane_;   ///< Inside overtaking lane (full global path)
+    nav_msgs::msg::Path global_outside_overtake_lane_;  ///< Outside overtaking lane (full global path)
+    std::vector<double> inside_lane_s_;                  ///< Arc length for inside lane
+    std::vector<double> outside_lane_s_;                 ///< Arc length for outside lane
     
     // === Zone Management ===
     std::vector<RacelineZone> zones_;     ///< List of zones (NORMAL, OVERTAKE_ZONE)
@@ -281,6 +293,14 @@ private:
     std::vector<size_t> get_valid_trajectories_for_current_zone() const;
     std::optional<size_t> select_best_trajectory(const std::vector<size_t>& candidates);
     nav_msgs::msg::Path get_current_overtake_path() const;
+    
+    // === Global Overtaking Lanes ===
+    void generate_global_overtaking_lanes();
+    nav_msgs::msg::Path create_overtaking_lane(double lateral_offset, const std::string& lane_name);
+    void publish_global_overtaking_lanes();
+    visualization_msgs::msg::MarkerArray create_overtaking_lane_markers() const;
+    nav_msgs::msg::Path get_global_overtake_lane_segment(bool use_inside_lane) const;
+    bool should_use_global_overtake_lane() const;
     
     // === Reference Path Generation ===
     nav_msgs::msg::Path generate_cruise_reference_path() const;

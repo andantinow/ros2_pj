@@ -61,7 +61,7 @@ RacingAgent::RacingAgent()
     RCLCPP_INFO(this->get_logger(), "Initializing Racing Agent - Upper Level Strategy Controller");
     
     // === Declare Parameters ===
-    this->declare_parameter("safe_follow_distance", 4.5);  // Increased significantly for more relaxed following
+    this->declare_parameter("safe_follow_distance", 5.2);  // Increased by ~15% for larger gap (was 4.5)
     this->declare_parameter("min_stop_distance", 0.5);     // Increased for safety buffer
     this->declare_parameter("cruise_speed", 6.0);          // Balanced speed - not too fast, not too slow
     this->declare_parameter("decision_rate", 20.0);
@@ -75,7 +75,7 @@ RacingAgent::RacingAgent()
     // === Corner Handling Parameters ===
     this->declare_parameter("corner_curvature_threshold", 0.15);
     this->declare_parameter("corner_follow_distance_factor", 1.5);  // Increased from 1.3 for more safety margin
-    this->declare_parameter("corner_speed_reduction", 0.9);         // Increased from 0.8 for less aggressive reduction
+    this->declare_parameter("corner_speed_reduction", 0.85);        // Reduced from 0.9 for slower corners (15% slower)
     
     // === Overtake Feasibility Parameters ===
     this->declare_parameter("opponent_width", OPPONENT_WIDTH);
@@ -126,6 +126,13 @@ RacingAgent::RacingAgent()
     
     viz_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
         "/racing_agent/visualization", 10);
+    
+    // Publishers for global overtaking lanes (latched for visualization)
+    inside_overtake_lane_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+        "/racing_agent/inside_overtake_lane", rclcpp::QoS(10).transient_local().reliable());
+    
+    outside_overtake_lane_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+        "/racing_agent/outside_overtake_lane", rclcpp::QoS(10).transient_local().reliable());
     
     // === Load Configuration ===
     std::string zones_config = this->get_parameter("zones_config_file").as_string();
@@ -197,6 +204,9 @@ void RacingAgent::raceline_callback(const nav_msgs::msg::Path::SharedPtr msg)
     // Generate default overtake trajectories
     generate_default_overtake_trajectories();
     
+    // Generate global overtaking lanes
+    generate_global_overtaking_lanes();
+    
     RCLCPP_INFO(this->get_logger(), 
         "Received global raceline: %zu points, length: %.1fm",
         msg->poses.size(), track_length_);
@@ -205,6 +215,8 @@ void RacingAgent::raceline_callback(const nav_msgs::msg::Path::SharedPtr msg)
 void RacingAgent::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
     // Update ego state
+    env_state_.ego_x = msg->pose.pose.position.x;
+    env_state_.ego_y = msg->pose.pose.position.y;
     env_state_.ego_speed = std::hypot(
         msg->twist.twist.linear.x, 
         msg->twist.twist.linear.y);
@@ -440,7 +452,7 @@ void RacingAgent::execute_cruise_mode()
     current_command_.reference_path = generate_cruise_reference_path();
     // In cruise mode without opponents, use higher speed
     // This allows the car to race at full potential on clear track
-    current_command_.speed_limit = cruise_speed_ * 1.15;  // 15% boost when cruising freely (increased from 10%)
+    current_command_.speed_limit = cruise_speed_ * 1.20;  // 20% boost when cruising freely (increased from 15%)
     current_command_.should_stop = false;
 }
 
@@ -494,7 +506,27 @@ void RacingAgent::execute_overtake_candidate_mode()
     current_command_.reference_path = generate_follow_reference_path();
     current_command_.speed_limit = std::min(cruise_speed_, env_state_.preceding_speed + 0.5);
     
-    // Evaluate available trajectories
+    // Check if global overtake lane should be used
+    if (should_use_global_overtake_lane()) {
+        // Determine which side to overtake (inside or outside)
+        OvertakeSide preferred_side = determine_best_overtake_side();
+        
+        if (preferred_side != OvertakeSide::NONE) {
+            // Use global overtake lane instead of pre-computed trajectories
+            bool use_inside = (preferred_side == OvertakeSide::INSIDE);
+            
+            RCLCPP_INFO(this->get_logger(), 
+                "Global overtake lane available: using %s lane",
+                use_inside ? "INSIDE" : "OUTSIDE");
+            
+            // Signal that we're ready to overtake using global lane
+            // We'll use active_trajectory_idx_ as a flag (set to 0 means "use global lane")
+            active_trajectory_idx_ = 0;
+            return;
+        }
+    }
+    
+    // Fallback to original trajectory-based overtaking
     auto valid_trajectories = get_valid_trajectories_for_current_zone();
     
     if (!valid_trajectories.empty()) {
@@ -515,6 +547,30 @@ void RacingAgent::execute_overtake_mode()
         return;
     }
     
+    // Check if we should use global overtake lane
+    if (should_use_global_overtake_lane()) {
+        // Determine which lane to use
+        OvertakeSide preferred_side = determine_best_overtake_side();
+        bool use_inside = (preferred_side == OvertakeSide::INSIDE);
+        
+        // Get segment from global overtake lane
+        current_command_.reference_path = get_global_overtake_lane_segment(use_inside);
+        current_command_.speed_limit = cruise_speed_ * 1.25;  // Speed boost during overtake
+        current_command_.should_stop = false;
+        
+        // Update progress based on distance to opponent
+        // If we've passed the opponent, overtake is complete
+        if (env_state_.preceding_distance > safe_follow_distance_ * 1.5) {
+            overtake_progress_ = 1.0;  // Mark as complete
+        } else {
+            // Continue overtaking
+            overtake_progress_ = 0.5;  // In progress
+        }
+        
+        return;
+    }
+    
+    // Fallback to trajectory-based overtaking
     current_command_.reference_path = get_current_overtake_path();
     current_command_.speed_limit = cruise_speed_ * 1.2;  // Slight speed boost during overtake
     current_command_.should_stop = false;
@@ -891,6 +947,10 @@ void RacingAgent::publish_visualization()
     auto traj_markers = create_overtake_trajectory_markers();
     for (auto& m : traj_markers.markers) markers.markers.push_back(m);
     
+    // Add global overtaking lane visualization
+    auto lane_markers = create_overtaking_lane_markers();
+    for (auto& m : lane_markers.markers) markers.markers.push_back(m);
+    
     // Add mode indicator
     auto mode_markers = create_mode_marker();
     for (auto& m : mode_markers.markers) markers.markers.push_back(m);
@@ -913,10 +973,10 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_raceline_markers() cons
     line_marker.action = visualization_msgs::msg::Marker::ADD;
     line_marker.pose.orientation.w = 1.0;
     line_marker.scale.x = 0.05;  // Line width
-    line_marker.color.r = 0.3f;
-    line_marker.color.g = 0.3f;
-    line_marker.color.b = 1.0f;
-    line_marker.color.a = 0.8f;
+    line_marker.color.r = 0.0f;
+    line_marker.color.g = 1.0f;  // GREEN for main raceline
+    line_marker.color.b = 0.0f;
+    line_marker.color.a = 0.9f;
     
     for (const auto& pose : global_raceline_.poses) {
         geometry_msgs::msg::Point p;
@@ -1478,6 +1538,216 @@ void RacingAgent::prepare_overtake_candidates()
         }
     }
     // Very close: Decision is made in execute_overtake_candidate_mode
+}
+
+// === Global Overtaking Lanes Implementation ===
+
+void RacingAgent::generate_global_overtaking_lanes()
+{
+    if (!raceline_received_ || global_raceline_.poses.empty()) {
+        RCLCPP_WARN(this->get_logger(), "Cannot generate overtaking lanes: no raceline");
+        return;
+    }
+    
+    // Generate inside and outside overtaking lanes
+    // Both lanes are offset to the left of the raceline, with different magnitudes:
+    // - Inside lane: tighter offset for apex-side overtaking (~0.56m)
+    // - Outside lane: wider offset for outside overtaking (~0.88m)
+    // 
+    // Note: While both lanes are on the left in this implementation, the selection
+    // logic in determine_best_overtake_side() considers track curvature and clearance
+    // on both sides to choose the appropriate lane. The "inside" vs "outside" naming
+    // refers to the offset magnitude (tight vs wide), not the absolute side.
+    // 
+    // For a track-specific implementation, you could create separate left/right lanes
+    // or use curvature to determine which side is actually inside/outside at each point.
+    
+    double inside_offset = OVERTAKE_LATERAL_OFFSET * INSIDE_OVERTAKE_FACTOR;   // ~0.56m
+    double outside_offset = OVERTAKE_LATERAL_OFFSET * OUTSIDE_OVERTAKE_FACTOR; // ~0.88m
+    
+    global_inside_overtake_lane_ = create_overtaking_lane(inside_offset, "inside_overtake_lane");
+    global_outside_overtake_lane_ = create_overtaking_lane(outside_offset, "outside_overtake_lane");
+    
+    // Publish the global overtaking lanes for visualization
+    publish_global_overtaking_lanes();
+    
+    RCLCPP_INFO(this->get_logger(), 
+        "Generated global overtaking lanes: inside (%.2fm offset), outside (%.2fm offset)",
+        inside_offset, outside_offset);
+}
+
+nav_msgs::msg::Path RacingAgent::create_overtaking_lane(double lateral_offset, const std::string& lane_name)
+{
+    nav_msgs::msg::Path lane;
+    lane.header.frame_id = "map";
+    lane.header.stamp = this->now();
+    
+    if (global_raceline_.poses.empty()) {
+        return lane;
+    }
+    
+    // Create overtaking lane by offsetting the raceline laterally
+    // The lateral_offset is applied to the left side of the raceline
+    // (perpendicular to the heading, positive = left)
+    
+    for (size_t i = 0; i < global_raceline_.poses.size(); ++i) {
+        const auto& raceline_pose = global_raceline_.poses[i];
+        double yaw = tf2::getYaw(raceline_pose.pose.orientation);
+        
+        // Create offset pose
+        // Offset perpendicular to heading: left is positive
+        geometry_msgs::msg::PoseStamped offset_pose = raceline_pose;
+        offset_pose.pose.position.x -= lateral_offset * std::sin(yaw);
+        offset_pose.pose.position.y += lateral_offset * std::cos(yaw);
+        lane.poses.push_back(offset_pose);
+    }
+    
+    return lane;
+}
+
+void RacingAgent::publish_global_overtaking_lanes()
+{
+    if (!global_inside_overtake_lane_.poses.empty()) {
+        inside_overtake_lane_pub_->publish(global_inside_overtake_lane_);
+    }
+    
+    if (!global_outside_overtake_lane_.poses.empty()) {
+        outside_overtake_lane_pub_->publish(global_outside_overtake_lane_);
+    }
+}
+
+visualization_msgs::msg::MarkerArray RacingAgent::create_overtaking_lane_markers() const
+{
+    visualization_msgs::msg::MarkerArray markers;
+    
+    // Inside overtaking lane marker (RED)
+    if (!global_inside_overtake_lane_.poses.empty()) {
+        visualization_msgs::msg::Marker inside_marker;
+        inside_marker.header.frame_id = "map";
+        inside_marker.header.stamp = this->now();
+        inside_marker.ns = "global_overtaking_lanes";
+        inside_marker.id = 0;
+        inside_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        inside_marker.action = visualization_msgs::msg::Marker::ADD;
+        inside_marker.pose.orientation.w = 1.0;
+        inside_marker.scale.x = 0.08;  // Line width
+        inside_marker.color.r = 1.0f;  // RED for inside lane
+        inside_marker.color.g = 0.0f;
+        inside_marker.color.b = 0.0f;
+        inside_marker.color.a = 0.8f;
+        
+        for (const auto& pose : global_inside_overtake_lane_.poses) {
+            geometry_msgs::msg::Point p;
+            p.x = pose.pose.position.x;
+            p.y = pose.pose.position.y;
+            p.z = 0.08;
+            inside_marker.points.push_back(p);
+        }
+        
+        markers.markers.push_back(inside_marker);
+    }
+    
+    // Outside overtaking lane marker (ORANGE)
+    if (!global_outside_overtake_lane_.poses.empty()) {
+        visualization_msgs::msg::Marker outside_marker;
+        outside_marker.header.frame_id = "map";
+        outside_marker.header.stamp = this->now();
+        outside_marker.ns = "global_overtaking_lanes";
+        outside_marker.id = 1;
+        outside_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        outside_marker.action = visualization_msgs::msg::Marker::ADD;
+        outside_marker.pose.orientation.w = 1.0;
+        outside_marker.scale.x = 0.08;  // Line width
+        outside_marker.color.r = 1.0f;  // ORANGE for outside lane
+        outside_marker.color.g = 0.6f;
+        outside_marker.color.b = 0.0f;
+        outside_marker.color.a = 0.7f;
+        
+        for (const auto& pose : global_outside_overtake_lane_.poses) {
+            geometry_msgs::msg::Point p;
+            p.x = pose.pose.position.x;
+            p.y = pose.pose.position.y;
+            p.z = 0.07;
+            outside_marker.points.push_back(p);
+        }
+        
+        markers.markers.push_back(outside_marker);
+    }
+    
+    return markers;
+}
+
+nav_msgs::msg::Path RacingAgent::get_global_overtake_lane_segment(bool use_inside_lane) const
+{
+    nav_msgs::msg::Path segment;
+    segment.header.frame_id = "map";
+    segment.header.stamp = this->now();
+    
+    // Select which global lane to use
+    const nav_msgs::msg::Path& selected_lane = use_inside_lane ? 
+        global_inside_overtake_lane_ : global_outside_overtake_lane_;
+    
+    if (selected_lane.poses.empty() || !raceline_received_) {
+        return segment;
+    }
+    
+    // Find current position on the selected lane
+    size_t current_idx = 0;
+    double min_dist_sq = std::numeric_limits<double>::max();
+    
+    // Use ego position to find closest point on the overtake lane
+    for (size_t i = 0; i < selected_lane.poses.size(); ++i) {
+        double dx = selected_lane.poses[i].pose.position.x - env_state_.ego_x;
+        double dy = selected_lane.poses[i].pose.position.y - env_state_.ego_y;
+        double dist_sq = dx * dx + dy * dy;
+        
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq = dist_sq;
+            current_idx = i;
+        }
+    }
+    
+    // Extract lookahead segment from the lane
+    for (int i = 0; i < REFERENCE_PATH_POINTS && (current_idx + i) < selected_lane.poses.size(); ++i) {
+        segment.poses.push_back(selected_lane.poses[current_idx + i]);
+    }
+    
+    return segment;
+}
+
+bool RacingAgent::should_use_global_overtake_lane() const
+{
+    // Conditions for using global overtake lane:
+    // 1. Must be in overtake zone
+    if (get_current_zone_type() != ZoneType::OVERTAKE_ZONE) {
+        return false;
+    }
+    
+    // 2. Must have preceding vehicle to overtake
+    if (!env_state_.has_preceding_vehicle) {
+        return false;
+    }
+    
+    // 3. Must have sufficient lateral clearance
+    bool left_clear = check_lateral_clearance_for_overtake(true);
+    bool right_clear = check_lateral_clearance_for_overtake(false);
+    
+    if (!left_clear && !right_clear) {
+        return false;
+    }
+    
+    // 4. Must have sufficient longitudinal window
+    if (!check_longitudinal_window_for_overtake()) {
+        return false;
+    }
+    
+    // 5. Distance to opponent should be in reasonable range for overtaking
+    // Not too far (no need to overtake) and not too close (unsafe)
+    if (env_state_.preceding_distance > 6.0 || env_state_.preceding_distance < 1.0) {
+        return false;
+    }
+    
+    return true;
 }
 
 }  // namespace planning_pkg
