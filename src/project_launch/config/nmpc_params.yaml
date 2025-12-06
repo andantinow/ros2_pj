@@ -37,7 +37,7 @@ nmpc_engine_node:
     # nominal_speed: Target racing speed - can be increased for faster racing
     # Default: 2.5 m/s (matched to nmpc_engine_node.cpp)
     # For competitive racing, consider increasing to 3.0-4.0 m/s
-    nominal_speed: 2.5           # [m/s] Target racing speed
+    nominal_speed: 3.5           # [m/s] Target racing speed (increased from 2.5 for faster racing)
     solver_wheelbase: 0.33       # [m] F1TENTH wheelbase
     
     # =========================================================================
@@ -172,20 +172,20 @@ nmpc_engine_node:
     enable_overtaking: true
     
     # Detection and following
-    opponent_detection_range: 3.0     # [m] Range to detect opponent ahead
-    opponent_following_distance: 1.0  # [m] Safe following distance
-    opponent_speed_tracking_gain: 0.8 # Speed limiting when following (0.8 = 80% of opponent speed)
+    opponent_detection_range: 3.5     # [m] Range to detect opponent ahead (increased for earlier detection)
+    opponent_following_distance: 1.5  # [m] Safe following distance (increased - 너무 가까이 따라붙지 않게)
+    opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
     # v4.0 FOLLOW behavior
     follow_margin: 0.05               # [m/s] Speed margin below opponent (calm following)
-    v_min_follow: 0.3                 # [m/s] Minimum follow speed (avoid crawling)
+    v_min_follow: 0.5                 # [m/s] Minimum follow speed (increased - 기어가지 않게)
     
     # v4.0 OVERTAKE behavior (committed, fast overtaking)
-    overtake_path_width: 0.8          # [m] Lateral offset for overtaking paths
-    overtake_decision_distance: 2.5   # [m] Distance to start considering overtake
-    overtake_boost: 0.25              # [m/s] Speed boost above opponent during overtake
-    overtake_min_commit_time: 2.0     # [s] Min time to commit to overtake
-    overtake_completion_timeout: 3.0  # [s] Time after passing to confirm complete
+    overtake_path_width: 0.75         # [m] Lateral offset for overtaking paths (slightly reduced for safety)
+    overtake_decision_distance: 2.0   # [m] Distance to start considering overtake (reduced for earlier decision)
+    overtake_boost: 0.4               # [m/s] Speed boost above opponent during overtake (increased for decisive overtake)
+    overtake_min_commit_time: 1.5     # [s] Min time to commit to overtake (reduced for quicker commits)
+    overtake_completion_timeout: 2.5  # [s] Time after passing to confirm complete
     
     # v4.0 Overtake zones (s-intervals on raceline where overtaking is allowed)
     # Default: full track allowed (0 to 1000m)
@@ -206,8 +206,8 @@ nmpc_engine_node:
     
     curvature_k1: 0.2                 # [1/m] Curvature threshold: below = straight
     curvature_k2: 0.8                 # [1/m] Curvature threshold: above = tight corner
-    v_max_straight: 3.0               # [m/s] Speed on straights
-    v_min_corner: 1.2                 # [m/s] Speed in tight corners
+    v_max_straight: 4.0               # [m/s] Speed on straights (increased from 3.0 for faster racing)
+    v_min_corner: 1.8                 # [m/s] Speed in tight corners (increased from 1.2 for faster corners)
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
     
     # =========================================================================
@@ -227,12 +227,12 @@ nmpc_engine_node:
     
     # Wall margin constraint
     # On corner exit, enforce minimum distance from wall to avoid hugging it
-    corner_exit_wall_margin: 0.4      # [m] Min distance from wall during exit
+    corner_exit_wall_margin: 0.35     # [m] Min distance from wall during exit (reduced from 0.4 for more racing character)
     
     # Lateral deviation limit
     # Maximum allowed lateral deviation from reference during corner exit
     # Prevents the car from pushing too far to one side
-    corner_exit_lateral_limit: 0.15   # [m] Max lateral deviation during transition
+    corner_exit_lateral_limit: 0.18   # [m] Max lateral deviation during transition (increased from 0.15 for more OUT-IN-OUT)
     
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections

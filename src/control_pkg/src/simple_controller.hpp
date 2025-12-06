@@ -73,8 +73,8 @@ private:
   double max_lookahead_ = 1.2;         // Much reduced for precise corner tracking (2.5 -> 1.2)
   double lookahead_speed_gain_ = 0.3;  // Reduced for tighter speed-based lookahead (0.5 -> 0.3)
   double lookahead_error_gain_ = 0.0;
-  double target_speed_ = 2.0;
-  double max_speed_ = 2.0;
+  double target_speed_ = 4.0;          // Increased for faster racing (2.0 -> 4.0)
+  double max_speed_ = 6.0;             // Increased for faster racing (2.0 -> 6.0)
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.6981;  // Max steering limit: 40 degrees [rad]
   double max_steer_rate_ = 4.0;  // Increased for faster steering response (1.0 -> 4.0) rad/s
@@ -96,27 +96,27 @@ private:
   
   // Corner handling parameters (코너링 설정)
   double corner_curvature_threshold_ = 0.5;  // 곡률이 이 값 이상이면 코너로 판단
-  double corner_speed_factor_ = 0.5;         // 코너에서 속도 감소 비율 (0.5 = 50% 속도)
+  double corner_speed_factor_ = 0.65;        // 코너에서 속도 감소 비율 (0.5 -> 0.65, faster in corners)
   double corner_steer_amplify_ = 1.5;        // 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
   
   // === Out-In-Out 코너링 (레이싱 라인) ===
   double corner_approach_distance_ = 1.5;    // 코너 접근 감지 거리 (m)
-  double out_in_out_offset_ = 0.3;           // 아웃-인-아웃 오프셋 (m) - 코너 전 바깥으로 이동
+  double out_in_out_offset_ = 0.35;          // 아웃-인-아웃 오프셋 (m) - increased from 0.3 for more visible racing line
   bool enable_out_in_out_ = true;            // 아웃-인-아웃 활성화
   
   // === 추월 시스템 (Opponent Overtaking) ===
   bool is_overtaking_ = false;               // 현재 추월 중인지
   double overtake_start_time_ = 0.0;         // 추월 시작 시간
   double overtake_max_duration_ = 3.0;       // 최대 추월 지속 시간 (seconds)
-  double overtake_lateral_offset_ = 0.5;     // 추월 시 횡방향 오프셋 (m)
+  double overtake_lateral_offset_ = 0.55;    // 추월 시 횡방향 오프셋 (m) - increased from 0.5 for clearer overtake path
   double return_to_line_distance_ = 2.0;     // 추월 후 라인 복귀 거리 (m)
-  double min_overtake_gap_ = 1.2;            // 최소 추월 가능 간격 (m) - 더 엄격하게 (1.0 -> 1.2)
-  double overtake_speed_boost_ = 1.5;        // 추월 시 속도 증가 배율 (1.5x)
+  double min_overtake_gap_ = 1.0;            // 최소 추월 가능 간격 (m) - reduced for more opportunities
+  double overtake_speed_boost_ = 1.4;        // 추월 시 속도 증가 배율 (1.4x for decisive overtakes)
   double post_overtake_speed_factor_ = 1.2;  // 추월 후 속도 유지 비율 (1.2x)
   double post_overtake_duration_ = 2.0;      // 추월 후 고속 유지 시간 (seconds)
-  double overtake_steer_max_ = 0.25;         // 추월 시 최대 조향 강도 (rad)
-  double overtake_steer_decay_ = 0.6;        // 추월 조향 감쇠율 (완료시점에 40% 유지)
-  double overtake_wall_caution_dist_ = 0.6;  // 벽 주의 거리 (이보다 가까우면 조향 강도 감소) - 더 조심스럽게 (0.5 -> 0.6)
+  double overtake_steer_max_ = 0.28;         // 추월 시 최대 조향 강도 (rad) - slightly increased
+  double overtake_steer_decay_ = 0.5;        // 추월 조향 감쇠율 (완료시점에 50% 유지)
+  double overtake_wall_caution_dist_ = 0.5;  // 벽 주의 거리 - balanced value
   rclcpp::Time overtake_start_time_ros_;     // 추월 시작 시간 (ROS Time)
   rclcpp::Time overtake_end_time_ros_;       // 추월 종료 시간 (ROS Time)
   bool is_post_overtake_ = false;            // 추월 직후 고속 유지 상태
@@ -180,17 +180,17 @@ private:
   // === 상대 차량 Following 시스템 (ACC 스타일 PD 제어) ===
   // 보고서 기반: v_cmd = v_opp + Kp*(gap - 1.5) + Kd*(v_opp - v_ego)
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
-  double follow_distance_threshold_ = 1.5; // following 시작 거리 (m) - 사용자 요청에 따라 1.5m로 조정
-  double follow_min_distance_ = 0.4;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
-  double follow_speed_factor_ = 0.3;       // following 시 속도 비율 (앞 차 있을 때 적절하게 느리게)
-  double follow_min_speed_ratio_ = 0.1;    // 최소 속도 비율 (10%) - 완전 정지 방지
+  double follow_distance_threshold_ = 2.5; // following 시작 거리 (m) - 더 편안한 거리에서 시작
+  double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
+  double follow_speed_factor_ = 0.4;       // following 시 속도 비율 (덜 보수적)
+  double follow_min_speed_ratio_ = 0.15;   // 최소 속도 비율 (15%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
   double last_adjusted_speed_ = 0.0;       // 마지막 조정된 속도 (스무딩용)
   
   // === ACC PD Control Parameters (보고서 기반) ===
   double acc_kp_ = 0.5;                    // ACC 비례 게인 (gap error)
   double acc_kd_ = 0.2;                    // ACC 미분 게인 (relative velocity)
-  double target_follow_gap_ = 1.5;         // 목표 차간 거리 (m) - 보고서 명세
+  double target_follow_gap_ = 2.0;         // 목표 차간 거리 (m) - 조금 더 여유있게
   double estimated_opponent_velocity_ = 0.0;  // 추정된 상대 차량 속도
   double prev_opponent_distance_ = 10.0;   // 이전 상대 차량 거리 (속도 추정용)
   rclcpp::Time prev_opponent_time_;        // 이전 상대 차량 거리 측정 시간
@@ -201,8 +201,8 @@ private:
   double vehicle_length_ = 0.5;            // 차량 길이 (m)
   
   // === 추월 조건 체크용 파라미터 ===
-  double narrow_road_threshold_ = 3.0;     // 좁은 도로 판단 기준 (좌우 합계 m) - Report: Max Lateral 3.0m
-  double min_visibility_angle_ = 0.35;     // 최소 시야 각도 (rad, 약 20도) - 더 엄격하게 (0.5 -> 0.35)
+  double narrow_road_threshold_ = 1.2;     // 좁은 도로 판단 기준 (좌우 합계 m) - 더 많은 추월 기회
+  double min_visibility_angle_ = 0.6;      // 최소 시야 각도 (rad, 약 34도) - 덜 엄격하게
   double min_overtake_clearance_ = 0.0;    // 최소 추월 간격 (계산됨: vehicle_width * 2 + safety_margin)
   
   // 장애물 위치 정보 (회피 방향 결정용)

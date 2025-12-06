@@ -28,16 +28,16 @@ static constexpr double LOOKAHEAD_DISTANCE = 3.0;   // Default lookahead for ref
 static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in reference path
 
 // === Corner Exit Safety ===
-static constexpr double CORNER_EXIT_WALL_MARGIN = 0.4;  // Minimum distance from wall on corner exit (m)
-static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.7;  // Factor to reduce lateral OUT on corner exit (0-1)
+static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.85;  // Factor to reduce lateral OUT on corner exit (0-1), balanced value
 
 // === Overtake Feasibility Constants (defaults, overridden by parameters) ===
 // NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
 // are similar. The parameter "opponent_width" can be configured differently if needed.
 static constexpr double OPPONENT_WIDTH = 0.35;          // Default opponent vehicle width (m)
-static constexpr double OVERTAKE_WIDTH_FACTOR = 1.2;    // Factor multiplied by opponent width for clearance
-static constexpr double OVERTAKE_LATERAL_MARGIN = 0.25; // Additional safety margin for overtake (m)
-static constexpr double MIN_LONGITUDINAL_WINDOW = 5.0;  // Minimum longitudinal distance to complete overtake (m)
+static constexpr double OVERTAKE_WIDTH_FACTOR = 1.1;    // Factor multiplied by opponent width for clearance (reduced for more overtakes)
+static constexpr double OVERTAKE_LATERAL_MARGIN = 0.20; // Additional safety margin for overtake (m)
+static constexpr double MIN_LONGITUDINAL_WINDOW = 4.0;  // Minimum longitudinal distance to complete overtake (m)
 
 RacingAgent::RacingAgent()
 : Node("racing_agent")

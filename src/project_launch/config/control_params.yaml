@@ -5,7 +5,7 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 5.0           # Increased for faster driving (3.0 -> 5.0)
+    speed_limit: 6.0           # Increased for faster racing (5.0 -> 6.0)
     lookahead_distance: 0.8    # Much reduced for tighter path following (1.5 -> 0.8)
     min_lookahead: 0.4         # Much reduced for closer lookahead at low speed (0.8 -> 0.4)
     max_lookahead: 1.2         # Much reduced for tighter corner tracking (2.5 -> 1.2)
@@ -17,7 +17,7 @@ simple_controller:
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
-    target_speed: 3.0          # Significantly increased for faster driving (1.5 -> 3.0)
+    target_speed: 4.0          # Increased for faster racing (3.0 -> 4.0)
     max_steer_angle: 0.576     # Max steering angle: 33 degrees
     max_steer_rate: 4.0        # Slightly reduced for smoother steering response (5.0 -> 4.0)
     lateral_error_gain: 1.5    # Reduced for less aggressive lateral correction (2.0 -> 1.5)
@@ -50,17 +50,18 @@ simple_controller:
     enable_collision_avoidance: true  # 충돌 회피 활성화
     
     # === Following 시스템 (앞 차 추적) ===
-    follow_distance_threshold: 3.0   # following 시작 거리 (m)
+    follow_distance_threshold: 2.5   # following 시작 거리 (m) - increased for more comfortable following distance
     follow_min_distance: 0.5         # 최소 유지 거리 (m)
-    follow_speed_factor: 0.2         # following 시 속도 비율 (0.8 -> 0.2로 변경, 더 느리게)
-    follow_min_speed_ratio: 0.05     # 최소 속도 비율 (5%)
+    follow_speed_factor: 0.4         # following 시 속도 비율 (0.2 -> 0.4, less conservative following)
+    follow_min_speed_ratio: 0.15     # 최소 속도 비율 (15%) - higher min speed during follow
     speed_smooth_factor: 0.1         # 속도 변화 스무딩
+    target_follow_gap: 2.0           # 목표 차간 거리 (m) - increased from 1.5 for more comfortable gap
     
     # === 추월 조건 체크 ===
-    narrow_road_threshold: 1.5       # 좁은 도로 판단 기준 (좌우 합계 m) - 이보다 좁으면 following만
-    min_visibility_angle: 0.5        # 최소 시야 각도 (rad) - 각도가 안보이면 following만
+    narrow_road_threshold: 1.2       # 좁은 도로 판단 기준 (좌우 합계 m) - reduced for more overtake opportunities
+    min_visibility_angle: 0.6        # 최소 시야 각도 (rad) - increased for less strict angle requirement
     
     # === 코너링 설정 (추월 및 코너 핸들링) ===
     corner_curvature_threshold: 0.5  # 곡률이 이 값 이상이면 코너로 판단
-    corner_speed_factor: 0.5         # 코너에서 속도 감소 비율 (0.5 = 50% 속도) - 추월 안 할 때
+    corner_speed_factor: 0.65        # 코너에서 속도 감소 비율 (0.5 -> 0.65, faster in corners)
     corner_steer_amplify: 1.5        # 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
