@@ -29,7 +29,7 @@ public:
     wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Increased from 0.25m for more visible margin from walls
     lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center (m) - creates overtake lanes
 
-    // 런치 호환(사용은 안 하더라도 선언해두기)
+    // Launch compatibility parameters (declared for compatibility, not actively used)
     declare_parameter<double>("start_s", 0.0);
     declare_parameter<std::string>("trajectory", "min_curv"); // centerline/min_curv/shortest_path/min_time
     declare_parameter<bool>("constant_speed", false);
