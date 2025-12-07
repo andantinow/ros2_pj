@@ -41,7 +41,7 @@ def read_raceline_csv(csv_path):
             v_idx = header.index('v')
             v_col = 'v'
     except ValueError as e:
-        print(f"Error: Missing required column in CSV: {e}")
+        print(f"Error: Missing required column in CSV. Expected columns: s, x, y, psi, kappa, v_ref (or v). Missing: {e}")
         sys.exit(1)
     
     # Parse data rows
@@ -75,7 +75,7 @@ def compute_curvature_based_speed(kappa, v_max_straight=6.5, v_min_corner=2.5, k
         k2: Curvature threshold for tight corner (1/m)
     
     Returns:
-        Reference speed (m/s)
+        float: Reference speed in m/s (interpolated between v_min_corner and v_max_straight)
     """
     abs_kappa = abs(kappa)
     
@@ -174,6 +174,20 @@ def write_opponent_csv(waypoints, output_path):
 
 
 def main():
+    """
+    Main entry point for opponent raceline generation.
+    
+    Workflow:
+    1. Parse command-line arguments
+    2. Read base raceline CSV
+    3. Generate opponent_outer.csv and opponent_inner.csv with lateral offsets
+    4. Apply speed reduction factor (default 50%)
+    5. Save generated files to output directory
+    
+    Side effects:
+    - Creates opponent_outer.csv and opponent_inner.csv in output directory
+    - Prints progress and statistics to stdout
+    """
     parser = argparse.ArgumentParser(description='Generate opponent racelines from base raceline')
     parser.add_argument('--input', type=str, 
                         default='data/raceline.csv',
