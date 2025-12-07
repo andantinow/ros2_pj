@@ -2113,7 +2113,7 @@ private:
           
           // Debug logging for curvature calculation (throttled)
           RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Curvature calc: dyaw=%.4f, seg_dist=%.2fm, curvature=%.4f (k1=%.2f, k2=%.2f)",
+            "Curvature calc: dyaw=%.4f rad, seg_dist=%.2fm, curvature=%.4f[1/m] (k1=%.2f, k2=%.2f)",
             dyaw, seg_dist, curvature, curvature_k1_, curvature_k2_);
           
           if (curvature < curvature_k1_) {
@@ -2125,7 +2125,7 @@ private:
             ref.v = v_max_straight_ + t * (v_min_corner_ - v_max_straight_);
             
             RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-              "Transition zone: curvature=%.4f, t=%.2f, v_ref=%.2f m/s",
+              "Transition zone: curvature=%.4f[1/m], t=%.2f, v_ref=%.2f m/s",
               curvature, t, ref.v);
           }
         }
