@@ -23,37 +23,38 @@ namespace planning_pkg
 // === Constants ===
 static constexpr double VEHICLE_WIDTH = 0.35;       // F1TENTH vehicle width (m)
 static constexpr double SAFETY_MARGIN = 0.15;       // Safety margin (m)
-static constexpr double OVERTAKE_LATERAL_OFFSET = 0.8;  // Default lateral offset for overtake (m)
+static constexpr double OVERTAKE_LATERAL_OFFSET = 0.65;  // Lateral offset for overtake (REDUCED for simpler, more direct passes)
 static constexpr double LOOKAHEAD_DISTANCE = 3.0;   // Default lookahead for reference path (m)
 static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in reference path
 
 // === Corner Exit Safety ===
 static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
-static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 1.0;  // Factor to reduce lateral OUT on corner exit (0-1). Higher = less softening, more pronounced OUT-IN-OUT. Increased from 0.95 for slightly stronger OUT-IN-OUT
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 1.0;  // Factor to reduce lateral OUT on corner exit (0-1)
 
 // === Inside/Outside Overtake Factors ===
-static constexpr double INSIDE_OVERTAKE_FACTOR = 0.65;   // Tighter offset for inside-line overtake (apex side) - reduced from 0.7 for tighter inside line
-static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.15;  // Wider offset for outside-line overtake - increased from 1.1 for wider outside line
+// PRIORITY 2: Simplified for more direct overtaking
+// Reduced differences between inside/outside for simpler, more uniform overtaking paths
+static constexpr double INSIDE_OVERTAKE_FACTOR = 0.9;   // Inside-line overtake (slightly tighter) - INCREASED from 0.65
+static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.1;  // Outside-line overtake (slightly wider) - REDUCED from 1.15
 
 // === Following Control Constants ===
 // Reduced gains for smoother, less aggressive following behavior
-static constexpr double FOLLOW_CONTROL_GAIN_STRAIGHT = 0.3;  // Control gain for following on straights (reduced from 0.5)
-static constexpr double FOLLOW_CONTROL_GAIN_CORNER = 0.4;    // Control gain for following in corners (reduced from 0.8 for less aggressive behavior)
-static constexpr double FOLLOW_CLOSE_THRESHOLD = -1.0;       // Distance error threshold for "too close" (m) - increased tolerance
-static constexpr double FOLLOW_CLOSE_SPEED_FACTOR = 0.9;     // Additional speed reduction when too close in corner (less severe)
+static constexpr double FOLLOW_CONTROL_GAIN_STRAIGHT = 0.3;  // Control gain for following on straights
+static constexpr double FOLLOW_CONTROL_GAIN_CORNER = 0.4;    // Control gain for following in corners
+static constexpr double FOLLOW_CLOSE_THRESHOLD = -1.0;       // Distance error threshold for "too close" (m)
+static constexpr double FOLLOW_CLOSE_SPEED_FACTOR = 0.9;     // Additional speed reduction when too close in corner
 
 // === Overtake Trajectory Shaping Constants ===
-static constexpr double OVERTAKE_ENTRY_PHASE_END = 0.3;      // Progress value where entry phase ends
-static constexpr double OVERTAKE_EXIT_PHASE_START = 0.7;     // Progress value where exit phase starts
+// PRIORITY 2: More gradual entry/exit for simpler, smoother paths
+static constexpr double OVERTAKE_ENTRY_PHASE_END = 0.25;     // Entry phase end (REDUCED for quicker entry)
+static constexpr double OVERTAKE_EXIT_PHASE_START = 0.75;    // Exit phase start (INCREASED for later exit)
 
-// === Overtake Feasibility Constants (defaults, overridden by parameters) ===
-// NOTE: OPPONENT_WIDTH default equals VEHICLE_WIDTH for F1TENTH races where vehicles
-// are similar. The parameter "opponent_width" can be configured differently if needed.
-// BASELINE: Set conservatively to effectively disable overtaking until baseline is stable
+// === Overtake Feasibility Constants ===
+// PRIORITY 2: Less conservative for more practical overtaking
 static constexpr double OPPONENT_WIDTH = 0.35;          // Default opponent vehicle width (m)
-static constexpr double OVERTAKE_WIDTH_FACTOR = 2.5;    // Factor multiplied by opponent width for clearance (very conservative)
-static constexpr double OVERTAKE_LATERAL_MARGIN = 0.5;  // Additional safety margin for overtake (m) (very conservative)
-static constexpr double MIN_LONGITUDINAL_WINDOW = 15.0; // Minimum longitudinal distance to complete overtake (m) (very conservative)
+static constexpr double OVERTAKE_WIDTH_FACTOR = 1.5;    // Factor for clearance (REDUCED from 2.5 for less conservative)
+static constexpr double OVERTAKE_LATERAL_MARGIN = 0.3;  // Safety margin (REDUCED from 0.5 for practical overtaking)
+static constexpr double MIN_LONGITUDINAL_WINDOW = 8.0;  // Minimum longitudinal distance (REDUCED from 15.0)
 
 RacingAgent::RacingAgent()
 : Node("racing_agent")

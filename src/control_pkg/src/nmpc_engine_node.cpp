@@ -1341,14 +1341,31 @@ private:
       }
     }
     
-    if (!opponent.is_detected && scan_received_ && latest_scan_) {
-      if (last_obstacle_front_dist_ < opponent_detection_range_ && 
+    // PRIORITY 2: LiDAR-based fallback opponent detection
+    // This fallback may incorrectly detect static walls as opponents
+    // It's only used when opponent odometry is unavailable
+    // To better distinguish opponent from walls, we:
+    //   1. Only use this if opponent_odom is truly unavailable (not just out of range)
+    //   2. Use a conservative detection range
+    //   3. Assume the detected obstacle is moving slowly
+    // 
+    // Note: In production, this should be disabled if opponent_odom topic is reliable
+    bool use_lidar_fallback = !latest_opponent_odom_;  // Only if odom truly unavailable
+    
+    if (!opponent.is_detected && use_lidar_fallback && scan_received_ && latest_scan_) {
+      // More conservative range for LiDAR-based detection to reduce false positives
+      double lidar_detection_range = opponent_detection_range_ * 0.75;
+      
+      if (last_obstacle_front_dist_ < lidar_detection_range && 
           last_obstacle_front_dist_ > a1_threshold_) {
         opponent.is_detected = true;
         opponent.is_ahead = true;
         opponent.distance = last_obstacle_front_dist_;
         opponent.relative_angle = last_obstacle_angle_;
-        opponent.speed = DEFAULT_OBSTACLE_SPEED;
+        opponent.speed = DEFAULT_OBSTACLE_SPEED;  // Conservative assumption
+        
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+          "Opponent detected via LiDAR fallback (no odom): dist=%.2fm", opponent.distance);
       }
     }
     
@@ -1588,28 +1605,71 @@ private:
     return false;
   }
   
-    bool canOvertakeOnSide(bool left_side)
+  /**
+   * @brief Check if overtaking is feasible on a specific side
+   * 
+   * PRIORITY 2: Geometric gap-based overtaking condition
+   * 
+   * Instead of requiring LiDAR box to be completely empty, we check:
+   * 1. Lateral gap width: Is there enough space between wall and opponent?
+   * 2. Safety margin: ~0.5-0.7m total clearance
+   * 3. Obstacle clearance: No obstacle directly on the overtaking path
+   * 
+   * This allows overtaking in realistic scenarios where:
+   * - Opponent is on OUT line
+   * - There is ~0.5-0.7m corridor on IN line
+   * - Even if LiDAR sees some points on the sides (walls)
+   */
+  bool canOvertakeOnSide(bool left_side)
   {
     double clearance = left_side ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
-    double min_required = overtake_opponent_width_ * overtake_width_factor_ + 
-                          overtake_safety_margin_ + overtake_path_width_;
-    return clearance > min_required;
+    
+    // PRIORITY 2: Improved gap calculation
+    // Required clearance = ego_width + safety_margin
+    // Safety margin corresponds to ~0.5-0.7m total clearance
+    constexpr double EGO_WIDTH = 0.35;           // F1TENTH vehicle width
+    constexpr double SAFETY_MARGIN = 0.4;        // 0.4m margin (~0.5-0.7m total corridor)
+    constexpr double MIN_OVERTAKE_CLEARANCE = EGO_WIDTH + SAFETY_MARGIN;  // ~0.75m
+    
+    // Check if lateral gap is sufficient
+    bool lateral_gap_ok = clearance > MIN_OVERTAKE_CLEARANCE;
+    
+    // Additional check: front clearance (no obstacle directly ahead on overtaking path)
+    constexpr double FRONT_CHECK_RANGE = 2.0;  // 2m ahead check
+    bool front_clear = last_obstacle_front_dist_ > FRONT_CHECK_RANGE;
+    
+    if (lateral_gap_ok && front_clear) {
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Overtake feasible on %s: lateral_gap=%.2fm (>%.2fm), front_clear=%.2fm",
+        left_side ? "LEFT" : "RIGHT", clearance, MIN_OVERTAKE_CLEARANCE, 
+        last_obstacle_front_dist_);
+      return true;
+    }
+    
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Overtake NOT feasible on %s: lateral_gap=%.2fm, front_dist=%.2fm",
+      left_side ? "LEFT" : "RIGHT", clearance, last_obstacle_front_dist_);
+    
+    return false;
   }
   
-    bool shouldAbortOvertake()
+  bool shouldAbortOvertake()
   {
     if (!overtake_committed_) {
       return false;
     }
     
+    // Use the same improved gap checking logic as canOvertakeOnSide
     double clearance = overtake_left_side_ ? last_obstacle_left_dist_ : last_obstacle_right_dist_;
-    double min_required = overtake_opponent_width_ * overtake_width_factor_ + 
-                          overtake_safety_margin_ + overtake_path_width_;
     
-    if (clearance < min_required) {
+    constexpr double EGO_WIDTH = 0.35;
+    constexpr double SAFETY_MARGIN = 0.4;
+    constexpr double MIN_OVERTAKE_CLEARANCE = EGO_WIDTH + SAFETY_MARGIN;
+    
+    if (clearance < MIN_OVERTAKE_CLEARANCE) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
         "Overtake abort check: clearance=%.2fm < required=%.2fm", 
-        clearance, min_required);
+        clearance, MIN_OVERTAKE_CLEARANCE);
       return true;
     }
     
