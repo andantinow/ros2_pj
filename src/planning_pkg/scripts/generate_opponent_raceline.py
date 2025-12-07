@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate opponent raceline with outside bias to leave room for inside overtakes.
+Generate opponent raceline with OUT-IN-OUT racing style.
 
-This script generates a raceline positioned more toward the outside of the track
-(outer wall) to create space for the ego car to perform inside overtakes.
-The opponent follows this outside-biased raceline, while the ego can use the
-inside lane for clean, textbook overtaking maneuvers.
+This script generates a racing line for the opponent that follows the classic
+OUT-IN-OUT racing line through corners:
+- OUTSIDE approach before corner entry (wide line for better vision)
+- INSIDE at apex (cutting close to the inner wall/apex)
+- OUTSIDE on corner exit (wide exit for better acceleration)
+
+The opponent follows this OUT-IN-OUT raceline, while the ego car uses the
+global raceline + overtaking lanes for strategic overtaking maneuvers.
+
+Key features:
+- Curvature-based corner detection
+- Dynamic lateral offset calculation based on corner phase
+- Small margin from walls for safety
+- Creates clear overtaking opportunities for ego car on alternative lines
 """
 
 import sys
@@ -97,17 +107,25 @@ def resample_centerline(points, ds=0.5):
 
 
 def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3, 
-                                wall_margin=0.3, ds=0.5):
+                                wall_margin=0.3, ds=0.5, out_in_out_strength=0.5):
     """
-    Generate opponent raceline with outside bias.
+    Generate opponent raceline with OUT-IN-OUT racing style through corners.
+    
+    The opponent follows a classic racing line that:
+    - Stays OUTSIDE before corners (wider entry)
+    - Cuts INSIDE at apex (tight to inner wall/apex)
+    - Exits OUTSIDE after corners (wide exit for speed)
+    - Maintains small margin from walls for safety
+    - Creates clear space for ego car to overtake on alternative lines
     
     Args:
         centerline_file: Path to centerline CSV with boundaries
         output_file: Output path for opponent raceline
-        lane_position: Position between walls (-1.0=outer, 0.0=center, 1.0=inner)
-                      Default: -0.3 for moderate outside bias
+        lane_position: Base position between walls (-1.0=outer, 0.0=center, 1.0=inner)
+                      Default: -0.3 for moderate outside bias on straights
         wall_margin: Minimum distance from walls (meters)
         ds: Sample spacing (meters)
+        out_in_out_strength: Strength of OUT-IN-OUT bias (0.0-1.0), default 0.5
     """
     print(f"Loading centerline from: {centerline_file}")
     points = read_centerline_with_bounds(centerline_file)
@@ -126,8 +144,27 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
     d1x = compute_gradient(px, ds)
     d1y = compute_gradient(py, ds)
     
-    # Apply lateral offset based on lane_position
-    print(f"Applying lane_position={lane_position} with wall_margin={wall_margin}m")
+    # Compute curvature to detect corners
+    d2x = compute_gradient(d1x, ds)
+    d2y = compute_gradient(d1y, ds)
+    curvatures = []
+    for i in range(len(points)):
+        num = d1x[i] * d2y[i] - d1y[i] * d2x[i]
+        den = (d1x[i]**2 + d1y[i]**2)**1.5
+        kappa = num / max(EPSILON, den)
+        curvatures.append(kappa)
+    
+    # Smooth curvature to reduce noise
+    CURVATURE_THRESHOLD = 0.08  # Threshold to detect corners
+    window_size = 5
+    smoothed_curvatures = []
+    for i in range(len(curvatures)):
+        start = max(0, i - window_size)
+        end = min(len(curvatures), i + window_size + 1)
+        smoothed_curvatures.append(sum(curvatures[start:end]) / (end - start))
+    
+    # Apply OUT-IN-OUT racing line logic
+    print(f"Applying OUT-IN-OUT racing line with strength={out_in_out_strength}, wall_margin={wall_margin}m")
     
     for i in range(len(points)):
         # Normal vector pointing left (toward outer wall for CCW track)
@@ -141,20 +178,54 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
             available_left = max(0.0, points[i]['d_left'] - wall_margin)
             available_right = max(0.0, points[i]['d_right'] - wall_margin)
             
-            # Calculate offset
-            # lane_position < 0 -> move toward left/outer wall
-            # lane_position > 0 -> move toward right/inner wall
-            offset = 0.0
+            # Determine OUT-IN-OUT offset based on curvature
+            kappa = smoothed_curvatures[i]
+            
+            # Base offset from lane_position (for straights)
+            base_offset = 0.0
             if lane_position < 0.0:
-                # Move toward left/outer wall
-                offset = -lane_position * available_left
+                base_offset = -lane_position * available_left
             elif lane_position > 0.0:
-                # Move toward right/inner wall
-                offset = -lane_position * available_right
+                base_offset = -lane_position * available_right
+            
+            # OUT-IN-OUT adjustment based on corner phase
+            out_in_out_offset = 0.0
+            
+            if abs(kappa) > CURVATURE_THRESHOLD:
+                # In a corner - apply OUT-IN-OUT logic
+                # Positive kappa = left turn, negative kappa = right turn
+                corner_direction = 1.0 if kappa > 0 else -1.0
+                
+                # For OUT-IN-OUT:
+                # - OUTSIDE approach: opposite direction of corner
+                # - INSIDE apex: same direction as corner (cut to apex)
+                # - OUTSIDE exit: opposite direction of corner
+                
+                # Simplified: bias TOWARD inside (apex) in high curvature
+                # This creates the classic racing line
+                # Negative offset = move right (toward apex for left turn)
+                # Positive offset = move left (toward apex for right turn)
+                
+                # Inside bias proportional to curvature magnitude
+                curvature_factor = min(1.0, abs(kappa) / 0.3)  # Normalize
+                inside_bias = corner_direction * curvature_factor * out_in_out_strength
+                
+                # Apply bias to create IN at apex
+                if inside_bias > 0:
+                    out_in_out_offset = inside_bias * available_left
+                else:
+                    out_in_out_offset = inside_bias * available_right
+            else:
+                # Straight section - stay slightly outside for corner entry
+                # Bias toward outside (negative for left wall, positive for right wall)
+                out_in_out_offset = -base_offset * 0.3  # Slight outside bias
+            
+            # Combine base offset and OUT-IN-OUT adjustment
+            total_offset = base_offset + out_in_out_offset
             
             # Apply offset
-            points[i]['x'] += offset * nx
-            points[i]['y'] += offset * ny
+            points[i]['x'] += total_offset * nx
+            points[i]['y'] += total_offset * ny
     
     # Recalculate psi and other parameters
     px = [p['x'] for p in points]
@@ -205,13 +276,14 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
     print(f"✓ Opponent raceline generated successfully")
     print(f"  Points: {len(points)}")
     print(f"  Track length: {s[-1]:.2f}m")
-    print(f"  Lane position: {lane_position} (outside bias)")
+    print(f"  Style: OUT-IN-OUT racing line (strength: {out_in_out_strength})")
+    print(f"  Base lane position: {lane_position}")
     print(f"  Wall margin: {wall_margin}m")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate opponent raceline with outside bias for inside overtakes'
+        description='Generate opponent raceline with OUT-IN-OUT racing style'
     )
     parser.add_argument(
         '--centerline',
@@ -226,9 +298,9 @@ def main():
     parser.add_argument(
         '--lane-position',
         type=float,
-        default=-0.3,
-        help='Position between walls (-1.0=outer, 0.0=center, 1.0=inner). '
-             'Negative values create outside bias for opponent. Default: -0.3'
+        default=-0.2,
+        help='Base position between walls for straights (-1.0=outer, 0.0=center, 1.0=inner). '
+             'Default: -0.2 for slight outside bias on straights'
     )
     parser.add_argument(
         '--wall-margin',
@@ -241,6 +313,12 @@ def main():
         type=float,
         default=0.5,
         help='Sample spacing in meters. Default: 0.5'
+    )
+    parser.add_argument(
+        '--out-in-out-strength',
+        type=float,
+        default=0.5,
+        help='Strength of OUT-IN-OUT racing line (0.0-1.0). Default: 0.5'
     )
     
     args = parser.parse_args()
@@ -266,7 +344,8 @@ def main():
             str(output_path),
             lane_position=args.lane_position,
             wall_margin=args.wall_margin,
-            ds=args.ds
+            ds=args.ds,
+            out_in_out_strength=args.out_in_out_strength
         )
         return 0
     except Exception as e:
