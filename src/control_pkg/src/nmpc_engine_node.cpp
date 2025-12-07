@@ -2598,7 +2598,7 @@ private:
   double last_obstacle_right_dist_{10.0};
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
-  double recovery_cooldown_duration_{RECOVERY_COOLDOWN_DURATION};  // Will be set from constant
+  double recovery_cooldown_duration_{RECOVERY_COOLDOWN_DURATION};
   
   DrivingMode driving_mode_{DrivingMode::CRUISE};
   bool is_overtaking_{false};
