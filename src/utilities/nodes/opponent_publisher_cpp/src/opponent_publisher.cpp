@@ -208,6 +208,12 @@ private:
   {
     // s가 단조 증가한다고 가정 (일반적인 raceline)
     // 경계 케이스
+    if (ss_.empty()) {
+      out_x = 0.0;
+      out_y = 0.0;
+      return;
+    }
+    
     if (target_s <= ss_.front()) {
       out_x = xs_.front();
       out_y = ys_.front();
@@ -222,7 +228,12 @@ private:
     // 이분 탐색으로 구간 찾기: ss_[i] <= target_s < ss_[i+1]
     auto it = std::upper_bound(ss_.begin(), ss_.end(), target_s);
     size_t j = std::distance(ss_.begin(), it);
-    size_t i = (j == 0) ? 0 : j - 1;
+    
+    // Safety check: j should be at least 1 and at most ss_.size()-1
+    if (j == 0) j = 1;
+    if (j >= ss_.size()) j = ss_.size() - 1;
+    
+    size_t i = j - 1;
 
     const double s0 = ss_[i];
     const double s1 = ss_[j];
