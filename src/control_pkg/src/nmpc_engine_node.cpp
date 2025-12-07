@@ -1285,15 +1285,21 @@ private:
         
       case DrivingMode::OVERTAKE:
         {
-          double lateral_offset = overtake_left_side_ ? overtake_path_width_ : -overtake_path_width_;
+          // Use the appropriate overtake path based on selection
+          // overtake_left_side_ = true means INSIDE (tighter), false means OUTSIDE (wider)
+          const auto& selected_path = overtake_left_side_ ? inside_overtake_path_ : outside_overtake_path_;
+          const double path_offset = overtake_left_side_ ? (overtake_path_width_ * 0.7) : (overtake_path_width_ * 1.1);
+          const char* path_name = overtake_left_side_ ? "INSIDE (apex-side)" : "OUTSIDE (wider)";
           
+          // Apply lateral offset to reference trajectory
           for (auto& ref : reference) {
             double cos_yaw = std::cos(ref.yaw);
             double sin_yaw = std::sin(ref.yaw);
-            ref.x += lateral_offset * (-sin_yaw);
-            ref.y += lateral_offset * cos_yaw;
+            ref.x += path_offset * (-sin_yaw);
+            ref.y += path_offset * cos_yaw;
           }
           
+          // Speed boost for overtaking
           double v_overtake = std::min(
             opponent.speed + overtake_boost_,
             v_max_straight_  
@@ -1302,7 +1308,7 @@ private:
           
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
             "OVERTAKE %s: offset=%.2fm, speed=%.2f (boost=%.2f above opponent)",
-            overtake_left_side_ ? "LEFT" : "RIGHT", lateral_offset, 
+            path_name, path_offset, 
             solution.speed, solution.speed - opponent.speed);
         }
         break;
@@ -1480,27 +1486,66 @@ private:
       return;
     }
     
+    // Visualize opponent as a box (footprint)
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = "map";
     marker.header.stamp = now();
-    marker.ns = "opponent";
+    marker.ns = "opponent_footprint";
     marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.type = visualization_msgs::msg::Marker::CUBE;  // Use CUBE to show footprint
     marker.action = visualization_msgs::msg::Marker::ADD;
     
     marker.pose.position.x = opponent.x;
     marker.pose.position.y = opponent.y;
-    marker.pose.position.z = 0.3;
+    marker.pose.position.z = 0.15;  // Half height
     marker.pose.orientation.w = 1.0;
     
-    marker.scale.x = 0.4;
-    marker.scale.y = 0.4;
-    marker.scale.z = 0.4;
+    // Footprint dimensions
+    marker.scale.x = 0.50;  // length
+    marker.scale.y = overtake_opponent_width_;  // width (0.35m)
+    marker.scale.z = 0.30;  // height (for visualization)
     
+    // Red for opponent
     marker.color.r = 1.0f;
     marker.color.g = 0.0f;
     marker.color.b = 0.0f;
-    marker.color.a = 0.8f;
+    marker.color.a = 0.6f;  // Semi-transparent
+    
+    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+    
+    opponent_marker_pub_->publish(marker);
+    
+    // Also visualize ego footprint
+    if (latest_odom_) {
+      visualization_msgs::msg::Marker ego_marker;
+      ego_marker.header.frame_id = "map";
+      ego_marker.header.stamp = now();
+      ego_marker.ns = "ego_footprint";
+      ego_marker.id = 0;
+      ego_marker.type = visualization_msgs::msg::Marker::CUBE;
+      ego_marker.action = visualization_msgs::msg::Marker::ADD;
+      
+      ego_marker.pose.position.x = latest_odom_->pose.pose.position.x;
+      ego_marker.pose.position.y = latest_odom_->pose.pose.position.y;
+      ego_marker.pose.position.z = 0.15;
+      ego_marker.pose.orientation = latest_odom_->pose.pose.orientation;
+      
+      // Ego footprint dimensions
+      ego_marker.scale.x = 0.50;  // length
+      ego_marker.scale.y = 0.35;  // width (vehicle_width)
+      ego_marker.scale.z = 0.30;  // height
+      
+      // Green for ego
+      ego_marker.color.r = 0.0f;
+      ego_marker.color.g = 1.0f;
+      ego_marker.color.b = 0.0f;
+      ego_marker.color.a = 0.6f;  // Semi-transparent
+      
+      ego_marker.lifetime = rclcpp::Duration::from_seconds(0.2);
+      
+      opponent_marker_pub_->publish(ego_marker);
+    }
+  }
     
     marker.lifetime = rclcpp::Duration::from_seconds(0.5);
     
@@ -1778,6 +1823,95 @@ private:
     return false;
   }
   
+  // Determine the best overtake path based on geometry and clearance
+  enum class OvertakePath { NONE, INSIDE, OUTSIDE };
+  
+  OvertakePath determineBestOvertakePath(const OpponentInfo& opponent) const
+  {
+    if (!opponent.is_detected || !opponent.is_ahead) {
+      return OvertakePath::NONE;
+    }
+    
+    // Check if inside path is feasible (tighter, apex-side)
+    bool inside_feasible = checkInsideOvertakeFeasibility(opponent);
+    
+    // Check if outside path is feasible (wider, faster)
+    bool outside_feasible = checkOutsideOvertakeFeasibility(opponent);
+    
+    // Prefer inside if both are feasible (better racing line)
+    if (inside_feasible && outside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Both inside and outside paths feasible, preferring INSIDE");
+      return OvertakePath::INSIDE;
+    }
+    
+    if (inside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "INSIDE overtake path feasible");
+      return OvertakePath::INSIDE;
+    }
+    
+    if (outside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "OUTSIDE overtake path feasible");
+      return OvertakePath::OUTSIDE;
+    }
+    
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+      "No feasible overtake path (left_clear=%.2f, right_clear=%.2f, opp_dist=%.2f)",
+      last_obstacle_left_dist_, last_obstacle_right_dist_, opponent.distance);
+    
+    return OvertakePath::NONE;
+  }
+  
+  // Check if inside (tighter, apex-side) overtake is feasible
+  bool checkInsideOvertakeFeasibility(const OpponentInfo& opponent) const
+  {
+    // Inside overtake requires:
+    // 1. Sufficient lateral clearance on the inside
+    // 2. Opponent not blocking the inside line
+    // 3. Sufficient longitudinal window
+    
+    const double inside_offset = overtake_path_width_ * 0.7;  // Tighter offset
+    const double required_width = overtake_opponent_width_ * overtake_width_factor_ + 
+                                   overtake_safety_margin_;
+    
+    // Check lateral clearance (assume left is inside for now - could be improved with track geometry)
+    bool lateral_clear = last_obstacle_left_dist_ > (inside_offset + required_width);
+    
+    // Check longitudinal window
+    bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+    
+    // Check opponent is not on the inside line already
+    bool opponent_clear = (opponent.distance > 1.0);  // Minimum safe distance
+    
+    return lateral_clear && longitudinal_ok && opponent_clear;
+  }
+  
+  // Check if outside (wider, faster) overtake is feasible
+  bool checkOutsideOvertakeFeasibility(const OpponentInfo& opponent) const
+  {
+    // Outside overtake requires:
+    // 1. Sufficient lateral clearance on the outside
+    // 2. Opponent not blocking the outside line
+    // 3. Sufficient longitudinal window
+    
+    const double outside_offset = overtake_path_width_ * 1.1;  // Wider offset
+    const double required_width = overtake_opponent_width_ * overtake_width_factor_ + 
+                                   overtake_safety_margin_;
+    
+    // Check lateral clearance (assume right is outside for now)
+    bool lateral_clear = last_obstacle_right_dist_ > (outside_offset + required_width);
+    
+    // Check longitudinal window
+    bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+    
+    // Check opponent is not on the outside line already
+    bool opponent_clear = (opponent.distance > 1.0);  // Minimum safe distance
+    
+    return lateral_clear && longitudinal_ok && opponent_clear;
+  }
+  
     void updateDrivingMode(const OpponentInfo& opponent, bool in_overtake_zone, 
                          const rclcpp::Time& current_time)
   {
@@ -1827,32 +1961,34 @@ private:
     }
     
     if (in_overtake_zone && enable_overtaking_) {
-      bool left_clear = canOvertakeOnSide(true);
-      bool right_clear = canOvertakeOnSide(false);
-      bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+      // Determine best overtake path using geometry-based feasibility
+      OvertakePath best_path = determineBestOvertakePath(opponent);
       
-      if ((left_clear || right_clear) && longitudinal_ok) {
+      if (best_path != OvertakePath::NONE) {
         if (driving_mode_ != DrivingMode::OVERTAKE_CANDIDATE) {
           driving_mode_ = DrivingMode::OVERTAKE_CANDIDATE;
           overtake_start_time_ = current_time;  
-          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true, left=%d, right=%d", 
-                      distance, left_clear, right_clear);
+          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true, path=%s", 
+                      distance, best_path == OvertakePath::INSIDE ? "INSIDE" : "OUTSIDE");
         }
         
         double candidate_time = (current_time - overtake_start_time_).seconds();
         if (candidate_time > 0.5 && distance < overtake_decision_distance_) {
           overtake_committed_ = true;
           is_overtaking_ = true;
-          overtake_left_side_ = left_clear;  
+          // Use inside path for left side (in most track geometries)
+          overtake_left_side_ = (best_path == OvertakePath::INSIDE);
           overtake_start_time_ = current_time;
           driving_mode_ = DrivingMode::OVERTAKE;
-          RCLCPP_WARN(get_logger(), "OVERTAKE COMMITTED! side=%s, distance=%.2fm",
-                      overtake_left_side_ ? "LEFT" : "RIGHT", distance);
+          RCLCPP_WARN(get_logger(), "OVERTAKE COMMITTED! path=%s, distance=%.2fm",
+                      best_path == OvertakePath::INSIDE ? "INSIDE (apex-side)" : "OUTSIDE (wider)", 
+                      distance);
         }
         return;
-      } else if (!longitudinal_ok) {
+      } else {
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-          "In overtake zone but longitudinal window insufficient, staying in FOLLOW");
+          "In overtake zone but no feasible path (left_clear=%.2f, right_clear=%.2f)",
+          last_obstacle_left_dist_, last_obstacle_right_dist_);
       }
     }
     
