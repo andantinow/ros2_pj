@@ -242,7 +242,7 @@ nmpc_engine_node:
     overtake_zone_ends: [1000.0]
     
     # =========================================================================
-    # CURVATURE-BASED SPEED CONTROL (V4.0)
+    # CURVATURE-BASED SPEED CONTROL (V4.0 + V6.1)
     # =========================================================================
     # Speed is determined by raceline curvature, NOT wall proximity
     # Policy:
@@ -251,9 +251,14 @@ nmpc_engine_node:
     #   |κ| > k2 (tight corner): v_ref = v_min_corner
     #
     # This ensures OUT-IN-OUT racing line with proper corner speed
+    #
+    # v6.1: Increased k1 threshold to prevent slowdown on straights
+    #   - Previous k1=0.2 (R=5m) was too sensitive
+    #   - Small path irregularities on straights caused slowdown
+    #   - Increased to k1=0.4 (R=2.5m) for better straight detection
     
-    curvature_k1: 0.2                 # [1/m] Curvature threshold: below = straight
-    curvature_k2: 0.8                 # [1/m] Curvature threshold: above = tight corner
+    curvature_k1: 0.4                 # [1/m] Curvature threshold: below = straight (increased from 0.2)
+    curvature_k2: 1.0                 # [1/m] Curvature threshold: above = tight corner (increased from 0.8)
     v_max_straight: 6.5               # [m/s] Speed on straights (increased for much faster racing)
     v_min_corner: 2.5                 # [m/s] Speed in tight corners (increased for faster corners)
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation

@@ -2111,6 +2111,11 @@ private:
         if (seg_dist > 0.01) {
           double curvature = dyaw / seg_dist;
           
+          // Debug logging for curvature calculation (throttled)
+          RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Curvature calc: dyaw=%.4f, seg_dist=%.2fm, curvature=%.4f (k1=%.2f, k2=%.2f)",
+            dyaw, seg_dist, curvature, curvature_k1_, curvature_k2_);
+          
           if (curvature < curvature_k1_) {
             ref.v = v_max_straight_;
           } else if (curvature > curvature_k2_) {
@@ -2118,6 +2123,10 @@ private:
           } else {
             double t = (curvature - curvature_k1_) / (curvature_k2_ - curvature_k1_);
             ref.v = v_max_straight_ + t * (v_min_corner_ - v_max_straight_);
+            
+            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+              "Transition zone: curvature=%.4f, t=%.2f, v_ref=%.2f m/s",
+              curvature, t, ref.v);
           }
         }
       }
