@@ -143,6 +143,29 @@ python3 scripts/generate_centerline_with_bounds.py \
   --out tracks/centerline_with_bounds.csv
 ```
 
+**Generating opponent raceline with outside bias:**
+
+For creating space for inside overtakes, use the opponent raceline generator to create an outside-biased raceline for the opponent car:
+
+```bash
+python3 scripts/generate_opponent_raceline.py \
+  --centerline tracks/centerline_with_bounds.csv \
+  --output data/opponent_raceline.csv \
+  --lane-position -0.3 \
+  --wall-margin 0.3 \
+  --ds 0.5
+```
+
+This generates a raceline positioned toward the outside of the track, leaving space on the inside for the ego car to perform clean overtaking maneuvers. The opponent car follows this raceline, naturally protecting the outside line while creating an inside overtaking opportunity.
+
+**Parameters:**
+- `--lane-position`: Position between walls (-1.0=full outside, 0.0=center, 1.0=full inside)
+  - Use negative values (e.g., -0.3) for outside bias
+- `--wall-margin`: Minimum distance from walls (default: 0.3m)
+- `--ds`: Sample spacing (default: 0.5m)
+
+See `WIDENED_RACELINE_IMPLEMENTATION.md` and `QUICK_REFERENCE_WIDENED.md` for detailed usage.
+
 **Output raceline CSV format:**
 - Columns: `s,x,y,psi,kappa,v_ref`
   - `s`: Arc length along path
