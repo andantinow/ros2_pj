@@ -32,13 +32,13 @@ simple_controller:
     use_path_interpolation: true
     steering_sign: 1.0  # Normal direction (positive = left turn)
     
-    # === A1/A2 범위 기반 충돌 회피 시스템 ===
-    # A1 범위: 좁은 범위 - 이 안에 들어오면 후진 + 반대방향 조향
-    # A2 범위: 넓은 범위 - A1 밖이지만 이 안에 들어오면 조향만 반대방향으로
-    # A2 긴급 범위: 0.4m 이내 - 최대 조향으로 급격히 꺾음
-    a1_threshold: 0.12         # A1 범위 (meters) - 벽에 0.12m 이내시 후진 (0.1 -> 0.12로 변경)
-    a2_threshold: 0.4          # A2 범위 (meters) - 측면 0.4m 이내시 반대 조향으로 회피
-    a2_urgent_threshold: 0.25  # A2 긴급 범위 (meters) - 0.25m 이내시 최대 조향으로 급격히 꺾음
+    # === A1/A2 범위 기반 충돌 회피 시스템 (V5.1: REDUCED RANGES) ===
+    # v5.1 (2025-01): Per user request - reduce LiDAR range, disable soft slowdowns
+    # A1 범위: 매우 좁은 범위 - 이 안에 들어오면 hard STOP + 후진만
+    # A2 범위: DISABLED - 조향 회피 비활성화 (속도는 곡률 기반으로만 결정)
+    a1_threshold: 0.15         # A1 범위 (meters) - hard collision STOP only (reduced from 0.12)
+    a2_threshold: 0.25         # A2 범위 (meters) - NOT USED (disabled)
+    a2_urgent_threshold: 0.20  # A2 긴급 범위 (meters) - NOT USED (disabled)
     a1_side_factor: 0.8        # A1 측면 거리 팩터 (a1_threshold * 이 값)
     a2_max_steer_ratio: 1.0    # A2 최대 조향 비율 - 완전 반대 조향 (0.8 -> 1.0)
     a2_urgent_steer_ratio: 1.0 # A2 긴급시 최대 조향 비율 - 완전 반대 조향

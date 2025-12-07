@@ -713,80 +713,33 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
 }
 
 /**
- * @brief A2 범위에서 회피 조향각 계산 - 완전 반대 방향으로 조향
+ * @brief A2 범위에서 회피 조향각 계산 - DISABLED (v5.1)
  * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
  * 
- * 새로운 로직:
+ * v5.1 (2025-01): DISABLED per user request
+ * User requirement: Remove all "slow down because walls/obstacles are near" logic
+ * Speed should come from: curvature, FOLLOW/OVERTAKE, hard collision only
+ * 
+ * 이전 로직:
  * 1. 장애물이 왼쪽에 있으면 -> 오른쪽으로 완전 반대 조향
  * 2. 장애물이 오른쪽에 있으면 -> 왼쪽으로 완전 반대 조향
  * 3. 느려지지 않고 반대 조향으로 회피하며 주행 계속
  */
-double SimpleController::compute_avoidance_steering(double lookahead_angle)
+double SimpleController::compute_avoidance_steering(double /* lookahead_angle */)
 {
-  (void)lookahead_angle;  // 더 이상 gap following 사용 안함
-  
-  double avoidance_steer = 0.0;
-  
-  // 장애물 거리 정보
-  double left_dist = std::min(last_obstacle_left_dist_, 5.0);
-  double right_dist = std::min(last_obstacle_right_dist_, 5.0);
-  double front_dist = std::min(last_obstacle_front_dist_, 5.0);
-  double min_side_dist = std::min(left_dist, right_dist);
-  double min_dist = std::min(min_side_dist, front_dist);
-  
-  // 장애물이 충분히 멀면 회피 불필요
-  if (min_dist > a2_threshold_) {
-    return 0.0;
-  }
-  
-  // 긴급 모드 판단 (a2_urgent_threshold 이내)
-  bool is_urgent = min_dist < a2_urgent_threshold_;
-  
-  // 장애물 방향 반대로 완전 조향
-  // 왼쪽에 장애물이 더 가까우면 -> 오른쪽으로 조향 (음수)
-  // 오른쪽에 장애물이 더 가까우면 -> 왼쪽으로 조향 (양수)
-  double steer_direction = 0.0;
-  if (left_dist < right_dist) {
-    // 왼쪽 장애물 -> 오른쪽으로 회피 (음수 조향)
-    steer_direction = -1.0;
-  } else if (right_dist < left_dist) {
-    // 오른쪽 장애물 -> 왼쪽으로 회피 (양수 조향)
-    steer_direction = 1.0;
-  } else if (front_dist < a2_threshold_) {
-    // 전방 장애물이면 더 넓은 쪽으로
-    steer_direction = (left_dist > right_dist) ? 1.0 : -1.0;
-  }
-  
-  // 긴급도에 따른 조향 강도 결정
-  double steer_ratio = is_urgent ? a2_urgent_steer_ratio_ : a2_max_steer_ratio_;
-  double steer_gain = is_urgent ? a2_urgent_steer_gain_ : a2_steer_gain_;
-  
-  // 거리에 반비례하여 조향 강도 증가 (가까울수록 더 강하게)
-  double distance_factor = 1.0 - (min_dist / a2_threshold_);
-  distance_factor = std::clamp(distance_factor, 0.3, 1.0);
-  
-  // 최종 회피 조향각 계산 - 완전 반대 방향으로
-  avoidance_steer = steer_direction * max_steer_angle_ * steer_ratio * steer_gain * distance_factor;
-  
-  // 최대 조향 각도 제한
-  avoidance_steer = std::clamp(avoidance_steer, -max_steer_angle_, max_steer_angle_);
-  
-  // 로그 출력
-  int throttle_ms = is_urgent ? 200 : 500;
-  if (std::abs(avoidance_steer) > 0.01) {
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), throttle_ms,
-                 "[%s OPPOSITE] steer=%.3f (dir=%.0f) | dist: L%.2f R%.2f F%.2f",
-                 is_urgent ? "URGENT" : "AVOID",
-                 avoidance_steer, steer_direction,
-                 left_dist, right_dist, front_dist);
-  }
-  
-  return avoidance_steer;
+  // v5.1: Disabled - no steering from generic obstacles
+  // Only hard collision stop at A1 threshold remains active
+  return 0.0;
 }
 
 /**
- * @brief 벽 반발 조향 계산 (수식 기반)
+ * @brief 벽 반발 조향 계산 (수식 기반) - DISABLED (v5.1)
  * 
+ * v5.1 (2025-01): DISABLED per user request
+ * User requirement: NO automatic slow down just because "close to a wall" on a straight
+ * Speed/steering should NOT depend on generic obstacle proximity
+ * 
+ * 이전 로직:
  * 벽에 가까워지면 반발력 공식으로 조향각 계산:
  *   steer = gain * (1/d - 1/d_max)  where d < d_max
  * 
@@ -794,43 +747,9 @@ double SimpleController::compute_avoidance_steering(double lookahead_angle)
  */
 double SimpleController::compute_wall_repulsion_steering()
 {
-  // 최소 유효 거리 (센서 노이즈 방지)
-  constexpr double MIN_VALID_REPULSION_DIST = 0.03;
-  
-  // 측면 장애물 거리 (벽)
-  double left_dist = std::min(last_obstacle_left_dist_, 10.0);
-  double right_dist = std::min(last_obstacle_right_dist_, 10.0);
-  
-  double repulsion_steer = 0.0;
-  
-  // 왼쪽 벽이 가까우면 -> 오른쪽으로 조향 (음수)
-  if (left_dist < wall_repulsion_threshold_ && left_dist > MIN_VALID_REPULSION_DIST) {
-    // 반발력 공식: F = k * (1/d - 1/d_max)
-    double inv_d = 1.0 / left_dist;
-    double inv_d_max = 1.0 / wall_repulsion_threshold_;
-    double repulsion_force = wall_repulsion_gain_ * (inv_d - inv_d_max);
-    repulsion_steer -= repulsion_force;  // 오른쪽으로 (음수)
-  }
-  
-  // 오른쪽 벽이 가까우면 -> 왼쪽으로 조향 (양수)
-  if (right_dist < wall_repulsion_threshold_ && right_dist > MIN_VALID_REPULSION_DIST) {
-    double inv_d = 1.0 / right_dist;
-    double inv_d_max = 1.0 / wall_repulsion_threshold_;
-    double repulsion_force = wall_repulsion_gain_ * (inv_d - inv_d_max);
-    repulsion_steer += repulsion_force;  // 왼쪽으로 (양수)
-  }
-  
-  // 최대 반발 조향각 제한
-  repulsion_steer = std::clamp(repulsion_steer, -wall_repulsion_max_steer_, wall_repulsion_max_steer_);
-  
-  // 로그 출력 (활성화시)
-  if (std::abs(repulsion_steer) > 0.01) {
-    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "Wall repulsion: steer=%.3f, L=%.2fm, R=%.2fm",
-                          repulsion_steer, left_dist, right_dist);
-  }
-  
-  return repulsion_steer;
+  // v5.1: Disabled - no repulsion steering from walls
+  // Car should NOT automatically slow down or steer away just because close to wall
+  return 0.0;
 }
 
 /**

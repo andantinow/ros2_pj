@@ -1560,31 +1560,11 @@ private:
         break;
     }
     
-    // A2 zone: apply steering avoidance (collision avoidance state must be NORMAL or COOLDOWN)
-    if (collision_state_ == CollisionState::NORMAL || collision_state_ == CollisionState::COOLDOWN) {
-      double delta_a2_avoidance = 0.0;
-      if (checkA2Zone()) {
-        // lookahead 방향 = 현재 위치에서 첫 번째 reference point 방향
-        double lookahead_angle = 0.0;
-        if (!reference.empty()) {
-          double dx = reference[0].x - current_state.x;
-          double dy = reference[0].y - current_state.y;
-          // 차량 프레임으로 변환
-          double cos_yaw = std::cos(-current_state.yaw);
-          double sin_yaw = std::sin(-current_state.yaw);
-          double dx_vehicle = dx * cos_yaw - dy * sin_yaw;
-          double dy_vehicle = dx * sin_yaw + dy * cos_yaw;
-          lookahead_angle = std::atan2(dy_vehicle, dx_vehicle);
-        }
-        
-        delta_a2_avoidance = computeAvoidanceSteering(lookahead_angle);
-        solution.steering += delta_a2_avoidance;
-        solution.steering = std::clamp(solution.steering, -max_steer_, max_steer_);
-        // Note: Speed slowdown in A2 zone removed per user request
-        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
-          "A2 Zone: adding avoidance steer=%.3f", delta_a2_avoidance);
-      }
-    }
+    // A2 zone steering avoidance: DISABLED per user request (2025-01)
+    // User requirement: Remove all soft obstacle-based slowdown/steering
+    // Keep only hard collision stop at A1 threshold
+    // Speed should come from: curvature, FOLLOW/OVERTAKE, hard collision only
+    (void)checkA2Zone;  // Unused function - kept for potential future use
     
     // Publish NMPC visualization (예측 궤적 + 레퍼런스)
     publishNMPCVisualization(solution.predicted_trajectory, reference);
