@@ -162,10 +162,10 @@ nmpc_engine_node:
     
     enable_collision_avoidance: true
     
-    # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
+    # Collision detection thresholds (v5.1: Reduced ranges for near-field only)
     # User request: Reduce effective LiDAR range, ignore distant walls
     # NOTE: These thresholds affect STEERING and EMERGENCY STOP only, NOT speed on straights
-    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22) - direct frontal collision
+    a1_threshold: 0.15           # [m] Hard stop only (reduced from 0.22) - direct frontal collision
     a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
     a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
     
@@ -197,21 +197,21 @@ nmpc_engine_node:
     
     # Detection and following (v5.1: reduced range for near-field focus)
     # v6.0: Increased following distance for more relaxed, safer following behavior
-    # v6.1: REDUCED following distance to prevent unwanted slowdown on straights
+    # v6.1: Reduced following distance to prevent unwanted slowdown on straights
     #   - opponent_following_distance controls when FOLLOW mode activates
     #   - If too large, ego slows down on straights even when not close to opponent
     #   - Set to 1.2m for close-range following only
     opponent_detection_range: 3.0     # [m] Range to detect opponent ahead (increased for earlier detection)
-    opponent_following_distance: 1.2  # [m] Safe following distance (REDUCED from 2.5 to prevent slowdown on straights)
+    opponent_following_distance: 1.2  # [m] Safe following distance (reduced from 2.5 to prevent slowdown on straights)
     opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
     # v4.0 FOLLOW behavior
     # v6.0: Increased follow margin for more comfortable gap maintenance
-    # v6.1: REDUCED follow margin to maintain better speed when following
+    # v6.1: Reduced follow margin to maintain better speed when following
     #   - follow_margin is subtracted from opponent speed
     #   - With opponent at 1.0 m/s, margin of 0.15 → ego at 0.85 m/s (too slow!)
     #   - Reduced to 0.05 for closer speed matching
-    follow_margin: 0.05               # [m/s] Speed margin below opponent (REDUCED from 0.15 to maintain better speed)
+    follow_margin: 0.05               # [m/s] Speed margin below opponent (reduced from 0.15 to maintain better speed)
     v_min_follow: 0.5                 # [m/s] Minimum follow speed (safety floor)
     
     # v4.0 OVERTAKE behavior (committed, fast overtaking)
