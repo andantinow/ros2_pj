@@ -1564,7 +1564,7 @@ private:
     // User requirement: Remove all soft obstacle-based slowdown/steering
     // Keep only hard collision stop at A1 threshold
     // Speed should come from: curvature, FOLLOW/OVERTAKE, hard collision only
-    (void)checkA2Zone;  // Unused function - kept for potential future use
+    (void)&checkA2Zone;  // Suppress unused function warning
     
     // Publish NMPC visualization (예측 궤적 + 레퍼런스)
     publishNMPCVisualization(solution.predicted_trajectory, reference);
@@ -2554,7 +2554,7 @@ private:
   /**
    * @brief Compute avoidance steering (A2 zone) - DISABLED
    * 
-   * 2024-12: 사용자 요청에 따라 비활성화됨
+   * 2025-01: User request - disable all sensor-based slowdown logic
    * 장애물/벽 충돌 시 갑작스런 반대 방향 조향이 차량을 불안정하게 만들어 제거
    * NMPC 경로 추종 + A1 zone 후진만 동작
    */
