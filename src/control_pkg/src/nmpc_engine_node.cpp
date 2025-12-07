@@ -1995,6 +1995,9 @@ private:
       return reference;
     }
     
+    // Create clock once for all throttled logging in this function
+    auto clock = rclcpp::Clock(RCL_STEADY_TIME);
+    
     const auto& poses = latest_path_->poses;
     const size_t num_poses = poses.size();
     
@@ -2112,7 +2115,6 @@ private:
           double curvature = dyaw / seg_dist;
           
           // Debug logging for curvature calculation (throttled)
-          auto clock = rclcpp::Clock(RCL_STEADY_TIME);
           RCLCPP_DEBUG_THROTTLE(get_logger(), clock, 2000,
             "Curvature calc: dyaw=%.4f rad, seg_dist=%.2fm, curvature=%.4f[1/m] (k1=%.2f, k2=%.2f)",
             dyaw, seg_dist, curvature, curvature_k1_, curvature_k2_);
