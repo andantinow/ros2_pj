@@ -742,7 +742,7 @@ public:
     
     declare_parameter("curvature_k1", 0.2);                
     declare_parameter("curvature_k2", 0.8);                
-    declare_parameter("v_max_straight", 4.5);              
+    declare_parameter("v_max_straight", 4.0);              
     declare_parameter("v_min_corner", 1.2);                
     declare_parameter("curvature_lookahead", 5);           
     
@@ -2112,7 +2112,8 @@ private:
           double curvature = dyaw / seg_dist;
           
           // Debug logging for curvature calculation (throttled)
-          RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+          auto clock = rclcpp::Clock(RCL_STEADY_TIME);
+          RCLCPP_DEBUG_THROTTLE(get_logger(), clock, 2000,
             "Curvature calc: dyaw=%.4f rad, seg_dist=%.2fm, curvature=%.4f[1/m] (k1=%.2f, k2=%.2f)",
             dyaw, seg_dist, curvature, curvature_k1_, curvature_k2_);
           
@@ -2124,7 +2125,7 @@ private:
             double t = (curvature - curvature_k1_) / (curvature_k2_ - curvature_k1_);
             ref.v = v_max_straight_ + t * (v_min_corner_ - v_max_straight_);
             
-            RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+            RCLCPP_DEBUG_THROTTLE(get_logger(), clock, 2000,
               "Transition zone: curvature=%.4f[1/m], t=%.2f, v_ref=%.2f m/s",
               curvature, t, ref.v);
           }
@@ -2282,7 +2283,7 @@ private:
   
   double curvature_k1_{0.2};                
   double curvature_k2_{0.8};                
-  double v_max_straight_{4.5};              
+  double v_max_straight_{4.0};              
   double v_min_corner_{1.2};                
   int curvature_lookahead_{5};              
   
