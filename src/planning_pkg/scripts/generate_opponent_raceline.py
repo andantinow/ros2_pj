@@ -15,6 +15,11 @@ import argparse
 from pathlib import Path
 
 
+# Constants for numerical stability and defaults
+EPSILON = 1e-12  # Small epsilon to prevent division by zero
+DEFAULT_OPPONENT_SPEED = 3.0  # Default opponent speed (m/s)
+
+
 def read_centerline_with_bounds(filepath):
     """Read centerline CSV with boundary information."""
     points = []
@@ -75,7 +80,7 @@ def resample_centerline(points, ds=0.5):
         for i in range(len(s) - 1):
             if s[i] <= s_new < s[i + 1]:
                 # Linear interpolation
-                t = (s_new - s[i]) / max(1e-12, s[i + 1] - s[i])
+                t = (s_new - s[i]) / max(EPSILON, s[i + 1] - s[i])
                 
                 resampled.append({
                     'x': (1 - t) * points[i]['x'] + t * points[i + 1]['x'],
@@ -128,7 +133,7 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
         # Normal vector pointing left (toward outer wall for CCW track)
         norm = math.sqrt(d1x[i]**2 + d1y[i]**2)
         
-        if norm > 1e-12:
+        if norm > EPSILON:
             nx = -d1y[i] / norm
             ny = d1x[i] / norm
             
@@ -162,12 +167,12 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
     # Update psi and compute kappa
     s = [0.0]
     for i in range(len(points)):
-        points[i]['psi'] = math.atan2(d1y[i], d1x[i] + 1e-12)
+        points[i]['psi'] = math.atan2(d1y[i], d1x[i] + EPSILON)
         
         # Compute curvature
         num = d1x[i] * d2y[i] - d1y[i] * d2x[i]
         den = (d1x[i]**2 + d1y[i]**2)**1.5
-        points[i]['kappa'] = num / max(1e-12, den)
+        points[i]['kappa'] = num / max(EPSILON, den)
         
         # Compute arc length
         if i > 0:
@@ -180,7 +185,7 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3,
     # Set constant velocity (opponent speed)
     # This will be overridden by opponent_publisher's speed parameter
     for p in points:
-        p['v'] = 3.0  # Default opponent speed (m/s)
+        p['v'] = DEFAULT_OPPONENT_SPEED
     
     # Write output
     print(f"Writing opponent raceline to: {output_file}")
