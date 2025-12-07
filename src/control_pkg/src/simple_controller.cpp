@@ -11,6 +11,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -226,6 +227,13 @@ SimpleController::SimpleController() : Node("simple_controller")
       rclcpp::QoS(10),
       std::bind(&SimpleController::mode_callback, this, std::placeholders::_1));
 
+  // Subscribe to v_ref topic (published by raceline_server)
+  rclcpp::QoS vref_qos(rclcpp::QoS(10).transient_local().reliable());
+  vref_sub_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
+      "/global_vref",
+      vref_qos,
+      std::bind(&SimpleController::vref_callback, this, std::placeholders::_1));
+
   drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
       drive_topic_,
       10);
@@ -324,6 +332,20 @@ void SimpleController::mode_callback(const std_msgs::msg::String::SharedPtr msg)
       RCLCPP_WARN(this->get_logger(), 
                   "OBSTACLE_STOP mode: Initiating safe stop (no repulsion/bouncing)");
     }
+  }
+}
+
+void SimpleController::vref_callback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+{
+  current_vref_ = msg->data;
+  if (!vref_received_) {
+    RCLCPP_INFO(this->get_logger(), "Received v_ref array: %zu speeds", current_vref_.size());
+    if (!current_vref_.empty()) {
+      float vref_min = *std::min_element(current_vref_.begin(), current_vref_.end());
+      float vref_max = *std::max_element(current_vref_.begin(), current_vref_.end());
+      RCLCPP_INFO(this->get_logger(), "v_ref range: %.2f - %.2f m/s", vref_min, vref_max);
+    }
+    vref_received_ = true;
   }
 }
 
@@ -1271,28 +1293,42 @@ void SimpleController::control_loop()
     steering_angle = compute_overtake_steering(steering_angle);
   }
 
-  // Speed factor based on curvature: allow full speed on straights, reduce in corners
-  // On straights (curvature ~0): speed_factor = 1.0 (full speed)
-  // In corners (high curvature): speed_factor reduces based on curvature
-  // Strategy: Only apply speed reduction when is_corner is detected (curvature > corner_curvature_threshold_)
-  // This prevents penalizing nearly-straight sections while still slowing in actual corners
-  double speed_factor = 1.0;
+  // ===================================================================
+  // Speed determination: Use v_ref from raceline (curvature-based)
+  // ===================================================================
+  // Strategy:
+  // 1. If v_ref is available from raceline, use it directly (already accounts for curvature)
+  // 2. Otherwise fall back to target_speed with corner speed factor
+  // 
+  // This ensures:
+  // - Straights: v_ref → high (near max_speed_)
+  // - Corners: v_ref → low (proportional to safe cornering speed)
+  // - No additional speed penalties from steering angle or side sensors
+  double base_adjusted_speed = target_speed_;  // Fallback default
   
-  if (is_corner && !is_overtaking_) {
-    // Only reduce speed in actual corners (curvature > threshold)
-    // Speed reduction strategy:
-    // - curvature_speed_reduction: smooth reduction based on path curvature (higher curvature = lower speed)
-    // - corner_speed_factor_: maximum allowed speed factor in corners (0.65 = 65% of target speed)
-    // - min_corner_speed_factor_: minimum speed factor to prevent stalling on sharp corners (0.3 = 30% of target speed)
-    // Final speed_factor is the minimum of corner_speed_factor_ and curvature-based reduction
-    double curvature_speed_reduction = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
-    speed_factor = std::min(corner_speed_factor_, curvature_speed_reduction);
+  if (vref_received_ && !current_vref_.empty() && target_idx >= 0 && 
+      static_cast<size_t>(target_idx) < current_vref_.size()) {
+    // Use v_ref from raceline (curvature-based speed)
+    base_adjusted_speed = current_vref_[target_idx];
+    
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_max=%.2f, min=%.2f",
-                          path_curvature, speed_factor, corner_speed_factor_, min_corner_speed_factor_);
+                          "Using v_ref from raceline: idx=%d, v_ref=%.2f m/s",
+                          target_idx, base_adjusted_speed);
+  } else {
+    // Fallback: use old corner speed factor method
+    double speed_factor = 1.0;
+    
+    if (is_corner && !is_overtaking_) {
+      // Only reduce speed in actual corners (curvature > threshold)
+      double curvature_speed_reduction = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
+      speed_factor = std::min(corner_speed_factor_, curvature_speed_reduction);
+      RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                            "FALLBACK corner speed reduction: curv=%.3f, factor=%.2f",
+                            path_curvature, speed_factor);
+    }
+    
+    base_adjusted_speed = target_speed_ * speed_factor;
   }
-  
-  double base_adjusted_speed = target_speed_ * speed_factor;
   
   double adjusted_speed = base_adjusted_speed;
   

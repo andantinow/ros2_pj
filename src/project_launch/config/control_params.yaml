@@ -5,7 +5,7 @@ simple_controller:
     steer_rate_limit: 5.0
     accel_limit: 4.0
     decel_limit: -6.0
-    speed_limit: 6.0           # Increased for faster racing (5.0 -> 6.0)
+    speed_limit: 5.5           # Reduced per user request (6.0 -> 5.5)
     lookahead_distance: 0.8    # Much reduced for tighter path following (1.5 -> 0.8)
     min_lookahead: 0.4         # Much reduced for closer lookahead at low speed (0.8 -> 0.4)
     max_lookahead: 1.2         # Much reduced for tighter corner tracking (2.5 -> 1.2)
@@ -17,7 +17,7 @@ simple_controller:
     path_topic: '/global_raceline'
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
-    target_speed: 4.0          # Increased for faster racing (3.0 -> 4.0)
+    target_speed: 5.5          # Updated to match max speed for v_ref fallback (was 4.0)
     max_steer_angle: 0.576     # Max steering angle: 33 degrees
     max_steer_rate: 4.0        # Slightly reduced for smoother steering response (5.0 -> 4.0)
     lateral_error_gain: 1.5    # Reduced for less aggressive lateral correction (2.0 -> 1.5)

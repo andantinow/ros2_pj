@@ -11,6 +11,7 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/float32_multi_array.hpp"
 #include <tf2/utils.h>
 #include <vector>
 #include <string>
@@ -47,6 +48,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;  // IMU subscription for crash detection
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;  // Racing agent mode subscription
+  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr vref_sub_;  // v_ref subscription from raceline
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;   // State visualization publisher
@@ -57,11 +59,13 @@ private:
   nav_msgs::msg::Path current_path_;
   sensor_msgs::msg::LaserScan current_scan_;
   sensor_msgs::msg::Imu current_imu_;           // Current IMU data
+  std::vector<float> current_vref_;             // v_ref array from raceline (one per waypoint)
   std::string current_racing_mode_ = "CRUISE";  // Current mode from racing agent
   bool odom_received_ = false;
   bool path_received_ = false;
   bool scan_received_ = false;
   bool imu_received_ = false;                    // IMU data received flag
+  bool vref_received_ = false;                   // v_ref data received flag
   
   // === CRSM State Machine ===
   CRSMState crsm_state_ = CRSMState::ST_NORMAL;  // Current state machine state
@@ -73,8 +77,8 @@ private:
   double max_lookahead_ = 1.2;         // Much reduced for precise corner tracking (2.5 -> 1.2)
   double lookahead_speed_gain_ = 0.3;  // Reduced for tighter speed-based lookahead (0.5 -> 0.3)
   double lookahead_error_gain_ = 0.0;
-  double target_speed_ = 4.0;          // Increased for faster racing (2.0 -> 4.0)
-  double max_speed_ = 6.0;             // Increased for faster racing (2.0 -> 6.0)
+  double target_speed_ = 5.5;          // Reduced to match v_max (was 4.0)
+  double max_speed_ = 5.5;             // Reduced per user request (was 6.0 -> 5.5)
   double wheelbase_ = 0.33;
   double max_steer_angle_ = 0.6981;  // Max steering limit: 40 degrees [rad]
   double max_steer_rate_ = 4.0;  // Increased for faster steering response (1.0 -> 4.0) rad/s
@@ -255,6 +259,7 @@ private:
   void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void mode_callback(const std_msgs::msg::String::SharedPtr msg);  // Racing agent mode callback
+  void vref_callback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);  // v_ref callback
   void control_loop();
   
   // === Racing Agent Mode Handling ===
