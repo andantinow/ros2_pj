@@ -58,11 +58,11 @@ def generate_launch_description():
         description='Opponent raceline mode: outer (runs on outside) or inner (runs on inside)'
     )
     
-    # Opponent speed factor (fraction of ego speed)
+    # Opponent speed factor (fraction of original opponent speed)
     declare_opponent_speed = DeclareLaunchArgument(
         'opponent_speed',
-        default_value='3.25',
-        description='Opponent target speed in m/s (should be ~50% of ego max speed)'
+        default_value='1.6',
+        description='Opponent target speed in m/s (should be ~50% of original opponent speed 3.25 m/s)'
     )
 
     # LaunchConfiguration shortcuts

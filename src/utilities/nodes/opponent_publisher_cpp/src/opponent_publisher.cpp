@@ -23,11 +23,12 @@ public:
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
     
-    // Opponent width and wall margin parameters
-    // Per user request: opponent should stay farther from walls but not exactly centered
-    opponent_width_ = declare_parameter<double>("opponent_width", 0.35);  // Vehicle width (m)
-    wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Larger margin from walls for visible safety buffer
-    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center - creates overtake lanes
+    // Opponent width and wall margin parameters (for compatibility)
+    // NOTE: These parameters are declared for launch file compatibility but not actively used
+    // The opponent follows pre-generated racelines with offset already baked in
+    declare_parameter<double>("opponent_width", 0.35);
+    declare_parameter<double>("wall_margin", 0.35);
+    declare_parameter<double>("lateral_offset", 0.15);
 
     // Launch compatibility parameters (declared for compatibility, not actively used)
     declare_parameter<double>("start_s", 0.0);
@@ -51,11 +52,10 @@ public:
 
     RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
     RCLCPP_INFO(get_logger(), 
-                "Opponent config: speed=%.2fm/s, width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
-                speed_, opponent_width_, wall_margin_, lateral_offset_);
+                "Opponent config: speed=%.2fm/s, lookahead=%.2fm, wheelbase=%.3fm", 
+                speed_, lookahead_s_, wheelbase_);
     RCLCPP_INFO(get_logger(), 
-                "Opponent behavior: Stays %.2fm from walls, %.2fm offset from center (creates overtake lanes)", 
-                wall_margin_, lateral_offset_);
+                "Opponent uses pre-generated raceline path (opponent_outer.csv or opponent_inner.csv) with offset already included");
   }
 
 private:
@@ -97,13 +97,10 @@ private:
       double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       psis_.push_back(yaw);
       
-      // Apply lateral offset to opponent's path to keep away from raceline/walls
-      // Positive lateral_offset_ shifts LEFT (perpendicular to heading)
-      double offset_x = pose.position.x - lateral_offset_ * std::sin(yaw);
-      double offset_y = pose.position.y + lateral_offset_ * std::cos(yaw);
-      
-      xs_.push_back(offset_x);
-      ys_.push_back(offset_y);
+      // Use path coordinates directly from the loaded raceline
+      // The offset is already baked into opponent_outer.csv or opponent_inner.csv
+      xs_.push_back(pose.position.x);
+      ys_.push_back(pose.position.y);
       
       // Calculate cumulative arc length using std::hypot for numerical stability
       if (i > 0) {
@@ -212,6 +209,12 @@ private:
   {
     // s가 단조 증가한다고 가정 (일반적인 raceline)
     // 경계 케이스
+    if (ss_.empty()) {
+      out_x = 0.0;
+      out_y = 0.0;
+      return;
+    }
+    
     if (target_s <= ss_.front()) {
       out_x = xs_.front();
       out_y = ys_.front();
@@ -226,7 +229,19 @@ private:
     // 이분 탐색으로 구간 찾기: ss_[i] <= target_s < ss_[i+1]
     auto it = std::upper_bound(ss_.begin(), ss_.end(), target_s);
     size_t j = std::distance(ss_.begin(), it);
-    size_t i = (j == 0) ? 0 : j - 1;
+    
+    // Safety check: need at least 2 points for interpolation
+    if (ss_.size() < 2) {
+      out_x = xs_.front();
+      out_y = ys_.front();
+      return;
+    }
+    
+    // Ensure j is in valid range [1, ss_.size()-1] for interpolation
+    if (j == 0) j = 1;
+    if (j >= ss_.size()) j = ss_.size() - 1;
+    
+    size_t i = j - 1;
 
     const double s0 = ss_[i];
     const double s1 = ss_[j];
@@ -240,14 +255,9 @@ private:
   // Parameters
   double lookahead_s_{0.5};
   double speed_{2.5};                // Lower speed for easier ego overtaking
-  double wheelbase_{0.2};
+  double wheelbase_{0.325};          // Match parameter default value
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
-  
-  // Opponent dimensions and margins
-  double opponent_width_{0.35};      // Vehicle width (m)
-  double wall_margin_{0.35};         // Larger margin from walls for visible safety buffer
-  double lateral_offset_{0.15};      // Offset from exact center - creates overtake lanes
 
   // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;
