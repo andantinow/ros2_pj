@@ -70,6 +70,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   declare_parameter("corner_curvature_threshold", corner_curvature_threshold_);
   declare_parameter("corner_speed_factor", corner_speed_factor_);
   declare_parameter("corner_steer_amplify", corner_steer_amplify_);
+  declare_parameter("min_corner_speed_factor", min_corner_speed_factor_);
   declare_parameter("corner_approach_distance", corner_approach_distance_);
   declare_parameter("out_in_out_offset", out_in_out_offset_);
   declare_parameter("enable_out_in_out", enable_out_in_out_);
@@ -144,6 +145,7 @@ SimpleController::SimpleController() : Node("simple_controller")
   corner_curvature_threshold_ = get_parameter("corner_curvature_threshold").as_double();
   corner_speed_factor_ = get_parameter("corner_speed_factor").as_double();
   corner_steer_amplify_ = get_parameter("corner_steer_amplify").as_double();
+  min_corner_speed_factor_ = get_parameter("min_corner_speed_factor").as_double();
   corner_approach_distance_ = get_parameter("corner_approach_distance").as_double();
   out_in_out_offset_ = get_parameter("out_in_out_offset").as_double();
   enable_out_in_out_ = get_parameter("enable_out_in_out").as_bool();
@@ -1280,12 +1282,12 @@ void SimpleController::control_loop()
     // Only reduce speed in actual corners (curvature > threshold)
     // Use curvature-based reduction: higher curvature = lower speed
     // The curvature factor provides smooth scaling, corner_speed_factor_ provides a minimum bound
-    // Add explicit lower bound to prevent excessive slowdown on very sharp corners
-    double curvature_factor = std::max(0.3, 1.0 / (1.0 + std::abs(path_curvature)));
+    // min_corner_speed_factor_ prevents excessive slowdown on very sharp corners
+    double curvature_factor = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
     speed_factor = std::min(corner_speed_factor_, curvature_factor);
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_factor=%.2f",
-                          path_curvature, speed_factor, corner_speed_factor_);
+                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_factor=%.2f, min_factor=%.2f",
+                          path_curvature, speed_factor, corner_speed_factor_, min_corner_speed_factor_);
   }
   
   double base_adjusted_speed = target_speed_ * speed_factor;

@@ -229,7 +229,14 @@ private:
     auto it = std::upper_bound(ss_.begin(), ss_.end(), target_s);
     size_t j = std::distance(ss_.begin(), it);
     
-    // Safety check: j should be at least 1 and at most ss_.size()-1
+    // Safety check: need at least 2 points for interpolation
+    if (ss_.size() < 2) {
+      out_x = xs_.front();
+      out_y = ys_.front();
+      return;
+    }
+    
+    // Ensure j is in valid range [1, ss_.size()-1] for interpolation
     if (j == 0) j = 1;
     if (j >= ss_.size()) j = ss_.size() - 1;
     

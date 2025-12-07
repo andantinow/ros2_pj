@@ -98,6 +98,7 @@ private:
   double corner_curvature_threshold_ = 0.5;  // 곡률이 이 값 이상이면 코너로 판단
   double corner_speed_factor_ = 0.65;        // 코너에서 속도 감소 비율 (0.5 -> 0.65, faster in corners)
   double corner_steer_amplify_ = 1.5;        // 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
+  double min_corner_speed_factor_ = 0.3;     // 최소 코너 속도 비율 - 매우 급한 커브에서도 최소 30% 속도 유지
   
   // === Out-In-Out 코너링 (레이싱 라인) ===
   // NOTE: OUT-IN-OUT is now used by OPPONENT only. Ego follows global raceline + overtaking lanes.
