@@ -86,7 +86,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             'map_name': map_name_conf,
-            'speed': '0.5',
+            'speed': '1.5',  # Reduced to ~50% of ego's typical speed for realistic overtaking
             'path_topic': '/opponent_raceline'
         }.items()
     )

@@ -15,14 +15,13 @@ racing_agent:
     decision_rate: 20.0  # Hz - How often the agent makes decisions
 
     # === Speed Parameters ===
-    cruise_speed: 6.0  # m/s - Default cruise speed (restored to balanced speed)
+    cruise_speed: 6.5  # m/s - Default cruise speed (increased for faster straights)
     
     # === Following Parameters ===
-    # Following distance increased for more relaxed, less nervous following behavior
+    # PRIORITY 1 FIX: Increased following distance for larger, more visible gap
     # This gives more room to react and creates a clearer gap before overtaking
-    # v6.0: Further increased for even more comfortable following distance
-    safe_follow_distance: 6.0  # m - Target following distance (ACC style) - INCREASED from 4.5 for more comfortable gap
-    min_stop_distance: 0.8     # m - Emergency stop threshold (increased for safety)
+    safe_follow_distance: 7.0  # m - Target following distance (ACC style) - INCREASED for much larger gap
+    min_stop_distance: 1.0     # m - Emergency stop threshold (increased for safety)
     
     # === Corner Exit Smoothing Parameters (v5.0) ===
     # These control how the car exits corners to prevent wall contact

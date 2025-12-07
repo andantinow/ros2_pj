@@ -140,19 +140,18 @@ nmpc_engine_node:
     # 3. Only reverse if still blocked (gentle, short)
     # 4. Resume normal operation after cooldown
     #
-    # v4.0: Simpler handling - just stop stably without weird steering or strong reverse
-    # v5.1 (2025-01): Reduced LiDAR range per user request
-    #   - A2 zone avoidance DISABLED (no steering from obstacles)
-    #   - A1 threshold reduced to ignore distant walls
-    #   - Speed comes from: curvature, FOLLOW/OVERTAKE, hard collision only
+    # PRIORITY 1 FIX: Further reduced LiDAR thresholds to avoid wall-proximity slowdowns
+    #   - Speed on straights should NOT be reduced just because walls are nearby
+    #   - Only actual imminent collision should trigger slowdown
+    #   - Speed is governed by: curvature (straight vs corner), FOLLOW distance, emergency only
     
     enable_collision_avoidance: true
     
-    # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
-    # User request: Reduce effective LiDAR range, ignore distant walls
-    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22)
-    a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
-    a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
+    # Collision detection thresholds (PRIORITY 1: VERY REDUCED for near-collision only)
+    # These should only trigger for true obstacles/collisions, NOT for normal wall proximity on straights
+    a1_threshold: 0.12           # [m] Hard STOP only - very close collision (reduced from 0.15)
+    a2_threshold: 0.20           # [m] NOT USED for speed reduction (avoidance disabled, kept for compatibility)
+    a2_urgent_threshold: 0.15    # [m] NOT USED (avoidance disabled)
     
     # Collision response timing (v4.0: hold stop, minimal reverse)
     stop_duration: 0.4           # [s] Time to hold stop (0.3-0.5s as requested)
@@ -180,22 +179,22 @@ nmpc_engine_node:
     
     enable_overtaking: true
     
-    # Detection and following (v5.1: reduced range for near-field focus)
-    # v6.0: Increased following distance for more relaxed, safer following behavior
-    opponent_detection_range: 3.0     # [m] Range to detect opponent ahead (increased for earlier detection)
-    opponent_following_distance: 2.5  # [m] Safe following distance (INCREASED from 1.0 for larger gap)
+    # Detection and following 
+    # PRIORITY 1 FIX: Increased following distance for larger, more visible gap
+    opponent_detection_range: 4.0     # [m] Range to detect opponent ahead (increased for earlier detection)
+    opponent_following_distance: 3.5  # [m] Safe following distance (INCREASED for much larger gap)
     opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
-    # v4.0 FOLLOW behavior
-    # v6.0: Increased follow margin for more comfortable gap maintenance
-    follow_margin: 0.15               # [m/s] Speed margin below opponent (INCREASED from 0.05 for calmer following)
-    v_min_follow: 0.5                 # [m/s] Minimum follow speed (increased - 기어가지 않게)
+    # FOLLOW behavior
+    # Increased follow margin for more comfortable gap maintenance
+    follow_margin: 0.2                # [m/s] Speed margin below opponent (INCREASED for comfortable gap)
+    v_min_follow: 0.5                 # [m/s] Minimum follow speed
     
-    # v4.0 OVERTAKE behavior (committed, fast overtaking)
-    overtake_path_width: 0.75         # [m] Lateral offset for overtaking paths (slightly reduced for safety)
-    overtake_decision_distance: 2.0   # [m] Distance to start considering overtake (reduced for earlier decision)
-    overtake_boost: 0.4               # [m/s] Speed boost above opponent during overtake (increased for decisive overtake)
-    overtake_min_commit_time: 1.5     # [s] Min time to commit to overtake (reduced for quicker commits)
+    # OVERTAKE behavior (committed, fast overtaking)
+    overtake_path_width: 0.75         # [m] Lateral offset for overtaking paths
+    overtake_decision_distance: 2.0   # [m] Distance to start considering overtake
+    overtake_boost: 0.5               # [m/s] Speed boost above opponent during overtake
+    overtake_min_commit_time: 1.5     # [s] Min time to commit to overtake
     overtake_completion_timeout: 2.5  # [s] Time after passing to confirm complete
     
     # v4.0 Overtake zones (s-intervals on raceline where overtaking is allowed)
@@ -217,8 +216,8 @@ nmpc_engine_node:
     
     curvature_k1: 0.2                 # [1/m] Curvature threshold: below = straight
     curvature_k2: 0.8                 # [1/m] Curvature threshold: above = tight corner
-    v_max_straight: 6.5               # [m/s] Speed on straights (increased for much faster racing)
-    v_min_corner: 2.5                 # [m/s] Speed in tight corners (increased for faster corners)
+    v_max_straight: 7.0               # [m/s] Speed on straights (INCREASED for much faster straight-line speed)
+    v_min_corner: 2.0                 # [m/s] Speed in tight corners (REDUCED for slower corner speed)
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
     
     # =========================================================================
