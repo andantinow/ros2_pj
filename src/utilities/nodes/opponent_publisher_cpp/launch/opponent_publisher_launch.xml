@@ -1,7 +1,7 @@
 <launch>
     <arg name="trajectory" default="min_curv"/> <!-- centerline/min_curv/shortest_path/min_time -->
     <arg name="start_s" default="0.0"/>
-    <arg name="speed" default="0.5"/> 
+    <arg name="speed" default="1.0"/> <!-- Fixed at 1.0 m/s for stable opponent behavior -->
     <arg name="constant_speed" default="false"/>
     <arg name="type" default="lidar"/><!-- virtual/lidar -->
     <arg name="path_topic" default="/opponent_raceline"/><!-- Path topic to subscribe to -->

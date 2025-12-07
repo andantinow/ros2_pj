@@ -18,7 +18,7 @@ public:
   {
     // Parameters
     lookahead_s_ = declare_parameter<double>("lookahead_s", 0.75);
-    speed_       = declare_parameter<double>("speed",       2.5);  // Lower speed for easier ego overtaking
+    speed_       = declare_parameter<double>("speed",       1.0);  // Fixed at 1.0 m/s for stable opponent behavior
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
@@ -254,7 +254,7 @@ private:
 private:
   // Parameters
   double lookahead_s_{0.5};
-  double speed_{2.5};                // Lower speed for easier ego overtaking
+  double speed_{1.0};                // Fixed at 1.0 m/s for stable opponent behavior
   double wheelbase_{0.325};          // Match parameter default value
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};

@@ -132,8 +132,18 @@ nmpc_engine_node:
     min_accel: -6.0              # [m/s^2] Maximum deceleration (negative)
     
     # =========================================================================
-    # SIMPLIFIED COLLISION HANDLING (V4.0 + V5.1: Reduced LiDAR Range)
+    # SIMPLIFIED COLLISION HANDLING (V4.0 + V5.1 + V6.1)
     # =========================================================================
+    # IMPORTANT: Collision avoidance DOES NOT reduce speed based on wall proximity!
+    # 
+    # Speed is controlled ONLY by:
+    # 1. Curvature-based v_ref (see CURVATURE-BASED SPEED CONTROL section below)
+    # 2. FOLLOW mode when close to opponent (see OPPONENT FOLLOWING section)
+    # 3. Hard collision stop when obstacle is directly ahead within a1_threshold
+    #
+    # A1/A2 zones affect STEERING (wall avoidance), NOT SPEED.
+    # Side walls DO NOT slow down the car on straights.
+    #
     # When wall/obstacle collision detected:
     # 1. STOP immediately (speed=0, steer=0)
     # 2. Wait briefly (stop_duration)
@@ -145,12 +155,17 @@ nmpc_engine_node:
     #   - A2 zone avoidance DISABLED (no steering from obstacles)
     #   - A1 threshold reduced to ignore distant walls
     #   - Speed comes from: curvature, FOLLOW/OVERTAKE, hard collision only
+    # v6.1 (2025-12): Clarified that A1/A2 NEVER affect speed on straights
+    #   - NO side-distance-based speed reduction
+    #   - NO wall-proximity speed penalties
+    #   - Ego runs at full v_max_straight on straights unless in FOLLOW mode
     
     enable_collision_avoidance: true
     
     # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
     # User request: Reduce effective LiDAR range, ignore distant walls
-    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22)
+    # NOTE: These thresholds affect STEERING and EMERGENCY STOP only, NOT speed on straights
+    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22) - direct frontal collision
     a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
     a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
     
@@ -182,14 +197,22 @@ nmpc_engine_node:
     
     # Detection and following (v5.1: reduced range for near-field focus)
     # v6.0: Increased following distance for more relaxed, safer following behavior
+    # v6.1: REDUCED following distance to prevent unwanted slowdown on straights
+    #   - opponent_following_distance controls when FOLLOW mode activates
+    #   - If too large, ego slows down on straights even when not close to opponent
+    #   - Set to 1.2m for close-range following only
     opponent_detection_range: 3.0     # [m] Range to detect opponent ahead (increased for earlier detection)
-    opponent_following_distance: 2.5  # [m] Safe following distance (INCREASED from 1.0 for larger gap)
+    opponent_following_distance: 1.2  # [m] Safe following distance (REDUCED from 2.5 to prevent slowdown on straights)
     opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
     # v4.0 FOLLOW behavior
     # v6.0: Increased follow margin for more comfortable gap maintenance
-    follow_margin: 0.15               # [m/s] Speed margin below opponent (INCREASED from 0.05 for calmer following)
-    v_min_follow: 0.5                 # [m/s] Minimum follow speed (increased - 기어가지 않게)
+    # v6.1: REDUCED follow margin to maintain better speed when following
+    #   - follow_margin is subtracted from opponent speed
+    #   - With opponent at 1.0 m/s, margin of 0.15 → ego at 0.85 m/s (too slow!)
+    #   - Reduced to 0.05 for closer speed matching
+    follow_margin: 0.05               # [m/s] Speed margin below opponent (REDUCED from 0.15 to maintain better speed)
+    v_min_follow: 0.5                 # [m/s] Minimum follow speed (safety floor)
     
     # v4.0 OVERTAKE behavior (committed, fast overtaking)
     overtake_path_width: 0.75         # [m] Lateral offset for overtaking paths (slightly reduced for safety)
@@ -236,9 +259,15 @@ nmpc_engine_node:
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
     
     # =========================================================================
-    # CORNER EXIT SMOOTHING (V5.0)
+    # CORNER EXIT SMOOTHING (V5.0 + V6.1)
     # =========================================================================
     # Reduces excessive lateral movement when exiting corners and rejoining straights.
+    # 
+    # IMPORTANT: This feature affects STEERING ONLY, NOT SPEED.
+    # - corner_exit_wall_margin: Reduces steering toward wall, does NOT slow down
+    # - Side wall distance NEVER reduces speed on straights
+    # - Speed remains at v_max_straight unless curvature is high
+    #
     # Problem being solved:
     #   1. Car hugs outer wall too much on corner exit
     #   2. Large steering corrections when rejoining the straight
@@ -252,6 +281,7 @@ nmpc_engine_node:
     
     # Wall margin constraint
     # On corner exit, enforce minimum distance from wall to avoid hugging it
+    # NOTE: This modifies STEERING, not speed
     corner_exit_wall_margin: 0.35     # [m] Min distance from wall during exit (reduced from 0.4 for more racing character)
     
     # Lateral deviation limit
