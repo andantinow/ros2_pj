@@ -982,6 +982,10 @@ void RacingAgent::publish_visualization()
     auto mode_markers = create_mode_marker();
     for (auto& m : mode_markers.markers) markers.markers.push_back(m);
     
+    // Add opponent position marker
+    auto opponent_markers = create_opponent_marker();
+    for (auto& m : opponent_markers.markers) markers.markers.push_back(m);
+    
     viz_pub_->publish(markers);
 }
 
@@ -1181,6 +1185,82 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_mode_marker() const
     }
     
     markers.markers.push_back(text_marker);
+    return markers;
+}
+
+visualization_msgs::msg::MarkerArray RacingAgent::create_opponent_marker() const
+{
+    visualization_msgs::msg::MarkerArray markers;
+    
+    // Only show opponent marker if opponent is detected
+    if (!env_state_.has_preceding_vehicle) {
+        return markers;
+    }
+    
+    // Create a sphere marker to indicate opponent position
+    visualization_msgs::msg::Marker opponent_sphere;
+    opponent_sphere.header.frame_id = "base_link";  // Relative to ego vehicle
+    opponent_sphere.header.stamp = this->now();
+    opponent_sphere.ns = "opponent_indicator";
+    opponent_sphere.id = 0;
+    opponent_sphere.type = visualization_msgs::msg::Marker::SPHERE;
+    opponent_sphere.action = visualization_msgs::msg::Marker::ADD;
+    
+    // Position opponent based on detected distance and lateral offset
+    opponent_sphere.pose.position.x = env_state_.preceding_distance;  // Forward distance
+    opponent_sphere.pose.position.y = env_state_.preceding_d;         // Lateral offset
+    opponent_sphere.pose.position.z = 0.2;
+    opponent_sphere.pose.orientation.w = 1.0;
+    
+    // Size based on opponent width
+    opponent_sphere.scale.x = opponent_width_;
+    opponent_sphere.scale.y = opponent_width_;
+    opponent_sphere.scale.z = 0.3;
+    
+    // Color: Magenta for visibility
+    opponent_sphere.color.r = 1.0f;
+    opponent_sphere.color.g = 0.0f;
+    opponent_sphere.color.b = 1.0f;
+    opponent_sphere.color.a = 0.7f;
+    
+    markers.markers.push_back(opponent_sphere);
+    
+    // Add text label showing lateral offset
+    visualization_msgs::msg::Marker opponent_text;
+    opponent_text.header.frame_id = "base_link";
+    opponent_text.header.stamp = this->now();
+    opponent_text.ns = "opponent_indicator";
+    opponent_text.id = 1;
+    opponent_text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    opponent_text.action = visualization_msgs::msg::Marker::ADD;
+    
+    opponent_text.pose.position.x = env_state_.preceding_distance;
+    opponent_text.pose.position.y = env_state_.preceding_d;
+    opponent_text.pose.position.z = 0.6;
+    opponent_text.pose.orientation.w = 1.0;
+    
+    opponent_text.scale.z = 0.25;
+    
+    // Determine if opponent is left or right
+    std::string position_str;
+    if (env_state_.preceding_d > 0.15) {
+        position_str = "OPP LEFT";
+    } else if (env_state_.preceding_d < -0.15) {
+        position_str = "OPP RIGHT";
+    } else {
+        position_str = "OPP CENTER";
+    }
+    
+    opponent_text.text = position_str + " (d=" + 
+                         std::to_string(static_cast<int>(env_state_.preceding_d * 100)) + "cm)";
+    
+    opponent_text.color.r = 1.0f;
+    opponent_text.color.g = 1.0f;
+    opponent_text.color.b = 1.0f;
+    opponent_text.color.a = 1.0f;
+    
+    markers.markers.push_back(opponent_text);
+    
     return markers;
 }
 
