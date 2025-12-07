@@ -31,6 +31,11 @@ struct MPCConfig
   double dt = 0.1;                
   double wheelbase = 0.33;        
   
+  // Vehicle geometry for collision checking
+  double vehicle_width = 0.35;    // F1TENTH vehicle width (m)
+  double vehicle_length = 0.50;   // F1TENTH vehicle length (m)
+  double vehicle_safety_margin = 0.10;  // Safety buffer around vehicle (m)
+  
   double vehicle_mass = 3.5;      
   double vehicle_inertia = 0.04;  
   double lf = 0.17;               
@@ -51,8 +56,12 @@ struct MPCConfig
   double w_steer_rate = 600.0;    
   double w_accel_rate = 60.0;     
   
-  double lateral_tolerance = 0.25; 
+  double lateral_tolerance = 0.28;  // Slightly increased for more OUT-IN-OUT (was 0.25)
   double w_terminal = 30.0;       
+  
+  // Obstacle avoidance weights (for path feasibility, not speed limiting)
+  double w_obstacle_avoidance = 50.0;    // Penalty for getting close to obstacles
+  double min_wall_clearance = 0.20;      // Minimum distance from walls (m)
   
   double w_slack_track = 800.0;   
   double w_slack_speed = 400.0;   
@@ -95,6 +104,29 @@ struct ReferencePoint
   double v = 0.0;
 };
 
+// Obstacle representation for collision avoidance
+struct Obstacle
+{
+  double x = 0.0;           // Position x
+  double y = 0.0;           // Position y
+  double width = 0.35;      // Width (m)
+  double length = 0.50;     // Length (m)
+  double heading = 0.0;     // Heading angle (rad)
+  bool is_static = true;    // True for walls, false for moving obstacles
+  bool is_active = false;   // Whether this obstacle should be considered
+};
+
+// Track boundary representation
+struct TrackBoundary
+{
+  double left_distance = 10.0;    // Distance to left boundary (m)
+  double right_distance = 10.0;   // Distance to right boundary (m)
+  double front_distance = 10.0;   // Distance to front obstacle/wall (m)
+  bool left_valid = false;        // Whether left measurement is valid
+  bool right_valid = false;       // Whether right measurement is valid
+  bool front_valid = false;       // Whether front measurement is valid
+};
+
 enum class SolverStatus
 {
   SUCCESS = 0,           
@@ -113,7 +145,9 @@ struct MPCSolution
   int iterations = 0;
   SolverStatus status = SolverStatus::SUCCESS;
   std::vector<VehicleState> predicted_trajectory;  
-  double slack_violation = 0.0;  
+  double slack_violation = 0.0;
+  double min_obstacle_distance = 10.0;  // Closest distance to any obstacle in solution
+  bool obstacle_detected = false;        // Whether obstacles influenced the solution
 };
 
 class BicycleMPCSolver
@@ -337,12 +371,48 @@ public:
     last_solve_status_ = solution.status;
     return solution;
   }
+  
+  // Overloaded solve with obstacle avoidance
+  MPCSolution solve(
+    const VehicleState& current_state,
+    const std::vector<ReferencePoint>& reference,
+    const std::vector<Obstacle>& obstacles,
+    const TrackBoundary& track_boundary,
+    const rclcpp::Logger& logger)
+  {
+    // Store obstacles and boundaries for use in cost computation
+    current_obstacles_ = obstacles;
+    current_track_boundary_ = track_boundary;
+    
+    // Call existing solve method - cost will include obstacle avoidance
+    MPCSolution solution = solve(current_state, reference, logger);
+    
+    // Compute minimum distance to obstacles in solution
+    solution.min_obstacle_distance = 10.0;
+    solution.obstacle_detected = false;
+    
+    for (const auto& obstacle : obstacles) {
+      if (!obstacle.is_active) continue;
+      
+      solution.obstacle_detected = true;
+      for (const auto& state : solution.predicted_trajectory) {
+        double dist = computeObstacleDistance(state, obstacle);
+        solution.min_obstacle_distance = std::min(solution.min_obstacle_distance, dist);
+      }
+    }
+    
+    return solution;
+  }
 
 private:
   MPCConfig config_;
   std::vector<ControlInput> u_prev_;
   int consecutive_failures_ = 0;
   SolverStatus last_solve_status_ = SolverStatus::SUCCESS;
+  
+  // Current obstacles for cost computation
+  std::vector<Obstacle> current_obstacles_;
+  TrackBoundary current_track_boundary_;
   
     std::vector<VehicleState> forwardSimulate(
     const VehicleState& initial_state,
@@ -511,6 +581,35 @@ private:
     double cost = computeCost(states, controls, reference);
     slack_violation = 0.0;
     
+    // Add obstacle avoidance cost (not speed limiting, just path shaping)
+    for (size_t i = 0; i < states.size(); ++i) {
+      // Check distance to obstacles
+      for (const auto& obstacle : current_obstacles_) {
+        if (!obstacle.is_active) continue;
+        
+        double dist = computeObstacleDistance(states[i], obstacle);
+        double safe_dist = (config_.vehicle_width + obstacle.width) / 2.0 + config_.vehicle_safety_margin;
+        
+        if (dist < safe_dist * 2.0) {  // Only penalize when getting close
+          double violation = std::max(0.0, safe_dist - dist);
+          cost += config_.w_obstacle_avoidance * violation * violation;
+          slack_violation += violation;
+        }
+      }
+      
+      // Check distance to track boundaries (wall margins)
+      if (current_track_boundary_.left_valid) {
+        double left_violation = std::max(0.0, config_.min_wall_clearance - current_track_boundary_.left_distance);
+        cost += config_.w_obstacle_avoidance * 0.5 * left_violation * left_violation;
+        slack_violation += left_violation;
+      }
+      if (current_track_boundary_.right_valid) {
+        double right_violation = std::max(0.0, config_.min_wall_clearance - current_track_boundary_.right_distance);
+        cost += config_.w_obstacle_avoidance * 0.5 * right_violation * right_violation;
+        slack_violation += right_violation;
+      }
+    }
+    
     for (size_t i = 0; i < states.size(); ++i) {
       double speed_excess_high = std::max(0.0, states[i].v - config_.max_speed);
       double speed_excess_low = std::max(0.0, config_.min_speed - states[i].v);
@@ -653,6 +752,21 @@ private:
     while (angle > M_PI) angle -= 2.0 * M_PI;
     while (angle < -M_PI) angle += 2.0 * M_PI;
     return angle;
+  }
+  
+  // Helper: Compute distance from vehicle state to obstacle (simplified rectangular collision)
+  double computeObstacleDistance(const VehicleState& state, const Obstacle& obstacle) const
+  {
+    // Simplified distance computation - center to center distance
+    double dx = state.x - obstacle.x;
+    double dy = state.y - obstacle.y;
+    double center_distance = std::hypot(dx, dy);
+    
+    // Approximate surface distance by subtracting half-widths
+    double half_ego = config_.vehicle_width / 2.0;
+    double half_obstacle = obstacle.width / 2.0;
+    
+    return std::max(0.0, center_distance - half_ego - half_obstacle);
   }
 };
 
@@ -1073,6 +1187,9 @@ private:
     
     updateEgoSPosition(current_state);
     
+    // Update obstacle representation for NMPC
+    updateObstacleRepresentation(opponent, current_state);
+    
     std::vector<nmpc::ReferencePoint> reference = buildReference(current_state);
     
     if (reference.empty()) {
@@ -1081,7 +1198,9 @@ private:
       return;
     }
     
-    auto solution = solver_.solve(current_state, reference, get_logger());
+    // Use obstacle-aware solve
+    auto solution = solver_.solve(current_state, reference, current_obstacles_, 
+                                   current_track_boundary_, get_logger());
     
     if (solution.status != nmpc::SolverStatus::SUCCESS) {
       const char* status_str = "UNKNOWN";
@@ -1166,15 +1285,21 @@ private:
         
       case DrivingMode::OVERTAKE:
         {
-          double lateral_offset = overtake_left_side_ ? overtake_path_width_ : -overtake_path_width_;
+          // Use the appropriate overtake path based on selection
+          // overtake_left_side_ = true means INSIDE (tighter), false means OUTSIDE (wider)
+          const auto& selected_path = overtake_left_side_ ? inside_overtake_path_ : outside_overtake_path_;
+          const double path_offset = overtake_left_side_ ? (overtake_path_width_ * 0.7) : (overtake_path_width_ * 1.1);
+          const char* path_name = overtake_left_side_ ? "INSIDE (apex-side)" : "OUTSIDE (wider)";
           
+          // Apply lateral offset to reference trajectory
           for (auto& ref : reference) {
             double cos_yaw = std::cos(ref.yaw);
             double sin_yaw = std::sin(ref.yaw);
-            ref.x += lateral_offset * (-sin_yaw);
-            ref.y += lateral_offset * cos_yaw;
+            ref.x += path_offset * (-sin_yaw);
+            ref.y += path_offset * cos_yaw;
           }
           
+          // Speed boost for overtaking
           double v_overtake = std::min(
             opponent.speed + overtake_boost_,
             v_max_straight_  
@@ -1183,7 +1308,7 @@ private:
           
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
             "OVERTAKE %s: offset=%.2fm, speed=%.2f (boost=%.2f above opponent)",
-            overtake_left_side_ ? "LEFT" : "RIGHT", lateral_offset, 
+            path_name, path_offset, 
             solution.speed, solution.speed - opponent.speed);
         }
         break;
@@ -1361,27 +1486,66 @@ private:
       return;
     }
     
+    // Visualize opponent as a box (footprint)
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = "map";
     marker.header.stamp = now();
-    marker.ns = "opponent";
+    marker.ns = "opponent_footprint";
     marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.type = visualization_msgs::msg::Marker::CUBE;  // Use CUBE to show footprint
     marker.action = visualization_msgs::msg::Marker::ADD;
     
     marker.pose.position.x = opponent.x;
     marker.pose.position.y = opponent.y;
-    marker.pose.position.z = 0.3;
+    marker.pose.position.z = 0.15;  // Half height
     marker.pose.orientation.w = 1.0;
     
-    marker.scale.x = 0.4;
-    marker.scale.y = 0.4;
-    marker.scale.z = 0.4;
+    // Footprint dimensions
+    marker.scale.x = 0.50;  // length
+    marker.scale.y = overtake_opponent_width_;  // width (0.35m)
+    marker.scale.z = 0.30;  // height (for visualization)
     
+    // Red for opponent
     marker.color.r = 1.0f;
     marker.color.g = 0.0f;
     marker.color.b = 0.0f;
-    marker.color.a = 0.8f;
+    marker.color.a = 0.6f;  // Semi-transparent
+    
+    marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+    
+    opponent_marker_pub_->publish(marker);
+    
+    // Also visualize ego footprint
+    if (latest_odom_) {
+      visualization_msgs::msg::Marker ego_marker;
+      ego_marker.header.frame_id = "map";
+      ego_marker.header.stamp = now();
+      ego_marker.ns = "ego_footprint";
+      ego_marker.id = 0;
+      ego_marker.type = visualization_msgs::msg::Marker::CUBE;
+      ego_marker.action = visualization_msgs::msg::Marker::ADD;
+      
+      ego_marker.pose.position.x = latest_odom_->pose.pose.position.x;
+      ego_marker.pose.position.y = latest_odom_->pose.pose.position.y;
+      ego_marker.pose.position.z = 0.15;
+      ego_marker.pose.orientation = latest_odom_->pose.pose.orientation;
+      
+      // Ego footprint dimensions
+      ego_marker.scale.x = 0.50;  // length
+      ego_marker.scale.y = 0.35;  // width (vehicle_width)
+      ego_marker.scale.z = 0.30;  // height
+      
+      // Green for ego
+      ego_marker.color.r = 0.0f;
+      ego_marker.color.g = 1.0f;
+      ego_marker.color.b = 0.0f;
+      ego_marker.color.a = 0.6f;  // Semi-transparent
+      
+      ego_marker.lifetime = rclcpp::Duration::from_seconds(0.2);
+      
+      opponent_marker_pub_->publish(ego_marker);
+    }
+  }
     
     marker.lifetime = rclcpp::Duration::from_seconds(0.5);
     
@@ -1396,6 +1560,7 @@ private:
     
     visualization_msgs::msg::MarkerArray marker_array;
     
+    // Compute arc length positions for zone visualization
     double cumulative_s = 0.0;
     std::vector<double> s_positions;
     s_positions.push_back(0.0);
@@ -1406,6 +1571,7 @@ private:
       s_positions.push_back(cumulative_s);
     }
     
+    // Visualize overtake zones on the main raceline
     visualization_msgs::msg::Marker zone_marker;
     zone_marker.header.frame_id = "map";
     zone_marker.header.stamp = now();
@@ -1413,11 +1579,11 @@ private:
     zone_marker.id = 10;
     zone_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
     zone_marker.action = visualization_msgs::msg::Marker::ADD;
-    zone_marker.scale.x = 0.1;  
-    zone_marker.color.r = 0.0f;
-    zone_marker.color.g = 0.8f;  
+    zone_marker.scale.x = 0.15;  // Slightly thicker for visibility
+    zone_marker.color.r = 0.2f;
+    zone_marker.color.g = 1.0f;  // Bright green for zones
     zone_marker.color.b = 0.2f;
-    zone_marker.color.a = 0.8f;
+    zone_marker.color.a = 0.9f;
     zone_marker.pose.orientation.w = 1.0;
     
     for (size_t i = 0; i < latest_path_->poses.size(); ++i) {
@@ -1441,36 +1607,44 @@ private:
     zone_marker.lifetime = rclcpp::Duration::from_seconds(2.0);
     marker_array.markers.push_back(zone_marker);
     
-    visualization_msgs::msg::Marker left_path;
-    left_path.header.frame_id = "map";
-    left_path.header.stamp = now();
-    left_path.ns = "overtake_left";
-    left_path.id = 0;
-    left_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
-    left_path.action = visualization_msgs::msg::Marker::ADD;
-    left_path.scale.x = 0.05;
-    left_path.color.r = 1.0f;
-    left_path.color.g = 0.0f;
-    left_path.color.b = 1.0f;  
-    left_path.color.a = 0.7f;
-    left_path.pose.orientation.w = 1.0;
+    // Inside overtake path (tighter, apex-side - 0.7x offset for tighter line)
+    visualization_msgs::msg::Marker inside_path;
+    inside_path.header.frame_id = "map";
+    inside_path.header.stamp = now();
+    inside_path.ns = "inside_overtake";
+    inside_path.id = 0;
+    inside_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    inside_path.action = visualization_msgs::msg::Marker::ADD;
+    inside_path.scale.x = 0.06;
+    inside_path.color.r = 1.0f;  // RED for inside (apex-side)
+    inside_path.color.g = 0.3f;
+    inside_path.color.b = 0.3f;
+    inside_path.color.a = 0.8f;
+    inside_path.pose.orientation.w = 1.0;
     
-    visualization_msgs::msg::Marker right_path;
-    right_path.header.frame_id = "map";
-    right_path.header.stamp = now();
-    right_path.ns = "overtake_right";
-    right_path.id = 1;
-    right_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
-    right_path.action = visualization_msgs::msg::Marker::ADD;
-    right_path.scale.x = 0.05;
-    right_path.color.r = 0.0f;
-    right_path.color.g = 1.0f;
-    right_path.color.b = 1.0f;  
-    right_path.color.a = 0.7f;
-    right_path.pose.orientation.w = 1.0;
+    // Outside overtake path (wider, fast outside - 1.1x offset for wider line)
+    visualization_msgs::msg::Marker outside_path;
+    outside_path.header.frame_id = "map";
+    outside_path.header.stamp = now();
+    outside_path.ns = "outside_overtake";
+    outside_path.id = 1;
+    outside_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    outside_path.action = visualization_msgs::msg::Marker::ADD;
+    outside_path.scale.x = 0.06;
+    outside_path.color.r = 0.3f;
+    outside_path.color.g = 0.3f;
+    outside_path.color.b = 1.0f;  // BLUE for outside (wider, faster)
+    outside_path.color.a = 0.8f;
+    outside_path.pose.orientation.w = 1.0;
     
+    // Clear and regenerate paths
     overtake_left_path_.clear();
     overtake_right_path_.clear();
+    inside_overtake_path_.clear();
+    outside_overtake_path_.clear();
+    
+    const double inside_offset = overtake_path_width_ * 0.7;   // Tighter for inside (apex-side)
+    const double outside_offset = overtake_path_width_ * 1.1;  // Wider for outside
     
     for (const auto& pose : latest_path_->poses) {
       double x = pose.pose.position.x;
@@ -1482,27 +1656,44 @@ private:
       double cos_yaw = std::cos(yaw);
       double sin_yaw = std::sin(yaw);
       
+      // Left side paths (for left-side overtaking)
       geometry_msgs::msg::Point left_pt;
       left_pt.x = x + overtake_path_width_ * (-sin_yaw);
       left_pt.y = y + overtake_path_width_ * cos_yaw;
       left_pt.z = 0.05;
-      left_path.points.push_back(left_pt);
       overtake_left_path_.push_back(left_pt);
       
+      // Right side paths (for right-side overtaking)
       geometry_msgs::msg::Point right_pt;
       right_pt.x = x - overtake_path_width_ * (-sin_yaw);
       right_pt.y = y - overtake_path_width_ * cos_yaw;
       right_pt.z = 0.05;
-      right_path.points.push_back(right_pt);
       overtake_right_path_.push_back(right_pt);
+      
+      // Inside path (tighter, apex-hugging)
+      geometry_msgs::msg::Point inside_pt;
+      inside_pt.x = x + inside_offset * (-sin_yaw);
+      inside_pt.y = y + inside_offset * cos_yaw;
+      inside_pt.z = 0.06;
+      inside_path.points.push_back(inside_pt);
+      inside_overtake_path_.push_back(inside_pt);
+      
+      // Outside path (wider, faster)
+      geometry_msgs::msg::Point outside_pt;
+      outside_pt.x = x + outside_offset * (-sin_yaw);
+      outside_pt.y = y + outside_offset * cos_yaw;
+      outside_pt.z = 0.06;
+      outside_path.points.push_back(outside_pt);
+      outside_overtake_path_.push_back(outside_pt);
     }
     
-    left_path.lifetime = rclcpp::Duration::from_seconds(2.0);
-    right_path.lifetime = rclcpp::Duration::from_seconds(2.0);
+    inside_path.lifetime = rclcpp::Duration::from_seconds(2.0);
+    outside_path.lifetime = rclcpp::Duration::from_seconds(2.0);
     
-    marker_array.markers.push_back(left_path);
-    marker_array.markers.push_back(right_path);
+    marker_array.markers.push_back(inside_path);
+    marker_array.markers.push_back(outside_path);
     
+    // Highlight active overtake trajectory when executing
     if (driving_mode_ == DrivingMode::OVERTAKE && overtake_committed_) {
       visualization_msgs::msg::Marker active_path;
       active_path.header.frame_id = "map";
@@ -1511,19 +1702,19 @@ private:
       active_path.id = 20;
       active_path.type = visualization_msgs::msg::Marker::LINE_STRIP;
       active_path.action = visualization_msgs::msg::Marker::ADD;
-      active_path.scale.x = 0.12;  
+      active_path.scale.x = 0.15;  // Thicker for active path
       active_path.color.r = 1.0f;
-      active_path.color.g = 1.0f;  
+      active_path.color.g = 1.0f;  // Yellow for active
       active_path.color.b = 0.0f;
       active_path.color.a = 1.0f;
       active_path.pose.orientation.w = 1.0;
       
-      const auto& active_pts = overtake_left_side_ ? overtake_left_path_ : overtake_right_path_;
+      const auto& active_pts = overtake_left_side_ ? inside_overtake_path_ : outside_overtake_path_;
       for (const auto& pt : active_pts) {
         geometry_msgs::msg::Point p;
         p.x = pt.x;
         p.y = pt.y;
-        p.z = 0.2;  
+        p.z = 0.25;  // Higher for visibility
         active_path.points.push_back(p);
       }
       active_path.lifetime = rclcpp::Duration::from_seconds(0.5);
@@ -1632,6 +1823,95 @@ private:
     return false;
   }
   
+  // Determine the best overtake path based on geometry and clearance
+  enum class OvertakePath { NONE, INSIDE, OUTSIDE };
+  
+  OvertakePath determineBestOvertakePath(const OpponentInfo& opponent) const
+  {
+    if (!opponent.is_detected || !opponent.is_ahead) {
+      return OvertakePath::NONE;
+    }
+    
+    // Check if inside path is feasible (tighter, apex-side)
+    bool inside_feasible = checkInsideOvertakeFeasibility(opponent);
+    
+    // Check if outside path is feasible (wider, faster)
+    bool outside_feasible = checkOutsideOvertakeFeasibility(opponent);
+    
+    // Prefer inside if both are feasible (better racing line)
+    if (inside_feasible && outside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Both inside and outside paths feasible, preferring INSIDE");
+      return OvertakePath::INSIDE;
+    }
+    
+    if (inside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "INSIDE overtake path feasible");
+      return OvertakePath::INSIDE;
+    }
+    
+    if (outside_feasible) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "OUTSIDE overtake path feasible");
+      return OvertakePath::OUTSIDE;
+    }
+    
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+      "No feasible overtake path (left_clear=%.2f, right_clear=%.2f, opp_dist=%.2f)",
+      last_obstacle_left_dist_, last_obstacle_right_dist_, opponent.distance);
+    
+    return OvertakePath::NONE;
+  }
+  
+  // Check if inside (tighter, apex-side) overtake is feasible
+  bool checkInsideOvertakeFeasibility(const OpponentInfo& opponent) const
+  {
+    // Inside overtake requires:
+    // 1. Sufficient lateral clearance on the inside
+    // 2. Opponent not blocking the inside line
+    // 3. Sufficient longitudinal window
+    
+    const double inside_offset = overtake_path_width_ * 0.7;  // Tighter offset
+    const double required_width = overtake_opponent_width_ * overtake_width_factor_ + 
+                                   overtake_safety_margin_;
+    
+    // Check lateral clearance (assume left is inside for now - could be improved with track geometry)
+    bool lateral_clear = last_obstacle_left_dist_ > (inside_offset + required_width);
+    
+    // Check longitudinal window
+    bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+    
+    // Check opponent is not on the inside line already
+    bool opponent_clear = (opponent.distance > 1.0);  // Minimum safe distance
+    
+    return lateral_clear && longitudinal_ok && opponent_clear;
+  }
+  
+  // Check if outside (wider, faster) overtake is feasible
+  bool checkOutsideOvertakeFeasibility(const OpponentInfo& opponent) const
+  {
+    // Outside overtake requires:
+    // 1. Sufficient lateral clearance on the outside
+    // 2. Opponent not blocking the outside line
+    // 3. Sufficient longitudinal window
+    
+    const double outside_offset = overtake_path_width_ * 1.1;  // Wider offset
+    const double required_width = overtake_opponent_width_ * overtake_width_factor_ + 
+                                   overtake_safety_margin_;
+    
+    // Check lateral clearance (assume right is outside for now)
+    bool lateral_clear = last_obstacle_right_dist_ > (outside_offset + required_width);
+    
+    // Check longitudinal window
+    bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+    
+    // Check opponent is not on the outside line already
+    bool opponent_clear = (opponent.distance > 1.0);  // Minimum safe distance
+    
+    return lateral_clear && longitudinal_ok && opponent_clear;
+  }
+  
     void updateDrivingMode(const OpponentInfo& opponent, bool in_overtake_zone, 
                          const rclcpp::Time& current_time)
   {
@@ -1681,36 +1961,65 @@ private:
     }
     
     if (in_overtake_zone && enable_overtaking_) {
-      bool left_clear = canOvertakeOnSide(true);
-      bool right_clear = canOvertakeOnSide(false);
-      bool longitudinal_ok = checkOvertakeLongitudinalWindow();
+      // Determine best overtake path using geometry-based feasibility
+      OvertakePath best_path = determineBestOvertakePath(opponent);
       
-      if ((left_clear || right_clear) && longitudinal_ok) {
+      if (best_path != OvertakePath::NONE) {
         if (driving_mode_ != DrivingMode::OVERTAKE_CANDIDATE) {
           driving_mode_ = DrivingMode::OVERTAKE_CANDIDATE;
           overtake_start_time_ = current_time;  
-          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true, left=%d, right=%d", 
-                      distance, left_clear, right_clear);
+          RCLCPP_INFO(get_logger(), "OVERTAKE_CANDIDATE: distance=%.2fm, zone=true, path=%s", 
+                      distance, best_path == OvertakePath::INSIDE ? "INSIDE" : "OUTSIDE");
         }
         
         double candidate_time = (current_time - overtake_start_time_).seconds();
         if (candidate_time > 0.5 && distance < overtake_decision_distance_) {
           overtake_committed_ = true;
           is_overtaking_ = true;
-          overtake_left_side_ = left_clear;  
+          // Use inside path for left side (in most track geometries)
+          overtake_left_side_ = (best_path == OvertakePath::INSIDE);
           overtake_start_time_ = current_time;
           driving_mode_ = DrivingMode::OVERTAKE;
-          RCLCPP_WARN(get_logger(), "OVERTAKE COMMITTED! side=%s, distance=%.2fm",
-                      overtake_left_side_ ? "LEFT" : "RIGHT", distance);
+          RCLCPP_WARN(get_logger(), "OVERTAKE COMMITTED! path=%s, distance=%.2fm",
+                      best_path == OvertakePath::INSIDE ? "INSIDE (apex-side)" : "OUTSIDE (wider)", 
+                      distance);
         }
         return;
-      } else if (!longitudinal_ok) {
+      } else {
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-          "In overtake zone but longitudinal window insufficient, staying in FOLLOW");
+          "In overtake zone but no feasible path (left_clear=%.2f, right_clear=%.2f)",
+          last_obstacle_left_dist_, last_obstacle_right_dist_);
       }
     }
     
     driving_mode_ = DrivingMode::FOLLOW;
+  }
+  
+  // Update obstacle representation for NMPC from sensor data
+  void updateObstacleRepresentation(const OpponentInfo& opponent, const nmpc::VehicleState& ego_state)
+  {
+    current_obstacles_.clear();
+    
+    // Add opponent as a moving obstacle if detected
+    if (opponent.is_detected && opponent.is_ahead) {
+      nmpc::Obstacle opp_obstacle;
+      opp_obstacle.x = opponent.x;
+      opp_obstacle.y = opponent.y;
+      opp_obstacle.width = overtake_opponent_width_;
+      opp_obstacle.length = 0.50;  // Assumed length
+      opp_obstacle.heading = 0.0;   // Could be computed from opponent orientation if available
+      opp_obstacle.is_static = false;
+      opp_obstacle.is_active = true;
+      current_obstacles_.push_back(opp_obstacle);
+    }
+    
+    // Update track boundary information from LiDAR
+    current_track_boundary_.left_distance = last_obstacle_left_dist_;
+    current_track_boundary_.right_distance = last_obstacle_right_dist_;
+    current_track_boundary_.front_distance = last_obstacle_front_dist_;
+    current_track_boundary_.left_valid = (last_obstacle_left_dist_ < 5.0);  // Only if reasonably close
+    current_track_boundary_.right_valid = (last_obstacle_right_dist_ < 5.0);
+    current_track_boundary_.front_valid = (last_obstacle_front_dist_ < 5.0);
   }
   
     void updateEgoSPosition(const nmpc::VehicleState& current_state)
@@ -2308,6 +2617,14 @@ private:
   double ego_s_position_{0.0};               
   std::vector<geometry_msgs::msg::Point> overtake_left_path_;
   std::vector<geometry_msgs::msg::Point> overtake_right_path_;
+  
+  // Inside and outside overtake paths for better trajectory selection
+  std::vector<geometry_msgs::msg::Point> inside_overtake_path_;   // Tighter, apex-side path
+  std::vector<geometry_msgs::msg::Point> outside_overtake_path_;  // Wider, fast outside path
+  
+  // Obstacle representation for NMPC
+  std::vector<nmpc::Obstacle> current_obstacles_;
+  nmpc::TrackBoundary current_track_boundary_;
   
   mutable size_t last_closest_idx_{0};
 
