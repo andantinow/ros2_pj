@@ -15,14 +15,13 @@ racing_agent:
     decision_rate: 20.0  # Hz - How often the agent makes decisions
 
     # === Speed Parameters ===
-    cruise_speed: 6.0  # m/s - Default cruise speed (restored to balanced speed)
+    cruise_speed: 6.5  # m/s - Default cruise speed (increased for faster straights)
     
     # === Following Parameters ===
-    # Following distance increased for more relaxed, less nervous following behavior
+    # PRIORITY 1 FIX: Increased following distance for larger, more visible gap
     # This gives more room to react and creates a clearer gap before overtaking
-    # v6.0: Further increased for even more comfortable following distance
-    safe_follow_distance: 6.0  # m - Target following distance (ACC style) - INCREASED from 4.5 for more comfortable gap
-    min_stop_distance: 0.8     # m - Emergency stop threshold (increased for safety)
+    safe_follow_distance: 7.0  # m - Target following distance (ACC style) - INCREASED for much larger gap
+    min_stop_distance: 1.0     # m - Emergency stop threshold (increased for safety)
     
     # === Corner Exit Smoothing Parameters (v5.0) ===
     # These control how the car exits corners to prevent wall contact
@@ -50,18 +49,17 @@ racing_agent:
     corner_speed_reduction: 0.9       # Speed reduction factor in corners (0-1) - less aggressive reduction
     
     # === Overtake Feasibility Parameters (v5.0) ===
+    # PRIORITY 2: Less conservative for more practical overtaking
     # These ensure overtakes only start when clearly feasible given opponent geometry
     # Being in an OVERTAKE ZONE is NOT by itself enough to start an overtake
     #
-    # SIMPLIFIED: These parameters are set very conservatively to effectively disable
-    # complex overtaking behavior until the baseline is stable.
+    # These parameters are set to enable practical overtaking while maintaining safety
     #
-    # opponent_width: Assumed width of opponent vehicle. Could be made dynamic
-    #   in future if perception provides opponent size estimation.
+    # opponent_width: Assumed width of opponent vehicle
     opponent_width: 0.35             # m - Assumed opponent vehicle width
-    overtake_width_factor: 2.5       # Factor > 1.0 multiplied by opponent width (very conservative - effectively disables overtaking)
-    overtake_lateral_margin: 0.5     # m - Additional safety margin for overtake path (very conservative)
-    min_longitudinal_window: 15.0    # m - Minimum longitudinal distance to complete overtake (very conservative - effectively disables)
+    overtake_width_factor: 1.5       # Factor > 1.0 multiplied by opponent width (REDUCED from 2.5 for practical overtaking)
+    overtake_lateral_margin: 0.3     # m - Additional safety margin for overtake path (REDUCED from 0.5)
+    min_longitudinal_window: 8.0     # m - Minimum longitudinal distance to complete overtake (REDUCED from 15.0)
     
     # === Overtake Zone Definitions ===
     # Each zone is defined by (s_start, s_end) on the raceline
@@ -94,17 +92,18 @@ racing_agent:
     # - right_lane_aggressive: Quick right overtake
     # - right_lane_soft: Gradual right overtake
     
-    overtake_lateral_offset: 0.75  # m - Maximum lateral offset during overtake (reduced from 0.8 for safety)
-    overtake_speed_boost: 1.3     # Factor - Speed boost during overtake (increased from 1.2 for decisive overtakes)
+    # PRIORITY 2: Simpler, more direct overtaking paths
+    overtake_lateral_offset: 0.65  # m - Lateral offset during overtake (REDUCED from 0.75 for simpler paths)
+    overtake_speed_boost: 1.3     # Factor - Speed boost during overtake
     
     # Trajectory generation parameters
-    trajectory_s_curve_steepness: 0.5  # How sharp the S-curve is (0.0-1.0)
+    trajectory_s_curve_steepness: 0.4  # How sharp the S-curve is (REDUCED from 0.5 for smoother, more direct paths)
     trajectory_min_points: 20          # Minimum waypoints per trajectory
     
     # === Safety Parameters ===
     vehicle_width: 0.35    # m - F1TENTH vehicle width
     safety_margin: 0.15    # m - Additional safety margin
-    min_overtake_clearance: 0.85  # m - Minimum clearance for overtake (2*width + margin)
+    min_overtake_clearance: 0.75  # m - Minimum clearance for overtake (REDUCED from 0.85 for practical overtaking)
     
     # === Obstacle Stop Parameters ===
     # IMPORTANT: When in OBSTACLE_STOP mode:
