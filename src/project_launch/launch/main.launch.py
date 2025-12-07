@@ -61,7 +61,7 @@ def generate_launch_description():
     # Opponent speed factor (fraction of ego speed)
     declare_opponent_speed = DeclareLaunchArgument(
         'opponent_speed',
-        default_value='3.25',
+        default_value='2.5',
         description='Opponent target speed in m/s (should be ~50% of ego max speed)'
     )
 

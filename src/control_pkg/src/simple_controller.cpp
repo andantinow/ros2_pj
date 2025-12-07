@@ -1269,13 +1269,19 @@ void SimpleController::control_loop()
     steering_angle = compute_overtake_steering(steering_angle);
   }
 
-  double speed_factor = 1.0 / (1.0 + 2.0 * std::abs(path_curvature));
+  // Speed factor based on curvature: allow full speed on straights, reduce in corners
+  // On straights (curvature ~0): speed_factor = 1.0 (full speed)
+  // In corners (high curvature): speed_factor reduces based on curvature
+  double speed_factor = 1.0;
   
   if (is_corner && !is_overtaking_) {
-    speed_factor *= corner_speed_factor_;
+    // Only reduce speed in actual corners (curvature > threshold)
+    // Use curvature-based reduction: higher curvature = lower speed
+    double curvature_factor = 1.0 / (1.0 + std::abs(path_curvature));
+    speed_factor = std::min(corner_speed_factor_, curvature_factor);
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER speed reduction (not overtaking): factor=%.2f, corner_factor=%.2f",
-                          speed_factor, corner_speed_factor_);
+                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_factor=%.2f",
+                          path_curvature, speed_factor, corner_speed_factor_);
   }
   
   double base_adjusted_speed = target_speed_ * speed_factor;
