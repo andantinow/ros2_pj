@@ -50,9 +50,11 @@ public:
         std::bind(&OpponentPublisher::timerCB, this));
 
     RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "Opponent config: speed=%.2fm/s, width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
+    RCLCPP_INFO(get_logger(), 
+                "Opponent config: speed=%.2fm/s, width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
                 speed_, opponent_width_, wall_margin_, lateral_offset_);
-    RCLCPP_INFO(get_logger(), "Opponent behavior: Stays %.2fm from walls, %.2fm offset from center (creates overtake lanes)", 
+    RCLCPP_INFO(get_logger(), 
+                "Opponent behavior: Stays %.2fm from walls, %.2fm offset from center (creates overtake lanes)", 
                 wall_margin_, lateral_offset_);
   }
 
