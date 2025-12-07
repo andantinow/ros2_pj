@@ -780,6 +780,9 @@ public:
   static constexpr double OVERTAKE_COMPLETION_TIMEOUT = 2.0;  
   static constexpr double OVERTAKE_SAFETY_MARGIN = 0.3;       
   static constexpr double DEFAULT_OBSTACLE_SPEED = 0.5;       
+  static constexpr double COLLISION_WAIT_DURATION = 0.3;      // Wait duration during collision recovery
+  static constexpr double COLLISION_REVERSE_DURATION = 0.25;  // Reverse duration during collision recovery
+  static constexpr double RECOVERY_COOLDOWN_DURATION = 1.0;   // Cooldown after collision recovery
   
   NMPCEngineNode()
   : Node("nmpc_engine_node")
@@ -920,8 +923,8 @@ public:
     overtake_zone_starts_ = get_parameter("overtake_zone_starts").as_double_array();
     overtake_zone_ends_ = get_parameter("overtake_zone_ends").as_double_array();
     
-    // Set recovery cooldown to fixed value (previously 2x reverse_duration)
-    recovery_cooldown_duration_ = 1.0;  // Fixed 1 second cooldown
+    // Set recovery cooldown (previously 2x reverse_duration)
+    recovery_cooldown_duration_ = RECOVERY_COOLDOWN_DURATION;
     
     if (!use_dual_ekf_) {
       odom_topic = "/car_state/odom_GT";
@@ -1113,7 +1116,7 @@ private:
           if (elapsed > BRIEF_STOP_DURATION) {
             collision_state_ = CollisionState::WAITING;
             collision_state_start_time_ = current_time;
-            RCLCPP_INFO(get_logger(), "Stopped. Holding for %.2fs...", 0.3);  // Fixed 0.3s wait
+            RCLCPP_INFO(get_logger(), "Stopped. Holding for %.2fs...", COLLISION_WAIT_DURATION);
           }
           return;
         }
@@ -1127,11 +1130,11 @@ private:
           cmd.drive.steering_angle = 0.0;
           drive_pub_->publish(cmd);
           
-          if (elapsed > 0.3) {  // Fixed 0.3s waiting period
+          if (elapsed > COLLISION_WAIT_DURATION) {
             if (last_obstacle_front_dist_ < a1_threshold_ * 0.8) {
               collision_state_ = CollisionState::REVERSING;
               collision_state_start_time_ = current_time;
-              RCLCPP_INFO(get_logger(), "Still blocked. Gentle reverse for %.2fs...", 0.25);  // Fixed 0.25s reverse
+              RCLCPP_INFO(get_logger(), "Still blocked. Gentle reverse for %.2fs...", COLLISION_REVERSE_DURATION);
             } else {
               collision_state_ = CollisionState::COOLDOWN;
               collision_state_start_time_ = current_time;
@@ -1153,7 +1156,7 @@ private:
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
             "GENTLE REVERSE: speed=%.2f, steer=0.0", cmd.drive.speed);
           
-          if (elapsed > 0.25) {  // Fixed 0.25s reverse duration
+          if (elapsed > COLLISION_REVERSE_DURATION) {
             collision_state_ = CollisionState::COOLDOWN;
             collision_state_start_time_ = current_time;
             RCLCPP_INFO(get_logger(), "Reverse complete. Cooldown...");
@@ -2595,7 +2598,7 @@ private:
   double last_obstacle_right_dist_{10.0};
   double last_obstacle_front_dist_{10.0};
   double last_obstacle_angle_{0.0};
-  double recovery_cooldown_duration_{0.3};
+  double recovery_cooldown_duration_{RECOVERY_COOLDOWN_DURATION};  // Will be set from constant
   
   DrivingMode driving_mode_{DrivingMode::CRUISE};
   bool is_overtaking_{false};
