@@ -50,6 +50,20 @@ def generate_launch_description():
         default_value='nmpc',  # Default to NMPC controller for better performance
         description='Controller to use: nmpc or simple (Pure Pursuit + PID + Stanley)'
     )
+    
+    # Opponent line mode: 'outer' or 'inner'
+    declare_opponent_line_mode = DeclareLaunchArgument(
+        'opponent_line_mode',
+        default_value='outer',
+        description='Opponent raceline mode: outer (runs on outside) or inner (runs on inside)'
+    )
+    
+    # Opponent speed factor (fraction of ego speed)
+    declare_opponent_speed = DeclareLaunchArgument(
+        'opponent_speed',
+        default_value='3.25',
+        description='Opponent target speed in m/s (should be ~50% of ego max speed)'
+    )
 
     # LaunchConfiguration shortcuts
     map_name_conf = LaunchConfiguration('map_name')
@@ -57,6 +71,8 @@ def generate_launch_description():
     start_rviz_conf = LaunchConfiguration('start_rviz')
     bridge_start_rviz_conf = LaunchConfiguration('bridge_start_rviz')
     controller_conf = LaunchConfiguration('controller')
+    opponent_line_mode_conf = LaunchConfiguration('opponent_line_mode')
+    opponent_speed_conf = LaunchConfiguration('opponent_speed')
 
     # Build map yaml path: <stack_master_pkg>/maps/<map_name>/<map_name>.yaml
     # PythonExpression concatenates the LaunchConfiguration value with '.yaml' at runtime.
@@ -86,7 +102,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             'map_name': map_name_conf,
-            'speed': '0.5',
+            'speed': opponent_speed_conf,
             'path_topic': '/opponent_raceline'
         }.items()
     )
@@ -105,15 +121,23 @@ def generate_launch_description():
         }]
     )
     
-    # Opponent raceline server - publishes outside-biased raceline for opponent
-    # This creates space on the inside for ego car to perform clean overtakes
+    # Opponent raceline server - publishes opponent raceline based on line_mode
+    # - 'outer': opponent runs on outer side of track (default)
+    # - 'inner': opponent runs on inner side of track
+    # This creates predictable opponent behavior and clear overtaking corridors
+    opponent_raceline_file = PathJoinSubstitution([
+        planning_pkg_share,
+        'data',
+        PythonExpression(["'opponent_' + '", opponent_line_mode_conf, "' + '.csv'"])
+    ])
+    
     opponent_raceline_node = Node(
         package='planning_pkg',
         executable='raceline_server',
         name='opponent_raceline_server',
         output='screen',
         parameters=[{
-            'raceline_file': os.path.join(planning_pkg_share, 'data', 'opponent_raceline.csv'),
+            'raceline_file': opponent_raceline_file,
             'frame_id': 'map',
             'publish_vref': False,
             'path_topic': '/opponent_raceline',
@@ -174,6 +198,8 @@ def generate_launch_description():
     ld.add_action(declare_start_rviz)
     ld.add_action(declare_bridge_start_rviz)
     ld.add_action(declare_controller)
+    ld.add_action(declare_opponent_line_mode)
+    ld.add_action(declare_opponent_speed)
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)

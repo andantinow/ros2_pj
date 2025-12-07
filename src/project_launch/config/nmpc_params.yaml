@@ -198,6 +198,20 @@ nmpc_engine_node:
     overtake_min_commit_time: 1.5     # [s] Min time to commit to overtake (reduced for quicker commits)
     overtake_completion_timeout: 2.5  # [s] Time after passing to confirm complete
     
+    # Overtake corridor clearance parameters (PHASE 3: corridor-based overtaking)
+    # These define the minimum required lateral space to attempt overtaking
+    # Formula: min_clearance = opponent_width * width_factor + safety_margin + path_width
+    # Target: ~0.5-0.7m total gap for passable corridor
+    overtake_opponent_width: 0.35     # [m] Opponent vehicle width
+    overtake_width_factor: 1.0        # [-] Multiplier for opponent width (1.0 = exact width)
+    overtake_safety_margin: 0.20      # [m] Additional safety margin on the side
+    overtake_min_longitudinal_window: 3.0  # [m] Minimum remaining distance in overtake zone
+    
+    # With these settings:
+    # min_required = 0.35 * 1.0 + 0.20 + 0.75 = 1.30m total lateral clearance
+    # This allows overtaking when there's a ~1.3m corridor between wall and opponent
+    # which corresponds to ego_width (~0.35m) + 0.5-0.6m gap + opponent space
+    
     # v4.0 Overtake zones (s-intervals on raceline where overtaking is allowed)
     # Default: full track allowed (0 to 1000m)
     # Override in track-specific config to define specific zones
