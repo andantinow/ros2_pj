@@ -132,7 +132,7 @@ nmpc_engine_node:
     min_accel: -6.0              # [m/s^2] Maximum deceleration (negative)
     
     # =========================================================================
-    # SIMPLIFIED COLLISION HANDLING (V4.0)
+    # SIMPLIFIED COLLISION HANDLING (V4.0 + V5.1: Reduced LiDAR Range)
     # =========================================================================
     # When wall/obstacle collision detected:
     # 1. STOP immediately (speed=0, steer=0)
@@ -141,13 +141,18 @@ nmpc_engine_node:
     # 4. Resume normal operation after cooldown
     #
     # v4.0: Simpler handling - just stop stably without weird steering or strong reverse
+    # v5.1 (2025-01): Reduced LiDAR range per user request
+    #   - A2 zone avoidance DISABLED (no steering from obstacles)
+    #   - A1 threshold reduced to ignore distant walls
+    #   - Speed comes from: curvature, FOLLOW/OVERTAKE, hard collision only
     
     enable_collision_avoidance: true
     
-    # Collision detection thresholds (v4.0: smaller for very close detection)
-    a1_threshold: 0.22           # [m] Distance triggering collision (0.20-0.25m as requested)
-    a2_threshold: 0.4            # [m] Distance triggering steering avoidance
-    a2_urgent_threshold: 0.25    # [m] Distance for urgent avoidance
+    # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
+    # User request: Reduce effective LiDAR range, ignore distant walls
+    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22)
+    a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
+    a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
     
     # Collision response timing (v4.0: hold stop, minimal reverse)
     stop_duration: 0.4           # [s] Time to hold stop (0.3-0.5s as requested)
@@ -162,18 +167,22 @@ nmpc_engine_node:
     a2_urgent_steer_ratio: 1.0   # Full steering in urgent mode
     
     # =========================================================================
-    # OPPONENT FOLLOWING AND OVERTAKING SYSTEM (V4.0)
+    # OPPONENT FOLLOWING AND OVERTAKING SYSTEM (V4.0 + V5.1)
     # =========================================================================
     # v4.0 Philosophy:
     # - FOLLOW: politely track opponent at safe distance with similar speed
     # - OVERTAKE: only in allowed zones, commit and accelerate clearly
     # - Visualized in RViz (MAGENTA=left, CYAN=right, YELLOW=active)
+    #
+    # v5.1 (2025-01): Reduced detection range per user request
+    #   - Focus on close-range opponent only
+    #   - Avoid being overly conservative with distant detections
     
     enable_overtaking: true
     
-    # Detection and following
-    opponent_detection_range: 3.5     # [m] Range to detect opponent ahead (increased for earlier detection)
-    opponent_following_distance: 1.5  # [m] Safe following distance (increased - 너무 가까이 따라붙지 않게)
+    # Detection and following (v5.1: reduced range for near-field focus)
+    opponent_detection_range: 2.0     # [m] Range to detect opponent ahead (reduced from 3.5)
+    opponent_following_distance: 1.0  # [m] Safe following distance (reduced from 1.5)
     opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
     # v4.0 FOLLOW behavior
