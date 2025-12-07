@@ -477,16 +477,23 @@ void SimpleController::update_virtual_boxes()
     M_PI / 4.0  // ±45 degrees
   );
   
-  // Check overtake path clearance (Box 3) - wider lateral check
-  // Check left side clearance
+  // Check overtake path clearance (Box 3) - check both sides for overtaking
+  // Left side overtake check
   bool left_clear = !check_lidar_box_occupancy(
     LIDAR_BOX_OVERTAKE_FRONT,
-    LIDAR_BOX_OVERTAKE_WIDTH,
+    LIDAR_BOX_OVERTAKE_WIDTH / 2.0,  // Check left half
     M_PI / 3.0  // ±60 degrees for wider check
   );
   
+  // Right side overtake check
+  bool right_clear = !check_lidar_box_occupancy(
+    LIDAR_BOX_OVERTAKE_FRONT,
+    LIDAR_BOX_OVERTAKE_WIDTH / 2.0,  // Check right half
+    M_PI / 3.0
+  );
+  
   // For overtake, we need at least one side clear
-  overtake_path_clear_ = left_clear;
+  overtake_path_clear_ = left_clear || right_clear;
   
   // Log FSM state changes
   static bool prev_safety = false;

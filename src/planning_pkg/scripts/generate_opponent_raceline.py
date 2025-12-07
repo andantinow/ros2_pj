@@ -28,6 +28,9 @@ from pathlib import Path
 # Constants for numerical stability and defaults
 EPSILON = 1e-12  # Small epsilon to prevent division by zero
 DEFAULT_OPPONENT_SPEED = 3.0  # Default opponent speed (m/s)
+CURVATURE_THRESHOLD_CORNER = 0.08  # Threshold to detect corners
+MAX_CURVATURE_NORMALIZATION = 0.3  # Maximum curvature for normalization
+STRAIGHT_OUTSIDE_BIAS = 0.3  # Outside bias factor on straight sections
 
 
 def read_centerline_with_bounds(filepath):
@@ -155,7 +158,6 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2,
         curvatures.append(kappa)
     
     # Smooth curvature to reduce noise
-    CURVATURE_THRESHOLD = 0.08  # Threshold to detect corners
     window_size = 5
     smoothed_curvatures = []
     for i in range(len(curvatures)):
@@ -191,7 +193,7 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2,
             # OUT-IN-OUT adjustment based on corner phase
             out_in_out_offset = 0.0
             
-            if abs(kappa) > CURVATURE_THRESHOLD:
+            if abs(kappa) > CURVATURE_THRESHOLD_CORNER:
                 # In a corner - apply OUT-IN-OUT logic
                 # Positive kappa = left turn, negative kappa = right turn
                 corner_direction = 1.0 if kappa > 0 else -1.0
@@ -207,7 +209,7 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2,
                 # Positive offset = move left (toward apex for right turn)
                 
                 # Inside bias proportional to curvature magnitude
-                curvature_factor = min(1.0, abs(kappa) / 0.3)  # Normalize
+                curvature_factor = min(1.0, abs(kappa) / MAX_CURVATURE_NORMALIZATION)
                 inside_bias = corner_direction * curvature_factor * out_in_out_strength
                 
                 # Apply bias to create IN at apex
@@ -218,7 +220,7 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2,
             else:
                 # Straight section - stay slightly outside for corner entry
                 # Bias toward outside (negative for left wall, positive for right wall)
-                out_in_out_offset = -base_offset * 0.3  # Slight outside bias
+                out_in_out_offset = -base_offset * STRAIGHT_OUTSIDE_BIAS
             
             # Combine base offset and OUT-IN-OUT adjustment
             total_offset = base_offset + out_in_out_offset
