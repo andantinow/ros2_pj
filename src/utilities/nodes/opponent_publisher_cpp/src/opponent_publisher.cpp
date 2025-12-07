@@ -22,6 +22,11 @@ public:
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
+    
+    // Opponent width and wall margin parameters
+    opponent_width_ = declare_parameter<double>("opponent_width", 0.35);  // Vehicle width (m)
+    wall_margin_ = declare_parameter<double>("wall_margin", 0.25);  // Keep this distance from walls (m)
+    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.0);  // Optional lateral offset from raceline (m), positive = left
 
     // 런치 호환(사용은 안 하더라도 선언해두기)
     declare_parameter<double>("start_s", 0.0);
@@ -44,6 +49,8 @@ public:
         std::bind(&OpponentPublisher::timerCB, this));
 
     RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "Opponent width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
+                opponent_width_, wall_margin_, lateral_offset_);
   }
 
 private:
@@ -71,8 +78,6 @@ private:
     double cumulative_s = 0.0;
     for (size_t i = 0; i < poses.size(); ++i) {
       const auto & pose = poses[i].pose;
-      xs_.push_back(pose.position.x);
-      ys_.push_back(pose.position.y);
       
       // Extract yaw from quaternion (with normalization for numerical stability)
       double qx = pose.orientation.x;
@@ -86,6 +91,14 @@ private:
       }
       double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       psis_.push_back(yaw);
+      
+      // Apply lateral offset to opponent's path to keep away from raceline/walls
+      // Positive lateral_offset_ shifts LEFT (perpendicular to heading)
+      double offset_x = pose.position.x - lateral_offset_ * std::sin(yaw);
+      double offset_y = pose.position.y + lateral_offset_ * std::cos(yaw);
+      
+      xs_.push_back(offset_x);
+      ys_.push_back(offset_y);
       
       // Calculate cumulative arc length using std::hypot for numerical stability
       if (i > 0) {
@@ -225,6 +238,11 @@ private:
   double wheelbase_{0.2};
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
+  
+  // Opponent dimensions and margins
+  double opponent_width_{0.35};      // Vehicle width (m)
+  double wall_margin_{0.25};         // Minimum distance from walls (m)
+  double lateral_offset_{0.0};       // Lateral offset from raceline (m), positive = left
 
   // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;

@@ -313,6 +313,7 @@ private:
     visualization_msgs::msg::MarkerArray create_zone_markers() const;
     visualization_msgs::msg::MarkerArray create_overtake_trajectory_markers() const;
     visualization_msgs::msg::MarkerArray create_mode_marker() const;
+    visualization_msgs::msg::MarkerArray create_opponent_marker() const;
     
     // === Utilities ===
     double compute_arc_length_position(double x, double y) const;

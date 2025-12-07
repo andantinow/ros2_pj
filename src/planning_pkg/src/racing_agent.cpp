@@ -29,11 +29,11 @@ static constexpr int REFERENCE_PATH_POINTS = 30;    // Number of points in refer
 
 // === Corner Exit Safety ===
 static constexpr double CORNER_EXIT_WALL_MARGIN = 0.35;  // Minimum distance from wall on corner exit (m)
-static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 0.95;  // Factor to reduce lateral OUT on corner exit (0-1). Higher = less softening, more pronounced OUT-IN-OUT
+static constexpr double CORNER_EXIT_LATERAL_SOFTEN = 1.0;  // Factor to reduce lateral OUT on corner exit (0-1). Higher = less softening, more pronounced OUT-IN-OUT. Increased from 0.95 for slightly stronger OUT-IN-OUT
 
 // === Inside/Outside Overtake Factors ===
-static constexpr double INSIDE_OVERTAKE_FACTOR = 0.7;   // Tighter offset for inside-line overtake (apex side)
-static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.1;  // Wider offset for outside-line overtake
+static constexpr double INSIDE_OVERTAKE_FACTOR = 0.65;   // Tighter offset for inside-line overtake (apex side) - reduced from 0.7 for tighter inside line
+static constexpr double OUTSIDE_OVERTAKE_FACTOR = 1.15;  // Wider offset for outside-line overtake - increased from 1.1 for wider outside line
 
 // === Following Control Constants ===
 // Reduced gains for smoother, less aggressive following behavior
@@ -269,6 +269,10 @@ void RacingAgent::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg
     double min_left = 10.0;
     double min_right = 10.0;
     
+    // Track the angle where the front obstacle is detected for lateral position estimation
+    double front_obstacle_angle = 0.0;
+    double front_obstacle_range = 10.0;
+    
     for (size_t i = 0; i < msg->ranges.size(); ++i) {
         double angle = msg->angle_min + i * msg->angle_increment;
         double range = msg->ranges[i];
@@ -279,7 +283,12 @@ void RacingAgent::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg
         
         // Front sector
         if (std::abs(angle) <= FRONT_SECTOR_HALF_ANGLE) {
-            min_front = std::min(min_front, range);
+            if (range < min_front) {
+                min_front = range;
+                // Track angle of closest front obstacle (opponent)
+                front_obstacle_angle = angle;
+                front_obstacle_range = range;
+            }
         }
         // Left sector
         else if (angle > SIDE_SECTOR_START && angle < SIDE_SECTOR_END) {
@@ -299,6 +308,16 @@ void RacingAgent::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg
     // Simple preceding vehicle detection (if front obstacle within follow distance)
     env_state_.has_preceding_vehicle = env_state_.front_obstacle_detected;
     env_state_.preceding_distance = min_front;
+    
+    // Estimate opponent lateral position from LiDAR
+    // If opponent is detected in front sector, compute lateral offset
+    if (env_state_.has_preceding_vehicle && front_obstacle_range < safe_follow_distance_) {
+        // Lateral offset = range * sin(angle) 
+        // Positive = left of ego vehicle, Negative = right of ego vehicle
+        env_state_.preceding_d = front_obstacle_range * std::sin(front_obstacle_angle);
+    } else {
+        env_state_.preceding_d = 0.0;
+    }
 }
 
 // === Main Decision Loop ===
@@ -963,6 +982,10 @@ void RacingAgent::publish_visualization()
     auto mode_markers = create_mode_marker();
     for (auto& m : mode_markers.markers) markers.markers.push_back(m);
     
+    // Add opponent position marker
+    auto opponent_markers = create_opponent_marker();
+    for (auto& m : opponent_markers.markers) markers.markers.push_back(m);
+    
     viz_pub_->publish(markers);
 }
 
@@ -1162,6 +1185,82 @@ visualization_msgs::msg::MarkerArray RacingAgent::create_mode_marker() const
     }
     
     markers.markers.push_back(text_marker);
+    return markers;
+}
+
+visualization_msgs::msg::MarkerArray RacingAgent::create_opponent_marker() const
+{
+    visualization_msgs::msg::MarkerArray markers;
+    
+    // Only show opponent marker if opponent is detected
+    if (!env_state_.has_preceding_vehicle) {
+        return markers;
+    }
+    
+    // Create a sphere marker to indicate opponent position
+    visualization_msgs::msg::Marker opponent_sphere;
+    opponent_sphere.header.frame_id = "base_link";  // Relative to ego vehicle
+    opponent_sphere.header.stamp = this->now();
+    opponent_sphere.ns = "opponent_indicator";
+    opponent_sphere.id = 0;
+    opponent_sphere.type = visualization_msgs::msg::Marker::SPHERE;
+    opponent_sphere.action = visualization_msgs::msg::Marker::ADD;
+    
+    // Position opponent based on detected distance and lateral offset
+    opponent_sphere.pose.position.x = env_state_.preceding_distance;  // Forward distance
+    opponent_sphere.pose.position.y = env_state_.preceding_d;         // Lateral offset
+    opponent_sphere.pose.position.z = 0.2;
+    opponent_sphere.pose.orientation.w = 1.0;
+    
+    // Size based on opponent width
+    opponent_sphere.scale.x = opponent_width_;
+    opponent_sphere.scale.y = opponent_width_;
+    opponent_sphere.scale.z = 0.3;
+    
+    // Color: Magenta for visibility
+    opponent_sphere.color.r = 1.0f;
+    opponent_sphere.color.g = 0.0f;
+    opponent_sphere.color.b = 1.0f;
+    opponent_sphere.color.a = 0.7f;
+    
+    markers.markers.push_back(opponent_sphere);
+    
+    // Add text label showing lateral offset
+    visualization_msgs::msg::Marker opponent_text;
+    opponent_text.header.frame_id = "base_link";
+    opponent_text.header.stamp = this->now();
+    opponent_text.ns = "opponent_indicator";
+    opponent_text.id = 1;
+    opponent_text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    opponent_text.action = visualization_msgs::msg::Marker::ADD;
+    
+    opponent_text.pose.position.x = env_state_.preceding_distance;
+    opponent_text.pose.position.y = env_state_.preceding_d;
+    opponent_text.pose.position.z = 0.6;
+    opponent_text.pose.orientation.w = 1.0;
+    
+    opponent_text.scale.z = 0.25;
+    
+    // Determine if opponent is left or right
+    std::string position_str;
+    if (env_state_.preceding_d > 0.15) {
+        position_str = "OPP LEFT";
+    } else if (env_state_.preceding_d < -0.15) {
+        position_str = "OPP RIGHT";
+    } else {
+        position_str = "OPP CENTER";
+    }
+    
+    opponent_text.text = position_str + " (d=" + 
+                         std::to_string(static_cast<int>(env_state_.preceding_d * 100)) + "cm)";
+    
+    opponent_text.color.r = 1.0f;
+    opponent_text.color.g = 1.0f;
+    opponent_text.color.b = 1.0f;
+    opponent_text.color.a = 1.0f;
+    
+    markers.markers.push_back(opponent_text);
+    
     return markers;
 }
 
@@ -1407,15 +1506,59 @@ double RacingAgent::get_corner_adjusted_follow_distance() const
 RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
 {
     // Determine whether to overtake on inside (apex side) or outside
-    // Based on:
-    // 1. Track geometry (corner direction)
-    // 2. Opponent lateral position
-    // 3. Available clearance on each side
+    // PRIMARY LOGIC: Based on opponent's lateral position
+    // - If opponent is running OUTSIDE (positive lateral offset) → overtake INSIDE
+    // - If opponent is running INSIDE (negative lateral offset) → overtake OUTSIDE
+    // SECONDARY: Track geometry and available clearance
     
     if (!raceline_received_ || global_raceline_.poses.empty() || raceline_s_.empty()) {
         return OvertakeSide::NONE;
     }
     
+    // Check clearance on each side first
+    bool left_clear = check_lateral_clearance_for_overtake(true);
+    bool right_clear = check_lateral_clearance_for_overtake(false);
+    
+    if (!left_clear && !right_clear) {
+        return OvertakeSide::NONE;
+    }
+    
+    // PRIMARY DECISION: Use opponent's lateral position
+    // preceding_d > 0 means opponent is LEFT of ego (from ego's perspective in body frame)
+    // We want to interpret this relative to the raceline for overtaking decision
+    // 
+    // For now, use a simple heuristic:
+    // - If opponent is detectably offset to one side (|preceding_d| > threshold),
+    //   overtake on the opposite side
+    // - Otherwise, use track geometry
+    
+    constexpr double LATERAL_THRESHOLD = 0.15;  // Threshold to detect if opponent is offset (m)
+    
+    if (env_state_.has_preceding_vehicle) {
+        if (env_state_.preceding_d > LATERAL_THRESHOLD) {
+            // Opponent is to the LEFT of ego → overtake on RIGHT (inside if clear)
+            if (right_clear) {
+                RCLCPP_DEBUG(this->get_logger(), 
+                    "Opponent LEFT (d=%.2f), overtaking RIGHT (INSIDE)", env_state_.preceding_d);
+                return OvertakeSide::INSIDE;
+            } else if (left_clear) {
+                // Right blocked, try left with outside offset
+                return OvertakeSide::OUTSIDE;
+            }
+        } else if (env_state_.preceding_d < -LATERAL_THRESHOLD) {
+            // Opponent is to the RIGHT of ego → overtake on LEFT (outside if clear)
+            if (left_clear) {
+                RCLCPP_DEBUG(this->get_logger(), 
+                    "Opponent RIGHT (d=%.2f), overtaking LEFT (OUTSIDE)", env_state_.preceding_d);
+                return OvertakeSide::OUTSIDE;
+            } else if (right_clear) {
+                // Left blocked, try right with inside offset
+                return OvertakeSide::INSIDE;
+            }
+        }
+    }
+    
+    // FALLBACK: Use track geometry if opponent position is neutral or not detected
     // Find current position on raceline using binary search (O(log n))
     auto it = std::lower_bound(raceline_s_.begin(), raceline_s_.end(), env_state_.ego_s);
     size_t current_idx = (it != raceline_s_.end()) ? 
@@ -1445,15 +1588,7 @@ RacingAgent::OvertakeSide RacingAgent::determine_best_overtake_side() const
         }
     }
     
-    // Check clearance on each side
-    bool left_clear = check_lateral_clearance_for_overtake(true);
-    bool right_clear = check_lateral_clearance_for_overtake(false);
-    
-    if (!left_clear && !right_clear) {
-        return OvertakeSide::NONE;
-    }
-    
-    // Inside overtake preference:
+    // Inside overtake preference based on corner:
     // - For left turn (corner_direction > 0): inside is RIGHT side
     // - For right turn (corner_direction < 0): inside is LEFT side
     // - On straight: prefer side with more clearance
