@@ -411,6 +411,109 @@ void SimpleController::update_obstacle_distances()
   last_obstacle_angle_ = front_angle;
 }
 
+bool SimpleController::check_lidar_box_occupancy(double front_dist, double lateral_width, double angle_range)
+{
+  if (!scan_received_ || current_scan_.ranges.empty()) {
+    return false;
+  }
+  
+  double angle_min = current_scan_.angle_min;
+  double angle_inc = current_scan_.angle_increment;
+  int num_ranges = current_scan_.ranges.size();
+  
+  constexpr double MIN_VALID_RANGE = 0.03;
+  
+  // Check if any LiDAR point falls within the virtual box
+  for (int i = 0; i < num_ranges; ++i) {
+    double angle = angle_min + i * angle_inc;
+    double range = current_scan_.ranges[i];
+    
+    if (std::isnan(range) || std::isinf(range) || range < MIN_VALID_RANGE) {
+      continue;
+    }
+    
+    // Check if point is within the box
+    // Front distance check
+    if (range > front_dist) {
+      continue;
+    }
+    
+    // Lateral width check (angle range)
+    if (std::abs(angle) > angle_range) {
+      continue;
+    }
+    
+    // Calculate lateral distance (y in vehicle frame)
+    double lateral_dist = std::abs(range * std::sin(angle));
+    
+    if (lateral_dist < lateral_width / 2.0) {
+      return true;  // Found a point in the box
+    }
+  }
+  
+  return false;  // No points found in the box
+}
+
+void SimpleController::update_virtual_boxes()
+{
+  if (!scan_received_) {
+    opponent_in_safety_box_ = false;
+    opponent_in_follow_box_ = false;
+    overtake_path_clear_ = true;
+    return;
+  }
+  
+  // Check safety box (Box 1) - very close, emergency stop zone
+  opponent_in_safety_box_ = check_lidar_box_occupancy(
+    LIDAR_BOX_SAFETY_FRONT,
+    LIDAR_BOX_SAFETY_WIDTH,
+    M_PI / 6.0  // ±30 degrees
+  );
+  
+  // Check follow box (Box 2) - maintain distance zone
+  opponent_in_follow_box_ = check_lidar_box_occupancy(
+    LIDAR_BOX_FOLLOW_FRONT,
+    LIDAR_BOX_FOLLOW_WIDTH,
+    M_PI / 4.0  // ±45 degrees
+  );
+  
+  // Check overtake path clearance (Box 3) - wider check for obstacles in overtake zone
+  // This checks if there are any obstacles in the wider overtake assessment area
+  // The actual left/right overtake decision is made based on last_obstacle_left_dist_ 
+  // and last_obstacle_right_dist_ in the can_overtake_safely() function
+  overtake_path_clear_ = !check_lidar_box_occupancy(
+    LIDAR_BOX_OVERTAKE_FRONT,
+    LIDAR_BOX_OVERTAKE_WIDTH,
+    M_PI / 3.0  // ±60 degrees for wider check
+  );
+  
+  // Log FSM state changes
+  static bool prev_safety = false;
+  static bool prev_follow = false;
+  static bool prev_overtake_clear = true;
+  
+  if (opponent_in_safety_box_ != prev_safety) {
+    RCLCPP_INFO(this->get_logger(), 
+                "FSM: Safety box %s", 
+                opponent_in_safety_box_ ? "OCCUPIED (STOP/REVERSE)" : "CLEAR");
+    prev_safety = opponent_in_safety_box_;
+  }
+  
+  if (opponent_in_follow_box_ != prev_follow) {
+    RCLCPP_INFO(this->get_logger(), 
+                "FSM: Follow box %s", 
+                opponent_in_follow_box_ ? "OCCUPIED (FOLLOW)" : "CLEAR");
+    prev_follow = opponent_in_follow_box_;
+  }
+  
+  if (overtake_path_clear_ != prev_overtake_clear) {
+    RCLCPP_INFO(this->get_logger(), 
+                "FSM: Overtake path %s", 
+                overtake_path_clear_ ? "CLEAR (ASSESS_OVERTAKE)" : "BLOCKED");
+    prev_overtake_clear = overtake_path_clear_;
+  }
+}
+
 bool SimpleController::check_a1_zone()
 {
   if (!enable_collision_avoidance_ || !scan_received_) {
@@ -869,6 +972,7 @@ void SimpleController::control_loop()
   }
   
   update_obstacle_distances();
+  update_virtual_boxes();  // Update LiDAR virtual boxes for FSM
   
   if (is_planning_after_pause_) {
     double planning_elapsed = (current_time - planning_start_time_).seconds();

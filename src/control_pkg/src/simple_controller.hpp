@@ -100,9 +100,10 @@ private:
   double corner_steer_amplify_ = 1.5;        // 코너에서 조향각 증폭 비율 (더 큰 각도로 돌기)
   
   // === Out-In-Out 코너링 (레이싱 라인) ===
+  // NOTE: OUT-IN-OUT is now used by OPPONENT only. Ego follows global raceline + overtaking lanes.
   double corner_approach_distance_ = 1.5;    // 코너 접근 감지 거리 (m)
   double out_in_out_offset_ = 0.35;          // 아웃-인-아웃 오프셋 (m) - increased from 0.3 for more visible racing line
-  bool enable_out_in_out_ = true;            // 아웃-인-아웃 활성화
+  bool enable_out_in_out_ = false;           // 아웃-인-아웃 활성화 (DISABLED for ego - opponent uses this instead)
   
   // === 추월 시스템 (Opponent Overtaking) ===
   bool is_overtaking_ = false;               // 현재 추월 중인지
@@ -179,10 +180,10 @@ private:
   
   // === 상대 차량 Following 시스템 (ACC 스타일 PD 제어) ===
   // 보고서 기반: v_cmd = v_opp + Kp*(gap - target_gap) + Kd*(v_opp - v_ego)
-  // Following distance increased for more relaxed, less nervous behavior
+  // Following distance increased for safer, more relaxed behavior with larger gap
   bool is_following_opponent_ = false;     // 현재 상대 차량 following 중인지
-  double follow_distance_threshold_ = 4.0; // following 시작 거리 (m) - increased for farther following
-  double follow_min_distance_ = 0.5;       // 최소 유지 거리 (m) - 이보다 가까우면 정지에 가까움
+  double follow_distance_threshold_ = 5.0; // following 시작 거리 (m) - increased from 4.0 for larger detection distance
+  double follow_min_distance_ = 0.8;       // 최소 유지 거리 (m) - increased from 0.5 for more safety buffer
   double follow_speed_factor_ = 0.4;       // following 시 속도 비율 (덜 보수적)
   double follow_min_speed_ratio_ = 0.15;   // 최소 속도 비율 (15%) - 완전 정지 방지
   double speed_smooth_factor_ = 0.1;       // 속도 변화 스무딩 (급격한 속도 변화 방지)
@@ -191,7 +192,7 @@ private:
   // === ACC PD Control Parameters (보고서 기반) ===
   double acc_kp_ = 0.5;                    // ACC 비례 게인 (gap error)
   double acc_kd_ = 0.2;                    // ACC 미분 게인 (relative velocity)
-  double target_follow_gap_ = 3.0;         // 목표 차간 거리 (m) - increased for larger following gap
+  double target_follow_gap_ = 3.5;         // 목표 차간 거리 (m) - increased from 3.0 for larger safety gap
   double estimated_opponent_velocity_ = 0.0;  // 추정된 상대 차량 속도
   double prev_opponent_distance_ = 10.0;   // 이전 상대 차량 거리 (속도 추정용)
   rclcpp::Time prev_opponent_time_;        // 이전 상대 차량 거리 측정 시간
@@ -206,11 +207,37 @@ private:
   double min_visibility_angle_ = 0.6;      // 최소 시야 각도 (rad, 약 34도) - 덜 엄격하게
   double min_overtake_clearance_ = 0.0;    // 최소 추월 간격 (계산됨: vehicle_width * 2 + safety_margin)
   
-  // 장애물 위치 정보 (회피 방향 결정용)
+  // === 장애물 위치 정보 (회피 방향 결정용) ===
   double last_obstacle_left_dist_ = 10.0;   // 왼쪽 장애물 거리
   double last_obstacle_right_dist_ = 10.0;  // 오른쪽 장애물 거리
   double last_obstacle_front_dist_ = 10.0;  // 전방 장애물 거리
   double last_obstacle_angle_ = 0.0;        // 가장 가까운 전방 장애물 각도
+  
+  // === LiDAR Virtual Box FSM ===
+  // Virtual boxes for opponent detection and FSM state transitions
+  // Box 1: Safety Box (very close) - triggers emergency stop/reverse
+  static constexpr double LIDAR_BOX_SAFETY_FRONT = 0.18;    // Safety box front distance (m) - matches A1
+  static constexpr double LIDAR_BOX_SAFETY_WIDTH = 0.7;     // Safety box width (m)
+  
+  // Box 2: Detection Box (follow zone) - triggers FOLLOW state
+  static constexpr double LIDAR_BOX_FOLLOW_FRONT = 5.0;     // Follow box front distance (m) - matches follow_distance_threshold
+  static constexpr double LIDAR_BOX_FOLLOW_WIDTH = 1.0;     // Follow box width (m)
+  
+  // Box 3: Overtake Assessment Box - checks if path is clear for overtake
+  static constexpr double LIDAR_BOX_OVERTAKE_FRONT = 4.0;   // Overtake assessment front distance (m)
+  static constexpr double LIDAR_BOX_OVERTAKE_WIDTH = 2.0;   // Overtake assessment width (m)
+  
+  // FSM state tracking
+  bool opponent_in_safety_box_ = false;      // Opponent detected in safety box (emergency)
+  bool opponent_in_follow_box_ = false;      // Opponent detected in follow box (maintain distance)
+  bool overtake_path_clear_ = false;         // Overtake path is clear (side boxes)
+  
+  // Helper functions for virtual box checks
+  bool check_lidar_box_occupancy(double front_dist, double lateral_width, double angle_range);
+  void update_virtual_boxes();               // Update all virtual box states
+  
+  // 장애물 위치 정보 (회피 방향 결정용)
+  // NOTE: These are now computed from virtual boxes, not used for wall repulsion
   
   // 활성화 플래그
   bool enable_collision_avoidance_ = true;  // 충돌 회피 활성화
