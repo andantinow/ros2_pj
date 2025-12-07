@@ -18,17 +18,18 @@ public:
   {
     // Parameters
     lookahead_s_ = declare_parameter<double>("lookahead_s", 0.75);
-    speed_       = declare_parameter<double>("speed",       3.0);  // Slightly reduced for easier overtaking
+    speed_       = declare_parameter<double>("speed",       2.5);  // Lower speed for easier ego overtaking
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
     
     // Opponent width and wall margin parameters
+    // Per user request: opponent should stay farther from walls but not exactly centered
     opponent_width_ = declare_parameter<double>("opponent_width", 0.35);  // Vehicle width (m)
-    wall_margin_ = declare_parameter<double>("wall_margin", 0.25);  // Keep this distance from walls (m)
-    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.0);  // Optional lateral offset from raceline (m), positive = left
+    wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Larger margin from walls for visible safety buffer
+    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center - creates overtake lanes
 
-    // 런치 호환(사용은 안 하더라도 선언해두기)
+    // Launch compatibility parameters (declared for compatibility, not actively used)
     declare_parameter<double>("start_s", 0.0);
     declare_parameter<std::string>("trajectory", "min_curv"); // centerline/min_curv/shortest_path/min_time
     declare_parameter<bool>("constant_speed", false);
@@ -49,8 +50,12 @@ public:
         std::bind(&OpponentPublisher::timerCB, this));
 
     RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "Opponent width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
-                opponent_width_, wall_margin_, lateral_offset_);
+    RCLCPP_INFO(get_logger(), 
+                "Opponent config: speed=%.2fm/s, width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
+                speed_, opponent_width_, wall_margin_, lateral_offset_);
+    RCLCPP_INFO(get_logger(), 
+                "Opponent behavior: Stays %.2fm from walls, %.2fm offset from center (creates overtake lanes)", 
+                wall_margin_, lateral_offset_);
   }
 
 private:
@@ -234,15 +239,15 @@ private:
 private:
   // Parameters
   double lookahead_s_{0.5};
-  double speed_{1.0};
+  double speed_{2.5};                // Lower speed for easier ego overtaking
   double wheelbase_{0.2};
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
   
   // Opponent dimensions and margins
   double opponent_width_{0.35};      // Vehicle width (m)
-  double wall_margin_{0.25};         // Minimum distance from walls (m)
-  double lateral_offset_{0.0};       // Lateral offset from raceline (m), positive = left
+  double wall_margin_{0.35};         // Larger margin from walls for visible safety buffer
+  double lateral_offset_{0.15};      // Offset from exact center - creates overtake lanes
 
   // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;
