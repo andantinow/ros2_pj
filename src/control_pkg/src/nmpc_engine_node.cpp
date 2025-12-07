@@ -828,10 +828,6 @@ public:
     declare_parameter("a2_max_steer_ratio", 1.0);      
     declare_parameter("a2_urgent_steer_ratio", 1.0);   
     declare_parameter("reverse_speed", 1.5);           
-    declare_parameter("reverse_duration", 0.5);        
-    declare_parameter("stop_duration", 0.3);           
-    declare_parameter("a1_steer_gain", 1.0);           
-    declare_parameter("a2_steer_gain", 1.5);           
     declare_parameter("a2_urgent_steer_gain", 2.0);    
     declare_parameter("enable_collision_avoidance", true);
     
@@ -888,10 +884,6 @@ public:
     a2_max_steer_ratio_ = get_parameter("a2_max_steer_ratio").as_double();
     a2_urgent_steer_ratio_ = get_parameter("a2_urgent_steer_ratio").as_double();
     reverse_speed_ = get_parameter("reverse_speed").as_double();
-    reverse_duration_ = get_parameter("reverse_duration").as_double();
-    stop_duration_ = get_parameter("stop_duration").as_double();
-    a1_steer_gain_ = get_parameter("a1_steer_gain").as_double();
-    a2_steer_gain_ = get_parameter("a2_steer_gain").as_double();
     a2_urgent_steer_gain_ = get_parameter("a2_urgent_steer_gain").as_double();
     enable_collision_avoidance_ = get_parameter("enable_collision_avoidance").as_bool();
     
@@ -928,7 +920,8 @@ public:
     overtake_zone_starts_ = get_parameter("overtake_zone_starts").as_double_array();
     overtake_zone_ends_ = get_parameter("overtake_zone_ends").as_double_array();
     
-    recovery_cooldown_duration_ = reverse_duration_ * 2.0;
+    // Set recovery cooldown to fixed value (previously 2x reverse_duration)
+    recovery_cooldown_duration_ = 1.0;  // Fixed 1 second cooldown
     
     if (!use_dual_ekf_) {
       odom_topic = "/car_state/odom_GT";
@@ -939,8 +932,7 @@ public:
     RCLCPP_INFO(get_logger(), "Using %s for state estimation", use_dual_ekf_ ? "Dual EKF" : "Ground Truth");
     RCLCPP_INFO(get_logger(), "Topics - odom: %s, path: %s, drive: %s", 
                 odom_topic.c_str(), path_topic.c_str(), drive_topic.c_str());
-    RCLCPP_INFO(get_logger(), "Collision System: A1=%.2fm (stop), stop=%.2fs, reverse=%.2fs",
-                a1_threshold_, stop_duration_, reverse_duration_);
+    RCLCPP_INFO(get_logger(), "Collision System: A1=%.2fm (stop)", a1_threshold_);
     RCLCPP_INFO(get_logger(), "Curvature Speed: k1=%.2f, k2=%.2f, v_straight=%.1fm/s, v_corner=%.1fm/s",
                 curvature_k1_, curvature_k2_, v_max_straight_, v_min_corner_);
     RCLCPP_INFO(get_logger(), "FOLLOW: margin=%.2fm/s, v_min=%.2fm/s",
@@ -1121,7 +1113,7 @@ private:
           if (elapsed > BRIEF_STOP_DURATION) {
             collision_state_ = CollisionState::WAITING;
             collision_state_start_time_ = current_time;
-            RCLCPP_INFO(get_logger(), "Stopped. Holding for %.2fs...", stop_duration_);
+            RCLCPP_INFO(get_logger(), "Stopped. Holding for %.2fs...", 0.3);  // Fixed 0.3s wait
           }
           return;
         }
@@ -1135,11 +1127,11 @@ private:
           cmd.drive.steering_angle = 0.0;
           drive_pub_->publish(cmd);
           
-          if (elapsed > stop_duration_) {
+          if (elapsed > 0.3) {  // Fixed 0.3s waiting period
             if (last_obstacle_front_dist_ < a1_threshold_ * 0.8) {
               collision_state_ = CollisionState::REVERSING;
               collision_state_start_time_ = current_time;
-              RCLCPP_INFO(get_logger(), "Still blocked. Gentle reverse for %.2fs...", reverse_duration_);
+              RCLCPP_INFO(get_logger(), "Still blocked. Gentle reverse for %.2fs...", 0.25);  // Fixed 0.25s reverse
             } else {
               collision_state_ = CollisionState::COOLDOWN;
               collision_state_start_time_ = current_time;
@@ -1161,7 +1153,7 @@ private:
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
             "GENTLE REVERSE: speed=%.2f, steer=0.0", cmd.drive.speed);
           
-          if (elapsed > reverse_duration_ * 0.5) {
+          if (elapsed > 0.25) {  // Fixed 0.25s reverse duration
             collision_state_ = CollisionState::COOLDOWN;
             collision_state_start_time_ = current_time;
             RCLCPP_INFO(get_logger(), "Reverse complete. Cooldown...");
@@ -2554,10 +2546,6 @@ private:
   double a2_max_steer_ratio_{1.0};    
   double a2_urgent_steer_ratio_{1.0}; 
   double reverse_speed_{1.5};         
-  double reverse_duration_{0.5};      
-  double stop_duration_{0.3};         
-  double a1_steer_gain_{1.0};         
-  double a2_steer_gain_{1.5};         
   double a2_urgent_steer_gain_{2.0};  
   bool enable_collision_avoidance_{true};
   
