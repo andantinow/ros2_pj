@@ -51,11 +51,10 @@ public:
 
     RCLCPP_INFO(get_logger(), "Opponent Publisher ready, subscribing to path: %s", path_topic_.c_str());
     RCLCPP_INFO(get_logger(), 
-                "Opponent config: speed=%.2fm/s, width: %.2fm, wall margin: %.2fm, lateral offset: %.2fm", 
-                speed_, opponent_width_, wall_margin_, lateral_offset_);
+                "Opponent config: speed=%.2fm/s, lookahead=%.2fm, wheelbase=%.3fm", 
+                speed_, lookahead_s_, wheelbase_);
     RCLCPP_INFO(get_logger(), 
-                "Opponent behavior: Stays %.2fm from walls, %.2fm offset from center (creates overtake lanes)", 
-                wall_margin_, lateral_offset_);
+                "Opponent uses pre-generated raceline path (opponent_outer.csv or opponent_inner.csv) with offset already included");
   }
 
 private:
@@ -237,7 +236,7 @@ private:
   // Parameters
   double lookahead_s_{0.5};
   double speed_{2.5};                // Lower speed for easier ego overtaking
-  double wheelbase_{0.2};
+  double wheelbase_{0.325};          // Match parameter default value
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
   
