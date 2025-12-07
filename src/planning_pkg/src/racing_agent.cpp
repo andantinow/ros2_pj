@@ -172,6 +172,14 @@ void RacingAgent::raceline_callback(const nav_msgs::msg::Path::SharedPtr msg)
     global_raceline_ = *msg;
     raceline_received_ = true;
     
+    RCLCPP_WARN(this->get_logger(), 
+        "=== RECEIVED GLOBAL RACELINE === Points: %zu, Frame: %s",
+        msg->poses.size(), msg->header.frame_id.c_str());
+    RCLCPP_WARN(this->get_logger(), 
+        "First point: (%.3f, %.3f), Last: (%.3f, %.3f)",
+        msg->poses[0].pose.position.x, msg->poses[0].pose.position.y,
+        msg->poses.back().pose.position.x, msg->poses.back().pose.position.y);
+    
     // Compute arc length for each waypoint
     raceline_s_.clear();
     raceline_s_.push_back(0.0);
@@ -1571,9 +1579,32 @@ void RacingAgent::generate_global_overtaking_lanes()
     // Publish the global overtaking lanes for visualization
     publish_global_overtaking_lanes();
     
-    RCLCPP_INFO(this->get_logger(), 
-        "Generated global overtaking lanes: inside (%.2fm offset), outside (%.2fm offset)",
-        inside_offset, outside_offset);
+    RCLCPP_WARN(this->get_logger(), 
+        "=== GENERATED GLOBAL OVERTAKING LANES ===");
+    RCLCPP_WARN(this->get_logger(), 
+        "Inside lane: %.2fm offset, %zu points, frame: %s",
+        inside_offset, global_inside_overtake_lane_.poses.size(), 
+        global_inside_overtake_lane_.header.frame_id.c_str());
+    if (!global_inside_overtake_lane_.poses.empty()) {
+        RCLCPP_WARN(this->get_logger(), 
+            "  First point: (%.3f, %.3f), Last: (%.3f, %.3f)",
+            global_inside_overtake_lane_.poses[0].pose.position.x,
+            global_inside_overtake_lane_.poses[0].pose.position.y,
+            global_inside_overtake_lane_.poses.back().pose.position.x,
+            global_inside_overtake_lane_.poses.back().pose.position.y);
+    }
+    RCLCPP_WARN(this->get_logger(), 
+        "Outside lane: %.2fm offset, %zu points, frame: %s",
+        outside_offset, global_outside_overtake_lane_.poses.size(),
+        global_outside_overtake_lane_.header.frame_id.c_str());
+    if (!global_outside_overtake_lane_.poses.empty()) {
+        RCLCPP_WARN(this->get_logger(), 
+            "  First point: (%.3f, %.3f), Last: (%.3f, %.3f)",
+            global_outside_overtake_lane_.poses[0].pose.position.x,
+            global_outside_overtake_lane_.poses[0].pose.position.y,
+            global_outside_overtake_lane_.poses.back().pose.position.x,
+            global_outside_overtake_lane_.poses.back().pose.position.y);
+    }
 }
 
 nav_msgs::msg::Path RacingAgent::create_overtaking_lane(double lateral_offset, const std::string& lane_name)
