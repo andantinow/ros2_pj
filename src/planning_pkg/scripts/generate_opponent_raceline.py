@@ -106,7 +106,7 @@ def resample_centerline(points, ds=0.5):
     return resampled
 
 
-def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3, 
+def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2, 
                                 wall_margin=0.3, ds=0.5, out_in_out_strength=0.5):
     """
     Generate opponent raceline with OUT-IN-OUT racing style through corners.

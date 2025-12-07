@@ -116,3 +116,5 @@ echo ""
 echo "Documentation:"
 echo "  See OPPONENT_OUT_IN_OUT_IMPLEMENTATION.md for full details"
 echo ""
+
+exit 0
