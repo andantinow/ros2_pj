@@ -86,11 +86,13 @@ def generate_launch_description():
         ),
         launch_arguments={
             'map_name': map_name_conf,
-            'speed': '0.5'
+            'speed': '0.5',
+            'path_topic': '/opponent_raceline'
         }.items()
     )
 
     # Nodes defined in this workspace
+    # Main raceline server for ego car (global optimal racing line)
     raceline_node = Node(
         package='planning_pkg',
         executable='raceline_server',
@@ -100,6 +102,22 @@ def generate_launch_description():
             'raceline_file': raceline_file_conf,
             'frame_id': 'map',
             'publish_vref': True
+        }]
+    )
+    
+    # Opponent raceline server - publishes outside-biased raceline for opponent
+    # This creates space on the inside for ego car to perform clean overtakes
+    opponent_raceline_node = Node(
+        package='planning_pkg',
+        executable='raceline_server',
+        name='opponent_raceline_server',
+        output='screen',
+        parameters=[{
+            'raceline_file': os.path.join(planning_pkg_share, 'data', 'opponent_raceline.csv'),
+            'frame_id': 'map',
+            'publish_vref': False,
+            'path_topic': '/opponent_raceline',
+            'vref_topic': '/opponent_vref'
         }]
     )
 
@@ -161,6 +179,7 @@ def generate_launch_description():
     ld.add_action(f1tenth_launch)
     ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
+    ld.add_action(opponent_raceline_node)
     ld.add_action(estimator_node)
     
     # Controller selection: use simple controller by default, NMPC when specified

@@ -4,6 +4,7 @@
     <arg name="speed" default="0.5"/> 
     <arg name="constant_speed" default="false"/>
     <arg name="type" default="lidar"/><!-- virtual/lidar -->
+    <arg name="path_topic" default="/opponent_raceline"/><!-- Path topic to subscribe to -->
 
     <!-- Launch Collision detector as well -->
     <!-- <node name="collision_detector" pkg="opponent_publisher_cpp" exec="collision_detector" output="screen"/> -->
@@ -15,6 +16,7 @@
             <param name="speed" value="$(var speed)"/>
             <param name="constant_speed" value="$(var constant_speed)"/>
             <param name="type" value="$(var type)"/>
+            <param name="path_topic" value="$(var path_topic)"/>
     </node>
 
 </launch>
