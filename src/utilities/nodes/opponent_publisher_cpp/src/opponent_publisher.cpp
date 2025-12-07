@@ -97,13 +97,10 @@ private:
       double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       psis_.push_back(yaw);
       
-      // Apply lateral offset to opponent's path to keep away from raceline/walls
-      // Positive lateral_offset_ shifts LEFT (perpendicular to heading)
-      double offset_x = pose.position.x - lateral_offset_ * std::sin(yaw);
-      double offset_y = pose.position.y + lateral_offset_ * std::cos(yaw);
-      
-      xs_.push_back(offset_x);
-      ys_.push_back(offset_y);
+      // Use path coordinates directly from the loaded raceline
+      // The offset is already baked into opponent_outer.csv or opponent_inner.csv
+      xs_.push_back(pose.position.x);
+      ys_.push_back(pose.position.y);
       
       // Calculate cumulative arc length using std::hypot for numerical stability
       if (i > 0) {
