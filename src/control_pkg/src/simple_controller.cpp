@@ -1280,13 +1280,15 @@ void SimpleController::control_loop()
   
   if (is_corner && !is_overtaking_) {
     // Only reduce speed in actual corners (curvature > threshold)
-    // Use curvature-based reduction: higher curvature = lower speed
-    // The curvature factor provides smooth scaling, corner_speed_factor_ provides a minimum bound
-    // min_corner_speed_factor_ prevents excessive slowdown on very sharp corners
-    double curvature_factor = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
-    speed_factor = std::min(corner_speed_factor_, curvature_factor);
+    // Speed reduction strategy:
+    // - curvature_speed_reduction: smooth reduction based on path curvature (higher curvature = lower speed)
+    // - corner_speed_factor_: maximum allowed speed factor in corners (0.65 = 65% of target speed)
+    // - min_corner_speed_factor_: minimum speed factor to prevent stalling on sharp corners (0.3 = 30% of target speed)
+    // Final speed_factor is the minimum of corner_speed_factor_ and curvature-based reduction
+    double curvature_speed_reduction = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
+    speed_factor = std::min(corner_speed_factor_, curvature_speed_reduction);
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_factor=%.2f, min_factor=%.2f",
+                          "CORNER speed reduction (not overtaking): curv=%.3f, factor=%.2f, corner_max=%.2f, min=%.2f",
                           path_curvature, speed_factor, corner_speed_factor_, min_corner_speed_factor_);
   }
   

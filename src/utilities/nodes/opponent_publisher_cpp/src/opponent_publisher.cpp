@@ -23,11 +23,12 @@ public:
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
     
-    // Opponent width and wall margin parameters
-    // Per user request: opponent should stay farther from walls but not exactly centered
-    opponent_width_ = declare_parameter<double>("opponent_width", 0.35);  // Vehicle width (m)
-    wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Larger margin from walls for visible safety buffer
-    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center - creates overtake lanes
+    // Opponent width and wall margin parameters (for compatibility)
+    // NOTE: These parameters are declared for launch file compatibility but not actively used
+    // The opponent follows pre-generated racelines with offset already baked in
+    declare_parameter<double>("opponent_width", 0.35);
+    declare_parameter<double>("wall_margin", 0.35);
+    declare_parameter<double>("lateral_offset", 0.15);
 
     // Launch compatibility parameters (declared for compatibility, not actively used)
     declare_parameter<double>("start_s", 0.0);
@@ -257,11 +258,6 @@ private:
   double wheelbase_{0.325};          // Match parameter default value
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
-  
-  // Opponent dimensions and margins
-  double opponent_width_{0.35};      // Vehicle width (m)
-  double wall_margin_{0.35};         // Larger margin from walls for visible safety buffer
-  double lateral_offset_{0.15};      // Offset from exact center - creates overtake lanes
 
   // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;
