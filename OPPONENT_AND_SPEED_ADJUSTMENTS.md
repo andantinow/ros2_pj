@@ -16,17 +16,17 @@ This document describes the changes made to address the following requirements:
 **Changes:**
 - **Speed Reduction:** Reduced from 3.0 m/s to 2.5 m/s
   - Line 21: `speed_ = declare_parameter<double>("speed", 2.5);`
-  - Line 237: `double speed_{2.5};`
+  - Line 242: `double speed_{2.5};`
   - Makes opponent clearly slower than ego (which can reach 4-6.5 m/s)
 
 - **Wall Margin Increase:** From 0.25m to 0.35m
   - Line 28: `wall_margin_ = declare_parameter<double>("wall_margin", 0.35);`
-  - Line 244: `double wall_margin_{0.35};`
+  - Line 249: `double wall_margin_{0.35};`
   - Keeps opponent farther from walls with a more visible margin
 
 - **Lateral Offset:** From 0.0m to 0.15m
   - Line 29: `lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);`
-  - Line 245: `double lateral_offset_{0.15};`
+  - Line 250: `double lateral_offset_{0.15};`
   - Creates an offset from the exact center of the track
   - Leaves room for ego to overtake on either side
 

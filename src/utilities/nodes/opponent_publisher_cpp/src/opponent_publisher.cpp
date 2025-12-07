@@ -18,7 +18,7 @@ public:
   {
     // Parameters
     lookahead_s_ = declare_parameter<double>("lookahead_s", 0.75);
-    speed_       = declare_parameter<double>("speed",       2.5);  // Reduced from 3.0 for easier ego overtaking
+    speed_       = declare_parameter<double>("speed",       2.5);  // Lower speed for easier ego overtaking
     wheelbase_   = declare_parameter<double>("wheelbase",   0.325);
     odom_topic_  = declare_parameter<std::string>("odom_topic", "/opp_racecar/odom");
     path_topic_  = declare_parameter<std::string>("path_topic", "/global_raceline");
@@ -26,8 +26,8 @@ public:
     // Opponent width and wall margin parameters
     // Per user request: opponent should stay farther from walls but not exactly centered
     opponent_width_ = declare_parameter<double>("opponent_width", 0.35);  // Vehicle width (m)
-    wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Increased from 0.25m for more visible margin from walls
-    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center (m) - creates overtake lanes
+    wall_margin_ = declare_parameter<double>("wall_margin", 0.35);  // Larger margin from walls for visible safety buffer
+    lateral_offset_ = declare_parameter<double>("lateral_offset", 0.15);  // Offset from exact center - creates overtake lanes
 
     // Launch compatibility parameters (declared for compatibility, not actively used)
     declare_parameter<double>("start_s", 0.0);
@@ -239,15 +239,15 @@ private:
 private:
   // Parameters
   double lookahead_s_{0.5};
-  double speed_{2.5};                // Reduced from 3.0 for easier ego overtaking
+  double speed_{2.5};                // Lower speed for easier ego overtaking
   double wheelbase_{0.2};
   std::string odom_topic_{"/opp_racecar/odom"};
   std::string path_topic_{"/global_raceline"};
   
   // Opponent dimensions and margins
   double opponent_width_{0.35};      // Vehicle width (m)
-  double wall_margin_{0.35};         // Minimum distance from walls (m) - farther from walls
-  double lateral_offset_{0.15};      // Lateral offset from raceline (m), positive = left - not exactly centered
+  double wall_margin_{0.35};         // Larger margin from walls for visible safety buffer
+  double lateral_offset_{0.15};      // Offset from exact center - creates overtake lanes
 
   // Waypoints storage (from Path)
   std::vector<double> xs_, ys_, psis_, ss_;
