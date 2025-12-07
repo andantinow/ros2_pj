@@ -27,7 +27,7 @@ from pathlib import Path
 
 # Constants for numerical stability and defaults
 EPSILON = 1e-12  # Small epsilon to prevent division by zero
-DEFAULT_OPPONENT_SPEED = 3.0  # Default opponent speed (m/s)
+DEFAULT_OPPONENT_SPEED = 2.5  # Default opponent speed (m/s) - v6.0: reduced from 3.0 to match opponent_publisher
 CURVATURE_THRESHOLD_CORNER = 0.08  # Threshold to detect corners
 MAX_CURVATURE_NORMALIZATION = 0.3  # Maximum curvature for normalization
 STRAIGHT_OUTSIDE_BIAS = 0.3  # Outside bias factor on straight sections
@@ -109,8 +109,8 @@ def resample_centerline(points, ds=0.5):
     return resampled
 
 
-def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2, 
-                                wall_margin=0.3, ds=0.5, out_in_out_strength=0.5):
+def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.3, 
+                                wall_margin=0.25, ds=0.5, out_in_out_strength=0.75):
     """
     Generate opponent raceline with OUT-IN-OUT racing style through corners.
     
@@ -125,10 +125,10 @@ def generate_opponent_raceline(centerline_file, output_file, lane_position=-0.2,
         centerline_file: Path to centerline CSV with boundaries
         output_file: Output path for opponent raceline
         lane_position: Base position between walls (-1.0=outer, 0.0=center, 1.0=inner)
-                      Default: -0.3 for moderate outside bias on straights
-        wall_margin: Minimum distance from walls (meters)
+                      Default: -0.3 for stronger outside bias on straights (v6.0: increased from -0.2)
+        wall_margin: Minimum distance from walls (meters) (v6.0: reduced to 0.25 for closer racing line)
         ds: Sample spacing (meters)
-        out_in_out_strength: Strength of OUT-IN-OUT bias (0.0-1.0), default 0.5
+        out_in_out_strength: Strength of OUT-IN-OUT bias (0.0-1.0), default 0.75 (v6.0: increased from 0.5)
     """
     print(f"Loading centerline from: {centerline_file}")
     points = read_centerline_with_bounds(centerline_file)
@@ -300,15 +300,15 @@ def main():
     parser.add_argument(
         '--lane-position',
         type=float,
-        default=-0.2,
+        default=-0.3,
         help='Base position between walls for straights (-1.0=outer, 0.0=center, 1.0=inner). '
-             'Default: -0.2 for slight outside bias on straights'
+             'Default: -0.3 for stronger outside bias on straights (v6.0: increased from -0.2)'
     )
     parser.add_argument(
         '--wall-margin',
         type=float,
-        default=0.3,
-        help='Minimum distance from walls in meters. Default: 0.3'
+        default=0.25,
+        help='Minimum distance from walls in meters. Default: 0.25 (v6.0: reduced from 0.3 for closer racing)'
     )
     parser.add_argument(
         '--ds',
@@ -319,8 +319,8 @@ def main():
     parser.add_argument(
         '--out-in-out-strength',
         type=float,
-        default=0.5,
-        help='Strength of OUT-IN-OUT racing line (0.0-1.0). Default: 0.5'
+        default=0.75,
+        help='Strength of OUT-IN-OUT racing line (0.0-1.0). Default: 0.75 (v6.0: increased from 0.5 for more aggressive line)'
     )
     
     args = parser.parse_args()

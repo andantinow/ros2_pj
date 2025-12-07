@@ -181,12 +181,14 @@ nmpc_engine_node:
     enable_overtaking: true
     
     # Detection and following (v5.1: reduced range for near-field focus)
-    opponent_detection_range: 2.0     # [m] Range to detect opponent ahead (reduced from 3.5)
-    opponent_following_distance: 1.0  # [m] Safe following distance (reduced from 1.5)
+    # v6.0: Increased following distance for more relaxed, safer following behavior
+    opponent_detection_range: 3.0     # [m] Range to detect opponent ahead (increased for earlier detection)
+    opponent_following_distance: 2.5  # [m] Safe following distance (INCREASED from 1.0 for larger gap)
     opponent_speed_tracking_gain: 0.85 # Speed limiting when following (0.85 = 85% of opponent speed)
     
     # v4.0 FOLLOW behavior
-    follow_margin: 0.05               # [m/s] Speed margin below opponent (calm following)
+    # v6.0: Increased follow margin for more comfortable gap maintenance
+    follow_margin: 0.15               # [m/s] Speed margin below opponent (INCREASED from 0.05 for calmer following)
     v_min_follow: 0.5                 # [m/s] Minimum follow speed (increased - 기어가지 않게)
     
     # v4.0 OVERTAKE behavior (committed, fast overtaking)

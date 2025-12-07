@@ -20,8 +20,9 @@ racing_agent:
     # === Following Parameters ===
     # Following distance increased for more relaxed, less nervous following behavior
     # This gives more room to react and creates a clearer gap before overtaking
-    safe_follow_distance: 4.5  # m - Target following distance (ACC style) - increased for less aggressive following
-    min_stop_distance: 0.5     # m - Emergency stop threshold (increased for safety)
+    # v6.0: Further increased for even more comfortable following distance
+    safe_follow_distance: 6.0  # m - Target following distance (ACC style) - INCREASED from 4.5 for more comfortable gap
+    min_stop_distance: 0.8     # m - Emergency stop threshold (increased for safety)
     
     # === Corner Exit Smoothing Parameters (v5.0) ===
     # These control how the car exits corners to prevent wall contact
