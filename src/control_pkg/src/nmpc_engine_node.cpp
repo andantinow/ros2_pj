@@ -1564,7 +1564,7 @@ private:
     // User requirement: Remove all soft obstacle-based slowdown/steering
     // Keep only hard collision stop at A1 threshold
     // Speed should come from: curvature, FOLLOW/OVERTAKE, hard collision only
-    (void)&checkA2Zone;  // Suppress unused function warning
+    [[maybe_unused]] auto unused_check_a2 = &checkA2Zone;  // Function kept for potential future use
     
     // Publish NMPC visualization (예측 궤적 + 레퍼런스)
     publishNMPCVisualization(solution.predicted_trajectory, reference);

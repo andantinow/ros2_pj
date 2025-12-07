@@ -716,7 +716,9 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
  * @brief A2 범위에서 회피 조향각 계산 - DISABLED (v5.1)
  * @param lookahead_angle 차량 프레임 기준 lookahead point 방향 각도 (rad)
  * 
- * v5.1 (2025-01): DISABLED per user request
+ * @deprecated v5.1 (2025-01): DISABLED per user request
+ * 
+ * @warning DO NOT RE-ENABLE without careful consideration
  * User requirement: Remove all "slow down because walls/obstacles are near" logic
  * Speed should come from: curvature, FOLLOW/OVERTAKE, hard collision only
  * 
@@ -725,6 +727,7 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
  * 2. 장애물이 오른쪽에 있으면 -> 왼쪽으로 완전 반대 조향
  * 3. 느려지지 않고 반대 조향으로 회피하며 주행 계속
  */
+[[deprecated("A2 avoidance disabled per user request - use hard collision stop only")]]
 double SimpleController::compute_avoidance_steering(double /* lookahead_angle */)
 {
   // v5.1: Disabled - no steering from generic obstacles
@@ -735,7 +738,9 @@ double SimpleController::compute_avoidance_steering(double /* lookahead_angle */
 /**
  * @brief 벽 반발 조향 계산 (수식 기반) - DISABLED (v5.1)
  * 
- * v5.1 (2025-01): DISABLED per user request
+ * @deprecated v5.1 (2025-01): DISABLED per user request
+ * 
+ * @warning DO NOT RE-ENABLE without careful consideration
  * User requirement: NO automatic slow down just because "close to a wall" on a straight
  * Speed/steering should NOT depend on generic obstacle proximity
  * 
@@ -745,6 +750,7 @@ double SimpleController::compute_avoidance_steering(double /* lookahead_angle */
  * 
  * 속도 감소 없이 조향만으로 벽에서 멀어지도록 함
  */
+[[deprecated("Wall repulsion disabled per user request - use curvature-based speed only")]]
 double SimpleController::compute_wall_repulsion_steering()
 {
   // v5.1: Disabled - no repulsion steering from walls
