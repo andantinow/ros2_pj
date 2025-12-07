@@ -337,7 +337,7 @@ void SimpleController::mode_callback(const std_msgs::msg::String::SharedPtr msg)
 
 void SimpleController::vref_callback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
 {
-  current_vref_ = msg->data;
+  current_vref_ = std::move(msg->data);  // Use move semantics to avoid copying
   if (!vref_received_) {
     RCLCPP_INFO(this->get_logger(), "Received v_ref array: %zu speeds", current_vref_.size());
     if (!current_vref_.empty()) {
