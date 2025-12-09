@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.3;  // Reduced from 2.0 to minimize OUT movement
-    constexpr double MAX_CORRECTION_FACTOR = 0.35;  // Reduced from 0.5 to reduce steering corrections
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.4;  // Reduced from 0.5 to minimize wall avoidance steering
+    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Further reduced to minimize OUT movement and outer course tracking
+    constexpr double MAX_CORRECTION_FACTOR = 0.25;  // Further reduced to minimize steering corrections and pre-turn
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Further reduced to minimize wall avoidance steering
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
