@@ -22,8 +22,7 @@ class RacelineServer : public rclcpp::Node {
     declare_parameter<bool>("publish_vref", true);
     declare_parameter<bool>("enable_smoothing", false);
     declare_parameter<int>("smoothing_window", 5);
-    declare_parameter<double>("resample_spacing", 0.0);  // 0.0 = no resampling
-    // Topic parameters (configurable)
+    declare_parameter<double>("resample_spacing", 0.0);  
     declare_parameter<std::string>("path_topic", "/global_raceline");
     declare_parameter<std::string>("vref_topic", "/global_vref");
     
@@ -76,10 +75,8 @@ class RacelineServer : public rclcpp::Node {
     };
     param_cb_ = add_on_set_parameters_callback(cb);
     
-    // Publish immediately on startup
     publish_once();
     
-    // Also publish periodically (1 Hz) to ensure RViz receives it even if it starts late
     publish_timer_ = create_wall_timer(
       std::chrono::seconds(1),
       [this]() { publish_once(); }
@@ -88,8 +85,8 @@ class RacelineServer : public rclcpp::Node {
 
  private:
   std::string file_, frame_id_;
-  std::string path_topic_{"/global_raceline"};  // Default path topic
-  std::string vref_topic_{"/global_vref"};      // Default velocity reference topic
+  std::string path_topic_{"/global_raceline"};  
+  std::string vref_topic_{"/global_vref"};      
   bool publish_vref_{true};
   bool enable_smoothing_{false};
   int smoothing_window_{5};
@@ -136,7 +133,6 @@ class RacelineServer : public rclcpp::Node {
       return;
     }
     RCLCPP_INFO(get_logger(), "Raceline loaded: %zu points", pts.size());
-    // Use zero timestamp for static data (RViz will always display it)
     auto stamp=rclcpp::Time(0);
     nav_msgs::msg::Path path;
     path.header.stamp=stamp;
@@ -146,7 +142,7 @@ class RacelineServer : public rclcpp::Node {
     if(publish_vref_) vref.data.reserve(pts.size());
     for(const auto &p: pts) {
       geometry_msgs::msg::PoseStamped ps;
-      ps.header.stamp=stamp;  // Zero timestamp for static data
+      ps.header.stamp=stamp;  
       ps.header.frame_id=frame_id_;
       ps.pose.position.x=p.x;
       ps.pose.position.y=p.y;
@@ -157,19 +153,16 @@ class RacelineServer : public rclcpp::Node {
       if(publish_vref_) vref.data.push_back((float)p.v);
     }
     
-    // Apply smoothing if enabled
     if(enable_smoothing_ && path.poses.size() >= 3) {
       planning_pkg::smooth_path(path, smoothing_window_);
       RCLCPP_INFO(get_logger(), "Applied smoothing with window size: %d", smoothing_window_);
     }
     
-    // Resample if spacing is specified
     if(resample_spacing_ > 0.0) {
       path = planning_pkg::resample_path(path, resample_spacing_);
       RCLCPP_INFO(get_logger(), "Resampled path with spacing: %.3f m", resample_spacing_);
     }
     
-    // Validate path before publishing
     if(!planning_pkg::validate_path(path)) {
       RCLCPP_ERROR(get_logger(), "Path validation failed, not publishing");
       return;

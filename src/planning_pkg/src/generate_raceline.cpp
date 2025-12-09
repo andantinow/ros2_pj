@@ -46,9 +46,9 @@ int main(int argc,char** argv){
   std::string in_csv="tracks/centerline.csv";
   std::string out_csv="data/raceline.csv";
   double ds=0.5, mu=1.0, v_max=20.0, ax_max=4.0, ax_min=-6.0;
-  double wall_offset=0.0;  // Deprecated: Fixed offset from centerline
-  double lane_position=0.0;  // Position between walls: -1.0=left/outer, 0.0=center, 1.0=right/inner
-  double wall_margin=0.3;  // Minimum distance from walls in meters
+  double wall_offset=0.0;  
+  double lane_position=0.0;  
+  double wall_margin=0.3;  
 
   for(int i=1;i<argc;++i){
     std::string a=argv[i];
@@ -72,7 +72,6 @@ int main(int argc,char** argv){
   std::string line;
   if(!std::getline(in,line)){ fprintf(stderr,"Empty %s\n", in_csv.c_str()); return 1; }
   
-  // Detect CSV format from header
   bool has_bounds = (line.find("d_left") != std::string::npos && line.find("d_right") != std::string::npos);
   
   std::vector<Pt> cl;
@@ -84,7 +83,6 @@ int main(int argc,char** argv){
     char c;
     
     if(has_bounds) {
-      // Format: x,y,d_left,d_right,psi
       PtWithBounds p{};
       if(ss>>p.x>>c>>p.y>>c>>p.d_left>>c>>p.d_right>>c>>p.psi) {
         cl_bounds.push_back(p);
@@ -95,7 +93,6 @@ int main(int argc,char** argv){
         cl.push_back({p.x, p.y});
       }
     } else {
-      // Format: x,y
       Pt p{};
       if((ss>>p.x>>c>>p.y) || (ss.clear(), ss.str(line), ss>>p.x>>p.y))
         cl.push_back(p);
@@ -142,7 +139,6 @@ int main(int argc,char** argv){
     pts[i].x=(1-t)*cl[j].x + t*cl[j+1].x;
     pts[i].y=(1-t)*cl[j].y + t*cl[j+1].y;
     
-    // Interpolate boundary distances if available
     if(has_bounds && j < cl_bounds.size() && j+1 < cl_bounds.size()) {
       d_left_interp[i] = (1-t)*cl_bounds[j].d_left + t*cl_bounds[j+1].d_left;
       d_right_interp[i] = (1-t)*cl_bounds[j].d_right + t*cl_bounds[j+1].d_right;
@@ -163,33 +159,21 @@ int main(int argc,char** argv){
   for(size_t i=0;i<pts.size();++i){ px[i]=pts[i].x; py[i]=pts[i].y; }
   auto d1x=gradient(px,ds); auto d1y=gradient(py,ds);
   
-  // Apply offset based on track boundaries or fixed offset
   if(has_bounds) {
-    // Use lane_position to place raceline between walls
-    // lane_position: -1.0 = fully left (outer wall), 0.0 = center, 1.0 = fully right (inner wall)
-    // Normal vector pointing left: (-d1y, d1x) normalized
     for(size_t i=0;i<pts.size();++i){
       double norm = std::sqrt(d1x[i]*d1x[i] + d1y[i]*d1y[i]);
       if(norm > 1e-12){
-        // Normal vector pointing left (toward outer wall for CCW track)
         double nx = -d1y[i] / norm;
         double ny = d1x[i] / norm;
         
-        // Calculate available space considering wall margin
         double available_left = std::max(0.0, d_left_interp[i] - wall_margin);
         double available_right = std::max(0.0, d_right_interp[i] - wall_margin);
         
-        // Calculate offset: negative lane_position -> move left (toward outer)
-        // lane_position = -1.0 -> offset = +available_left (full left)
-        // lane_position = 0.0 -> offset = 0 (center)
-        // lane_position = +1.0 -> offset = -available_right (full right/inner)
         double offset = 0.0;
         if(lane_position < 0.0) {
-          // Move toward left/outer wall
-          offset = -lane_position * available_left;  // lane_position is negative, so offset is positive
+          offset = -lane_position * available_left;  
         } else if(lane_position > 0.0) {
-          // Move toward right/inner wall
-          offset = -lane_position * available_right;  // lane_position is positive, so offset is negative
+          offset = -lane_position * available_right;  
         }
         
         pts[i].x += offset * nx;
@@ -198,28 +182,21 @@ int main(int argc,char** argv){
         py[i] = pts[i].y;
       }
     }
-    // Recalculate gradients after offset
     d1x=gradient(px,ds); d1y=gradient(py,ds);
     
     fprintf(stdout, "Applied lane positioning with boundaries\n");
   } else if(std::abs(wall_offset) > 1e-6) {
-    // Legacy fixed offset mode with wall_margin support
-    // Positive wall_offset moves the path outward (away from inner wall toward track center)
-    // wall_margin is added to ensure minimum distance from the target position
     double effective_offset = wall_offset;
     if(wall_offset < 0) {
-      // Moving toward inner wall - apply wall_margin as additional offset outward
-      effective_offset = wall_offset + wall_margin;  // Less negative = closer to center
-      if(effective_offset > 0) effective_offset = 0;  // Don't overshoot center
+      effective_offset = wall_offset + wall_margin;  
+      if(effective_offset > 0) effective_offset = 0;  
     } else {
-      // Moving toward outer wall - apply wall_margin as additional offset outward
-      effective_offset = wall_offset + wall_margin;  // More positive = further from inner
+      effective_offset = wall_offset + wall_margin;  
     }
     
     for(size_t i=0;i<pts.size();++i){
       double norm = std::sqrt(d1x[i]*d1x[i] + d1y[i]*d1y[i]);
       if(norm > 1e-12){
-        // Normal vector pointing left (outward for counterclockwise track)
         double nx = -d1y[i] / norm;
         double ny = d1x[i] / norm;
         pts[i].x += effective_offset * nx;
@@ -228,7 +205,6 @@ int main(int argc,char** argv){
         py[i] = pts[i].y;
       }
     }
-    // Recalculate gradients after offset
     d1x=gradient(px,ds); d1y=gradient(py,ds);
     
     fprintf(stdout, "Applied wall_offset=%.2f m with wall_margin=%.2f m (effective=%.2f m)\n", 
@@ -256,64 +232,48 @@ int main(int argc,char** argv){
   smooth_vec(psi,7);
   smooth_vec(kappa,7);
 
-  // Initialize G-G Diagram constraint
   planning_pkg::GGDiagram gg_diagram(mu, G);
   
   std::vector<double> vref(pts.size());
   
-  // Step 1: Calculate initial speed limits based on curvature and G-G diagram
   for(size_t i=0;i<vref.size();++i){
-    // Original curvature-based limit
     double v_kappa=std::sqrt(std::max(0.0, mu*G/(std::abs(kappa[i])+1e-6)));
     
-    // G-G diagram constraint: consider zero longitudinal acceleration first
     double v_gg = gg_diagram.max_speed_for_curvature(kappa[i], 0.0);
     
-    // Take minimum of both constraints
     vref[i] = std::min({v_kappa, v_gg, v_max});
   }
   
-  // Step 2: Forward pass - apply acceleration limits with G-G diagram
   for(size_t i=1;i<vref.size();++i){
-    // Calculate required acceleration to reach next speed
     double v_prev = vref[i-1];
     double v_desired = vref[i];
     
-    // Required acceleration: a = (v^2 - v_prev^2) / (2*ds)
     double a_req = (v_desired * v_desired - v_prev * v_prev) / (2.0 * ds);
     
-    // Limit by maximum acceleration
     a_req = std::min(a_req, ax_max);
     
-    // Check G-G diagram constraint
-    double a_lat = v_prev * v_prev * std::abs(kappa[i-1]);  // Lateral acceleration
+    double a_lat = v_prev * v_prev * std::abs(kappa[i-1]);  
     double a_lon_max = gg_diagram.max_longitudinal_accel(a_lat);
     a_req = std::min(a_req, a_lon_max);
     
-    // Calculate new speed
     double v_new = std::sqrt(std::max(0.0, v_prev * v_prev + 2.0 * a_req * ds));
-    vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+    vref[i] = std::min(v_new, vref[i]);  
   }
   
-  // Step 3: Backward pass - apply deceleration limits with G-G diagram
   for(int i=(int)vref.size()-2;i>=0;--i){
     double v_next = vref[i+1];
     double v_current = vref[i];
     
-    // Required deceleration: a = (v_next^2 - v_current^2) / (2*ds)
     double a_req = (v_next * v_next - v_current * v_current) / (2.0 * ds);
     
-    // Limit by maximum deceleration (negative)
     a_req = std::max(a_req, ax_min);
     
-    // Check G-G diagram constraint
-    double a_lat = v_current * v_current * std::abs(kappa[i]);  // Lateral acceleration
-    double a_lon_min = -gg_diagram.max_longitudinal_accel(a_lat);  // Negative for braking
+    double a_lat = v_current * v_current * std::abs(kappa[i]);  
+    double a_lon_min = -gg_diagram.max_longitudinal_accel(a_lat);  
     a_req = std::max(a_req, a_lon_min);
     
-    // Calculate new speed
     double v_new = std::sqrt(std::max(0.0, v_next * v_next + 2.0 * a_req * ds));
-    vref[i] = std::min(v_new, vref[i]);  // Don't exceed curvature limit
+    vref[i] = std::min(v_new, vref[i]);  
   }
 
   std::ofstream out(out_csv);

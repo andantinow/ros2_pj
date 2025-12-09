@@ -1137,12 +1137,10 @@ private:
     
     switch (driving_mode_) {
       case DrivingMode::CRUISE:
-        // Normal NMPC behavior - no additional speed modification
         break;
         
       case DrivingMode::FOLLOW:
         {
-          // FOLLOW mode: keep NMPC raceline-based speed, only log state.
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
             "FOLLOW: distance=%.2fm, keeping NMPC speed=%.2f (opponent=%.2f)",
             opponent.distance, solution.speed, opponent.speed);
@@ -1151,7 +1149,6 @@ private:
         
       case DrivingMode::OVERTAKE_CANDIDATE:
         {
-          // Do not slow down aggressively in candidate phase; just log.
           RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
             "OVERTAKE_CANDIDATE: distance=%.2fm, eval only (NMPC speed=%.2f)",
             opponent.distance, solution.speed);
@@ -1160,7 +1157,6 @@ private:
         
       case DrivingMode::OVERTAKE:
         {
-          // Preserve original lateral offset behavior and mild speed boost.
           double lateral_offset = overtake_left_side_ ? overtake_path_width_ : -overtake_path_width_;
           
           for (auto& ref : reference) {
@@ -1191,8 +1187,6 @@ private:
     
     [[maybe_unused]] auto unused_check_a2 = &NMPCEngineNode::checkA2Zone;
     
-    // Corner speed cap based on steering magnitude (safety layer):
-    // If steering angle is large (cornering), clamp speed so corners are taken slower.
     {
       double steer_abs = std::abs(solution.steering);
       if (steer_abs > corner_steer_threshold_) {
@@ -1915,9 +1909,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Slightly increased to allow staying near center after corner
-    constexpr double MAX_CORRECTION_FACTOR = 0.5;  // Increased correction to prevent going too inside and return to center
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.25;  // Reduced to prevent excessive steering away from center
+    constexpr double INITIAL_LIMIT_SCALE = 1.1;  
+    constexpr double MAX_CORRECTION_FACTOR = 0.5;  
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.25;  
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
@@ -1935,20 +1929,15 @@ private:
       double max_lateral = corner_exit_lateral_limit_ * (INITIAL_LIMIT_SCALE - transition_factor);
       
       if (std::abs(lateral_error) > max_lateral) {
-        // Stronger correction for inner course (lateral_error > 0) to prevent going too inside
-        // Moderate correction for outer course (lateral_error < 0)
         double base_correction = MAX_CORRECTION_FACTOR * (1.0 - transition_factor);
         double correction_factor = (lateral_error > 0) ? base_correction * 1.3 : base_correction;
         
-        // Always apply correction to return to center (raceline)
         if ((lateral_error > 0 && solution.steering < 0) ||
             (lateral_error < 0 && solution.steering > 0)) {
-          // Steering is already correcting, apply stronger correction for inner course
           if (lateral_error > 0) {
             solution.steering *= (1.0 - correction_factor * 0.5);
           }
         } else {
-          // Steering is not correcting, apply correction
           solution.steering *= (1.0 - correction_factor);
         }
         
@@ -2106,11 +2095,9 @@ private:
       double qw = poses[idx].pose.orientation.w;
       ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       
-      // Start with straight-line speed
       ref.v = v_max_straight_;
       
       if (i < NUM_REF_POINTS - 1) {
-        // --- Current segment curvature ---
         size_t next_idx = (start_idx + (i + 1) * stride) % num_poses;
         double dx = poses[next_idx].pose.position.x - poses[idx].pose.position.x;
         double dy = poses[next_idx].pose.position.y - poses[idx].pose.position.y;
@@ -2132,9 +2119,7 @@ private:
           double curvature_now = dyaw / seg_dist;
           double k_abs = std::abs(curvature_now);
 
-          // --- Ahead-averaged curvature for pre-brake ---
-          // Look ahead more to reduce speed before entering corners and prevent wall collision
-          constexpr int AHEAD_SEGMENTS = 3;  // Look ahead 3 segments for stronger pre-brake
+          constexpr int AHEAD_SEGMENTS = 3;  
           double sum_k = k_abs;
           int count_k = 1;
           for (int k = 1; k <= AHEAD_SEGMENTS; ++k) {
@@ -2175,11 +2160,9 @@ private:
           }
 
           double k_ahead_avg = (count_k > 0) ? (sum_k / static_cast<double>(count_k)) : k_abs;
-          // Blend current curvature with ahead curvature for pre-brake (stronger blend to prevent wall collision)
-          constexpr double K_BLEND = 0.4;  // Stronger blend: 40% ahead, 60% current for earlier speed reduction
+          constexpr double K_BLEND = 0.4;  
           double k_eff = (1.0 - K_BLEND) * k_abs + K_BLEND * k_ahead_avg;
 
-          // Use effective curvature to set reference speed (pre-brake before corners)
           if (k_eff < curvature_k1_) {
             ref.v = v_max_straight_;
           } else if (k_eff > curvature_k2_) {

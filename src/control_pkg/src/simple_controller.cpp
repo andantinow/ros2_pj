@@ -425,7 +425,6 @@ bool SimpleController::check_lidar_box_occupancy(double front_dist, double later
   
   constexpr double MIN_VALID_RANGE = 0.03;
   
-  // Check if any LiDAR point falls within the virtual box
   for (int i = 0; i < num_ranges; ++i) {
     double angle = angle_min + i * angle_inc;
     double range = current_scan_.ranges[i];
@@ -434,26 +433,22 @@ bool SimpleController::check_lidar_box_occupancy(double front_dist, double later
       continue;
     }
     
-    // Check if point is within the box
-    // Front distance check
     if (range > front_dist) {
       continue;
     }
     
-    // Lateral width check (angle range)
     if (std::abs(angle) > angle_range) {
       continue;
     }
     
-    // Calculate lateral distance (y in vehicle frame)
     double lateral_dist = std::abs(range * std::sin(angle));
     
     if (lateral_dist < lateral_width / 2.0) {
-      return true;  // Found a point in the box
+      return true;  
     }
   }
   
-  return false;  // No points found in the box
+  return false;  
 }
 
 void SimpleController::update_virtual_boxes()
@@ -465,31 +460,24 @@ void SimpleController::update_virtual_boxes()
     return;
   }
   
-  // Check safety box (Box 1) - very close, emergency stop zone
   opponent_in_safety_box_ = check_lidar_box_occupancy(
     LIDAR_BOX_SAFETY_FRONT,
     LIDAR_BOX_SAFETY_WIDTH,
-    M_PI / 6.0  // ±30 degrees
+    M_PI / 6.0  
   );
   
-  // Check follow box (Box 2) - maintain distance zone
   opponent_in_follow_box_ = check_lidar_box_occupancy(
     LIDAR_BOX_FOLLOW_FRONT,
     LIDAR_BOX_FOLLOW_WIDTH,
-    M_PI / 4.0  // ±45 degrees
+    M_PI / 4.0  
   );
   
-  // Check overtake path clearance (Box 3) - wider check for obstacles in overtake zone
-  // This checks if there are any obstacles in the wider overtake assessment area
-  // The actual left/right overtake decision is made based on last_obstacle_left_dist_ 
-  // and last_obstacle_right_dist_ in the can_overtake_safely() function
   overtake_path_clear_ = !check_lidar_box_occupancy(
     LIDAR_BOX_OVERTAKE_FRONT,
     LIDAR_BOX_OVERTAKE_WIDTH,
-    M_PI / 3.0  // ±60 degrees for wider check
+    M_PI / 3.0  
   );
   
-  // Log FSM state changes
   static bool prev_safety = false;
   static bool prev_follow = false;
   static bool prev_overtake_clear = true;
@@ -963,7 +951,7 @@ void SimpleController::control_loop()
   }
   
   update_obstacle_distances();
-  update_virtual_boxes();  // Update LiDAR virtual boxes for FSM
+  update_virtual_boxes();  
   
   if (is_planning_after_pause_) {
     double planning_elapsed = (current_time - planning_start_time_).seconds();
@@ -1260,20 +1248,9 @@ void SimpleController::control_loop()
     steering_angle = compute_overtake_steering(steering_angle);
   }
 
-  // Speed factor based on curvature: allow full speed on straights, reduce in corners
-  // On straights (curvature ~0): speed_factor = 1.0 (full speed)
-  // In corners (high curvature): speed_factor reduces based on curvature
-  // Strategy: Only apply speed reduction when is_corner is detected (curvature > corner_curvature_threshold_)
-  // This prevents penalizing nearly-straight sections while still slowing in actual corners
   double speed_factor = 1.0;
   
   if (is_corner && !is_overtaking_) {
-    // Only reduce speed in actual corners (curvature > threshold)
-    // Speed reduction strategy:
-    // - curvature_speed_reduction: smooth reduction based on path curvature (higher curvature = lower speed)
-    // - corner_speed_factor_: maximum allowed speed factor in corners (0.65 = 65% of target speed)
-    // - min_corner_speed_factor_: minimum speed factor to prevent stalling on sharp corners (0.3 = 30% of target speed)
-    // Final speed_factor is the minimum of corner_speed_factor_ and curvature-based reduction
     double curvature_speed_reduction = std::max(min_corner_speed_factor_, 1.0 / (1.0 + std::abs(path_curvature)));
     speed_factor = std::min(corner_speed_factor_, curvature_speed_reduction);
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 300,

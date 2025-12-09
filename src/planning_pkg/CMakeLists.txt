@@ -23,21 +23,6 @@ target_include_directories(path_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 
-# G-G Diagram library (header-only, but we can add it to path_utils or create separate)
-# For now, it's header-only so no library needed
-
-# Existing example planner (if present)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/simple_path_planner.cpp")
-  add_executable(simple_path_planner src/simple_path_planner.cpp)
-  ament_target_dependencies(simple_path_planner rclcpp nav_msgs geometry_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs)
-  target_link_libraries(simple_path_planner path_utils tf2_geometry_msgs::tf2_geometry_msgs)
-  target_include_directories(simple_path_planner PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-  install(TARGETS simple_path_planner DESTINATION lib/${PROJECT_NAME})
-endif()
-
-# Raceline server (publishes Path (+v_ref) once with latched QoS)
 add_executable(raceline_server src/raceline_server_node.cpp)
 ament_target_dependencies(raceline_server rclcpp nav_msgs geometry_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs)
 target_link_libraries(raceline_server path_utils tf2_geometry_msgs::tf2_geometry_msgs)
@@ -54,56 +39,6 @@ target_include_directories(generate_raceline PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 install(TARGETS generate_raceline DESTINATION lib/${PROJECT_NAME})
-
-# ============================================================================
-# Frenet Overtake Planner (Sampling-based path planner with visualization)
-# ============================================================================
-# Implements Frenet-frame based overtaking trajectory generation
-# Features: path sampling, cost-based selection, Rviz visualization
-# ============================================================================
-
-find_package(visualization_msgs REQUIRED)
-
-add_executable(frenet_overtake_planner src/frenet_overtake_planner.cpp)
-ament_target_dependencies(frenet_overtake_planner
-  rclcpp
-  nav_msgs
-  geometry_msgs
-  std_msgs
-  visualization_msgs
-)
-target_include_directories(frenet_overtake_planner PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-install(TARGETS frenet_overtake_planner DESTINATION lib/${PROJECT_NAME})
-
-# ============================================================================
-# Racing Agent - Upper Level Strategy Controller
-# ============================================================================
-# Implements five-mode state machine (CRUISE, FOLLOW, OVERTAKE_CANDIDATE, 
-# OVERTAKE, OBSTACLE_STOP) with pre-defined OVERTAKE ZONEs and pre-computed
-# overtake trajectory selection.
-# ============================================================================
-
-find_package(sensor_msgs REQUIRED)
-
-add_executable(racing_agent src/racing_agent.cpp)
-ament_target_dependencies(racing_agent
-  rclcpp
-  nav_msgs
-  geometry_msgs
-  std_msgs
-  visualization_msgs
-  sensor_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-)
-target_link_libraries(racing_agent tf2_geometry_msgs::tf2_geometry_msgs)
-target_include_directories(racing_agent PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-install(TARGETS racing_agent DESTINATION lib/${PROJECT_NAME})
 
 # Install resources only if they exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")

@@ -22,7 +22,6 @@ int find_closest_point(
   int closest_idx = start_idx;
   double min_dist_sq = std::numeric_limits<double>::max();
 
-  // Search from start_idx forward
   for (size_t i = start_idx; i < path.poses.size(); ++i) {
     double dx = path.poses[i].pose.position.x - x;
     double dy = path.poses[i].pose.position.y - y;
@@ -33,7 +32,6 @@ int find_closest_point(
     }
   }
 
-  // Also search backward from start_idx
   for (int i = start_idx - 1; i >= 0; --i) {
     double dx = path.poses[i].pose.position.x - x;
     double dy = path.poses[i].pose.position.y - y;
@@ -72,7 +70,6 @@ geometry_msgs::msg::PoseStamped interpolate_path(
     return path.poses[0];
   }
 
-  // Accumulate distance along path
   double accumulated = 0.0;
   for (size_t i = 1; i < path.poses.size(); ++i) {
     double dx = path.poses[i].pose.position.x - path.poses[i - 1].pose.position.x;
@@ -80,7 +77,6 @@ geometry_msgs::msg::PoseStamped interpolate_path(
     double segment_length = std::sqrt(dx * dx + dy * dy);
 
     if (accumulated + segment_length >= distance) {
-      // Interpolate between path.poses[i-1] and path.poses[i]
       double t = (distance - accumulated) / segment_length;
       result.header = path.header;
       result.pose.position.x = (1.0 - t) * path.poses[i - 1].pose.position.x +
@@ -90,11 +86,9 @@ geometry_msgs::msg::PoseStamped interpolate_path(
       result.pose.position.z = (1.0 - t) * path.poses[i - 1].pose.position.z +
         t * path.poses[i].pose.position.z;
 
-      // Interpolate orientation (yaw)
       double yaw1 = yaw_from_quaternion(path.poses[i - 1].pose.orientation);
       double yaw2 = yaw_from_quaternion(path.poses[i].pose.orientation);
       double yaw_diff = yaw2 - yaw1;
-      // Normalize to [-pi, pi]
       while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
       while (yaw_diff < -M_PI) yaw_diff += 2.0 * M_PI;
       double yaw_interp = yaw1 + t * yaw_diff;
@@ -105,7 +99,6 @@ geometry_msgs::msg::PoseStamped interpolate_path(
     accumulated += segment_length;
   }
 
-  // Distance exceeds path length, return last point
   return path.poses.back();
 }
 
@@ -115,7 +108,6 @@ void smooth_path(nav_msgs::msg::Path & path, int window_size)
     return;
   }
 
-  // Ensure window_size is odd
   if (window_size % 2 == 0) {
     window_size++;
   }
@@ -157,7 +149,6 @@ nav_msgs::msg::Path resample_path(
     resampled.poses.push_back(interpolate_path(path, d));
   }
 
-  // Ensure last point is included
   if (!path.poses.empty()) {
     double last_dist = distance2d(
       resampled.poses.back().pose.position.x,
@@ -235,5 +226,5 @@ double path_length(const nav_msgs::msg::Path & path)
   return length;
 }
 
-}  // namespace planning_pkg
+}  
 
