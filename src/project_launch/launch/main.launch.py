@@ -64,6 +64,11 @@ def generate_launch_description():
         default_value='1.6',
         description='Opponent target speed in m/s (should be ~50% of original opponent speed 3.25 m/s)'
     )
+    declare_use_opponent = DeclareLaunchArgument(
+        'use_opponent',
+        default_value='false',
+        description='Whether to launch opponent nodes'
+    )
 
     # LaunchConfiguration shortcuts
     map_name_conf = LaunchConfiguration('map_name')
@@ -73,6 +78,7 @@ def generate_launch_description():
     controller_conf = LaunchConfiguration('controller')
     opponent_line_mode_conf = LaunchConfiguration('opponent_line_mode')
     opponent_speed_conf = LaunchConfiguration('opponent_speed')
+    use_opponent_conf = LaunchConfiguration('use_opponent')
 
     # Build map yaml path: <stack_master_pkg>/maps/<map_name>/<map_name>.yaml
     # PythonExpression concatenates the LaunchConfiguration value with '.yaml' at runtime.
@@ -215,14 +221,16 @@ def generate_launch_description():
     ld.add_action(declare_controller)
     ld.add_action(declare_opponent_line_mode)
     ld.add_action(declare_opponent_speed)
+    ld.add_action(declare_use_opponent)
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)
     # Disable legacy opponent_publisher_cpp based opponent controller
     # ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
-    ld.add_action(opponent_raceline_node)
-    ld.add_action(opponent_global_raceline_node)
+    from launch.conditions import IfCondition
+    ld.add_action(opponent_raceline_node, condition=IfCondition(use_opponent_conf))
+    ld.add_action(opponent_global_raceline_node, condition=IfCondition(use_opponent_conf))
     ld.add_action(estimator_node)
     
     # Controller selection: use simple controller by default, NMPC when specified
@@ -259,7 +267,8 @@ def generate_launch_description():
         executable='simple_controller_node',
         name='opponent_simple_controller',
         output='screen',
-        parameters=[os.path.join(project_launch_pkg, 'config', 'opponent_control_params.yaml')]
+        parameters=[os.path.join(project_launch_pkg, 'config', 'opponent_control_params.yaml')],
+        condition=IfCondition(use_opponent_conf)
     )
     ld.add_action(opponent_simple_controller_node)
 
