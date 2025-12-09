@@ -50,13 +50,13 @@ bridge:
     num_agent: 2
 
     # ego starting pose on map (updated per request)
-    sx: 8.12
-    sy: -5.56
+    sx: 7.5
+    sy: -5.5
     stheta: 0.0   # Align with raceline direction at start
 
     # opp starting pose on map (updated per request)
-    sx1: 9.11
-    sy1: -3.0
+    sx1: 8.5
+    sy1: -3.5
     stheta1: 0.0
 
     # teleop

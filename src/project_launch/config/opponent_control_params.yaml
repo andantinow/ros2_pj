@@ -22,7 +22,7 @@ opponent_simple_controller:
     scan_topic: '/opp_scan'
 
     # Speed targets
-    target_speed: 0.8
+    target_speed: 0.6
     max_speed: 0.8
     max_steer_angle: 0.576
     max_steer_rate: 4.0

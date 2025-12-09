@@ -185,7 +185,7 @@ class RacelineServer : public rclcpp::Node {
     }
     path_pub_->publish(path);
     if(publish_vref_) vref_pub_->publish(vref);
-    RCLCPP_WARN(get_logger(), "Path published to /global_raceline");
+    RCLCPP_WARN(get_logger(), "Path published to %s", path_topic_.c_str());
   }
 
   std::string resolve_file(const std::string &raw) {
