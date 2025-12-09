@@ -62,12 +62,12 @@ nmpc_engine_node:
     # based on ForzaETH reference architecture recommendations.
     
     # State tracking weights (v4.0: tuned for curvature-based speed control)
-    w_pos: 5.5                   # Position tracking weight (slightly lower to reduce strong OUT-IN-OUT)
-    w_yaw: 7.0                   # Heading tracking weight (reduced to prevent "heading obsession" in curves)
+    w_pos: 4.5                   # Position tracking weight (further reduced to minimize OUT-IN-OUT and pre-turn)
+    w_yaw: 6.5                   # Heading tracking weight (reduced to prevent "heading obsession" in curves)
     w_vel: 5.0                   # Velocity tracking weight (increased for strong speed tracking)
     
     # Control effort weights
-    w_steer: 0.5                 # Steering angle magnitude penalty
+    w_steer: 0.7                 # Steering angle magnitude penalty (increased to reduce excessive steering)
     w_accel: 0.3                 # Acceleration magnitude penalty
     
     # CRITICAL: Control rate (slew rate) weights
@@ -85,7 +85,7 @@ nmpc_engine_node:
     # Allows deviation from reference within a "tube" around the path
     # Enables NMPC to find optimal racing lines within track boundaries
     # v4.0: Set to ±0.15m for tight OUT-IN-OUT racing line tracking
-    lateral_tolerance: 0.25      # [m] Tighten tube to reduce excessive OUT-IN-OUT
+    lateral_tolerance: 0.20      # [m] Further tighten tube to reduce excessive OUT-IN-OUT and pre-turn
     
     # =========================================================================
     # LATENCY COMPENSATION (Issue 3.3)
@@ -256,12 +256,12 @@ nmpc_engine_node:
     
     # Wall margin constraint
     # On corner exit, enforce minimum distance from wall to avoid hugging it
-    corner_exit_wall_margin: 0.35     # [m] Reduce extra OUT bias while keeping safety
+    corner_exit_wall_margin: 0.25     # [m] Further reduce OUT bias to minimize wall collisions
     
     # Lateral deviation limit
     # Maximum allowed lateral deviation from reference during corner exit
     # Prevents the car from pushing too far to one side
-    corner_exit_lateral_limit: 0.10   # [m] Max lateral deviation during transition (tighter to avoid wall)
+    corner_exit_lateral_limit: 0.08   # [m] Tighter limit to reduce excessive OUT movement
     
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections

@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 2.0;
-    constexpr double MAX_CORRECTION_FACTOR = 0.5;
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.5;
+    constexpr double INITIAL_LIMIT_SCALE = 1.3;  // Reduced from 2.0 to minimize OUT movement
+    constexpr double MAX_CORRECTION_FACTOR = 0.35;  // Reduced from 0.5 to reduce steering corrections
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.4;  // Reduced from 0.5 to minimize wall avoidance steering
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
@@ -2123,9 +2123,8 @@ private:
           double k_abs = std::abs(curvature_now);
 
           // --- Ahead-averaged curvature for pre-brake ---
-          // DISABLED: No pre-brake to avoid turning too early in specific corners
-          // Use only current segment curvature to prevent premature corner detection
-          constexpr int AHEAD_SEGMENTS = 0;  // Disabled: no lookahead averaging
+          // DISABLED: No pre-brake to avoid turning too early in specific corners.
+          // Use only current segment curvature to prevent premature corner detection.
           double k_eff = k_abs;  // Use only current segment curvature, no blending
 
           // Use effective curvature to set reference speed (pre-brake before corners)
