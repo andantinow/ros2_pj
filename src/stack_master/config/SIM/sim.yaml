@@ -49,15 +49,15 @@ bridge:
     # opponent parameters
     num_agent: 2
 
-    # ego starting pose on map - original position
-    sx: 4.233191
-    sy: -6.017884
-    stheta: 3.344299
+    # ego starting pose on map (updated per request)
+    sx: 8.12
+    sy: -5.56
+    stheta: 0.13
 
-    # opp starting pose on map - original position
-    sx1: 2.0
-    sy1: -5.0
-    stheta1: 3.344299
+    # opp starting pose on map (updated per request)
+    sx1: 9.11
+    sy1: -3.0
+    stheta1: 0.2
 
     # teleop
     kb_teleop: True
