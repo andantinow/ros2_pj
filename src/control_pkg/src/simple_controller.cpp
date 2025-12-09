@@ -692,17 +692,6 @@ double SimpleController::find_gap_center_angle(double lookahead_angle)
   return best_gap_center;
 }
 
-[[deprecated("A2 avoidance disabled per user request - use hard collision stop only")]]
-double SimpleController::compute_avoidance_steering(double )
-{
-  return 0.0;
-}
-
-[[deprecated("Wall repulsion disabled per user request - use curvature-based speed only")]]
-double SimpleController::compute_wall_repulsion_steering()
-{
-  return 0.0;
-}
 
 double SimpleController::compute_opponent_following_speed(double base_speed)
 {

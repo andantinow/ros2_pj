@@ -276,11 +276,9 @@ private:
   bool check_a1_zone();                     // A1 범위 체크 (후진 필요)
   bool check_a2_zone();                     // A2 범위 체크 (조향 회피 필요)
   double compute_reverse_steering();        // 후진 시 조향 계산 (A1)
-  double compute_avoidance_steering(double lookahead_angle);  // 회피 조향 계산 (A2) - 완전 반대 조향
   void update_obstacle_distances();         // 장애물 거리 업데이트
   double find_gap_center_angle(double lookahead_angle);  // lookahead 방향 기준 장애물 사이 중간점 각도 계산
   void publish_lookahead_marker(double x, double y, double z);  // Lookahead 시각화
-  double compute_wall_repulsion_steering(); // 벽 반발 조향 계산 (수식 기반)
   double compute_opponent_following_speed(double base_speed);  // 상대 차량 following 속도 계산
   double smooth_speed_change(double target_speed, double current_speed);  // 속도 변화 스무딩
   double compute_overtake_speed(double base_speed);  // 추월 시 속도 계산

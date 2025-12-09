@@ -1,7 +1,6 @@
 # State Machine
 
-This node implements a state machine to effectively incorparate both `time_trials_launch.xml` behaviors as well as `head_to_head_launch.xml`. 
-**TODO:** reintegrate state_indicator
+This node implements a state machine to effectively incorparate both `time_trials_launch.xml` behaviors as well as `head_to_head_launch.xml`.
 
 ## Description
 The main node of the state machine is implemented in [`state_machine.py`](./state_machine/state_machine.py) file. This node is responsible for subscribing/publishing to the necessary topics, and computing the conditions necessary for the state transitions.

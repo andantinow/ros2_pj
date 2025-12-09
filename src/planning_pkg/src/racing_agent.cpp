@@ -646,7 +646,6 @@ void RacingAgent::load_zones_from_config(const std::string& config_path)
     // Currently, the system relies on default zone generation after raceline is received.
     // For production use, implement parsing here or use the racing_agent_params.yaml
     // via ROS2 parameters instead of file-based configuration.
-    // TODO: Implement YAML parsing using yaml-cpp or similar library
     RCLCPP_WARN(this->get_logger(), 
         "Zone config file parsing not implemented. Using default zone generation.");
     file.close();
@@ -690,7 +689,7 @@ const RacelineZone* RacingAgent::get_current_zone() const
 void RacingAgent::load_overtake_trajectories(const std::string& config_path)
 {
     RCLCPP_INFO(this->get_logger(), "Loading trajectories from: %s", config_path.c_str());
-    // TODO: Implement trajectory loading from file
+    // NOTE: Trajectory loading from file is not yet implemented
 }
 
 void RacingAgent::generate_default_overtake_trajectories()
