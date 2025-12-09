@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Further reduced to minimize OUT movement and outer course tracking
-    constexpr double MAX_CORRECTION_FACTOR = 0.25;  // Further reduced to minimize steering corrections and pre-turn
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Further reduced to minimize wall avoidance steering
+    constexpr double INITIAL_LIMIT_SCALE = 1.2;  // Balanced: allow outer course in corners, but return to center after
+    constexpr double MAX_CORRECTION_FACTOR = 0.35;  // Moderate correction to ensure return to center after corner
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.35;  // Moderate wall avoidance while allowing outer course in corners
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
