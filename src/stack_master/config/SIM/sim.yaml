@@ -49,22 +49,15 @@ bridge:
     # opponent parameters
     num_agent: 2
 
-    # ego starting pose on map - moved to safer position away from walls
-    # Using raceline point ~50 (middle of track) to avoid A1 zone collision at start
-    sx: 4.233191
-    sy: -6.017884
-    stheta: 3.344299
+    # ego starting pose on map - moved further from walls (center-left straight)
+    sx: 0.0
+    sy: -4.5
+    stheta: 3.14159
 
-    # opp starting pose on map - placed further ahead of ego for natural FOLLOW behavior
-    # Increased initial gap (approximately 6-8 meters ahead) so ego car is not 
-    # "immediately on the opponent's bumper" from the beginning.
-    # This allows:
-    # - FOLLOW mode to look more natural with a larger gap
-    # - Room to test new overtaking logic and following-distance behavior
-    # Using raceline point further along the track
-    sx1: 2.0
-    sy1: -5.0
-    stheta1: 3.344299
+    # opp starting pose on map - ahead of ego on the same heading, with larger clearance
+    sx1: -2.0
+    sy1: -3.5
+    stheta1: 3.14159
 
     # teleop
     kb_teleop: True
