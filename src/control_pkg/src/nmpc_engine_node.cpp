@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.0;  // Minimal extra allowance; favor quick recentering
-    constexpr double MAX_CORRECTION_FACTOR = 0.45;  // Stronger correction to pull back toward center
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.35;  // Moderate wall avoidance while limiting outer bias
+    constexpr double INITIAL_LIMIT_SCALE = 0.9;  // Further reduced to minimize OUT-IN-OUT movement
+    constexpr double MAX_CORRECTION_FACTOR = 0.5;  // Increased correction to minimize OUT-IN-OUT and return to center
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Reduced to minimize OUT movement
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
