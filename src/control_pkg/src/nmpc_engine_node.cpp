@@ -1133,39 +1133,30 @@ private:
     
     switch (driving_mode_) {
       case DrivingMode::CRUISE:
+        // Normal NMPC behavior - no additional speed modification
         break;
         
       case DrivingMode::FOLLOW:
         {
-          double v_max_from_raceline = solution.speed;  
-          double v_follow = std::clamp(
-            opponent.speed - follow_margin_,
-            v_min_follow_,
-            v_max_from_raceline
-          );
-          solution.speed = v_follow;
-          
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-            "FOLLOW: distance=%.2fm, v_follow=%.2f (opponent=%.2f, margin=%.2f)",
-            opponent.distance, solution.speed, opponent.speed, follow_margin_);
+          // FOLLOW mode: keep NMPC raceline-based speed, only log state.
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "FOLLOW: distance=%.2fm, keeping NMPC speed=%.2f (opponent=%.2f)",
+            opponent.distance, solution.speed, opponent.speed);
         }
         break;
         
       case DrivingMode::OVERTAKE_CANDIDATE:
         {
-          double v_follow = std::clamp(
-            opponent.speed - follow_margin_,
-            v_min_follow_,
-            solution.speed
-          );
-          solution.speed = v_follow;
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-            "OVERTAKE_CANDIDATE: distance=%.2fm, evaluating...", opponent.distance);
+          // Do not slow down aggressively in candidate phase; just log.
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "OVERTAKE_CANDIDATE: distance=%.2fm, eval only (NMPC speed=%.2f)",
+            opponent.distance, solution.speed);
         }
         break;
         
       case DrivingMode::OVERTAKE:
         {
+          // Preserve original lateral offset behavior and mild speed boost.
           double lateral_offset = overtake_left_side_ ? overtake_path_width_ : -overtake_path_width_;
           
           for (auto& ref : reference) {
@@ -1181,7 +1172,7 @@ private:
           );
           solution.speed = std::max(solution.speed, v_overtake);
           
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
             "OVERTAKE %s: offset=%.2fm, speed=%.2f (boost=%.2f above opponent)",
             overtake_left_side_ ? "LEFT" : "RIGHT", lateral_offset, 
             solution.speed, solution.speed - opponent.speed);

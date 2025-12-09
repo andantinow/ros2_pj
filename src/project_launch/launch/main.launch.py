@@ -145,6 +145,21 @@ def generate_launch_description():
         }]
     )
 
+    # Opponent global raceline server - simple copy of main raceline for opponent simple controller
+    opponent_global_raceline_node = Node(
+        package='planning_pkg',
+        executable='raceline_server',
+        name='opponent_global_raceline_server',
+        output='screen',
+        parameters=[{
+            'raceline_file': os.path.join(planning_pkg_share, 'data', 'raceline.csv'),
+            'frame_id': 'map',
+            'publish_vref': False,
+            'path_topic': '/opponent_global_raceline',
+            'vref_topic': '/opponent_global_vref'
+        }]
+    )
+
     estimator_node = Node(
         package='localization_pkg',
         executable='estimator_node',
@@ -203,9 +218,11 @@ def generate_launch_description():
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)
-    ld.add_action(opponent_launch)
+    # Disable legacy opponent_publisher_cpp based opponent controller
+    # ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
     ld.add_action(opponent_raceline_node)
+    ld.add_action(opponent_global_raceline_node)
     ld.add_action(estimator_node)
     
     # Controller selection: use simple controller by default, NMPC when specified
@@ -236,6 +253,16 @@ def generate_launch_description():
     )
     ld.add_action(nmpc_controller_node_cond)
     
+    # Opponent simple controller - follows opponent_global_raceline using simple_controller.cpp
+    opponent_simple_controller_node = Node(
+        package='control_pkg',
+        executable='simple_controller_node',
+        name='opponent_simple_controller',
+        output='screen',
+        parameters=[os.path.join(project_launch_pkg, 'config', 'opponent_control_params.yaml')]
+    )
+    ld.add_action(opponent_simple_controller_node)
+
     ld.add_action(scan_processor_node)
     ld.add_action(dual_ekf_node)
 
