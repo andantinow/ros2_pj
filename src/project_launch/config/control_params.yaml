@@ -18,7 +18,7 @@ simple_controller:
     drive_topic: '/drive'
     scan_topic: '/scan'        # LiDAR scan topic for collision detection
     target_speed: 4.0          # Increased for faster racing (3.0 -> 4.0)
-    max_steer_angle: 0.576     # Max steering angle: 33 degrees
+    max_steer_angle: 0.60     # Max steering angle: ~34.4 degrees
     max_steer_rate: 4.0        # Slightly reduced for smoother steering response (5.0 -> 4.0)
     lateral_error_gain: 1.5    # Reduced for less aggressive lateral correction (2.0 -> 1.5)
     heading_error_gain: 0.8    # Reduced for smoother heading correction (1.0 -> 0.8)

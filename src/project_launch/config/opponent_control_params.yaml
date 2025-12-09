@@ -24,7 +24,7 @@ opponent_simple_controller:
     # Speed targets
     target_speed: 0.6
     max_speed: 0.8
-    max_steer_angle: 0.576
+    max_steer_angle: 0.60
     max_steer_rate: 4.0
 
     # Basic steering / controller gains (copied and slightly reduced from ego)
