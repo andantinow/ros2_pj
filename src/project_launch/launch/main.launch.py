@@ -136,35 +136,6 @@ def generate_launch_description():
         'data',
         PythonExpression(["'opponent_' + '", opponent_line_mode_conf, "' + '.csv'"])
     ])
-    
-    opponent_raceline_node = Node(
-        package='planning_pkg',
-        executable='raceline_server',
-        name='opponent_raceline_server',
-        output='screen',
-        parameters=[{
-            'raceline_file': opponent_raceline_file,
-            'frame_id': 'map',
-            'publish_vref': False,
-            'path_topic': '/opponent_raceline',
-            'vref_topic': '/opponent_vref'
-        }]
-    )
-
-    # Opponent global raceline server - simple copy of main raceline for opponent simple controller
-    opponent_global_raceline_node = Node(
-        package='planning_pkg',
-        executable='raceline_server',
-        name='opponent_global_raceline_server',
-        output='screen',
-        parameters=[{
-            'raceline_file': os.path.join(planning_pkg_share, 'data', 'raceline.csv'),
-            'frame_id': 'map',
-            'publish_vref': False,
-            'path_topic': '/opponent_global_raceline',
-            'vref_topic': '/opponent_global_vref'
-        }]
-    )
 
     estimator_node = Node(
         package='localization_pkg',
@@ -228,9 +199,37 @@ def generate_launch_description():
     # Disable legacy opponent_publisher_cpp based opponent controller
     # ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
-    from launch.conditions import IfCondition
-    ld.add_action(opponent_raceline_node, condition=IfCondition(use_opponent_conf))
-    ld.add_action(opponent_global_raceline_node, condition=IfCondition(use_opponent_conf))
+    # Opponent nodes only when use_opponent is true
+    opponent_raceline_node_cond = Node(
+        package='planning_pkg',
+        executable='raceline_server',
+        name='opponent_raceline_server',
+        output='screen',
+        parameters=[{
+            'raceline_file': opponent_raceline_file,
+            'frame_id': 'map',
+            'publish_vref': False,
+            'path_topic': '/opponent_raceline',
+            'vref_topic': '/opponent_vref'
+        }],
+        condition=IfCondition(use_opponent_conf)
+    )
+    opponent_global_raceline_node_cond = Node(
+        package='planning_pkg',
+        executable='raceline_server',
+        name='opponent_global_raceline_server',
+        output='screen',
+        parameters=[{
+            'raceline_file': os.path.join(planning_pkg_share, 'data', 'raceline.csv'),
+            'frame_id': 'map',
+            'publish_vref': False,
+            'path_topic': '/opponent_global_raceline',
+            'vref_topic': '/opponent_global_vref'
+        }],
+        condition=IfCondition(use_opponent_conf)
+    )
+    ld.add_action(opponent_raceline_node_cond)
+    ld.add_action(opponent_global_raceline_node_cond)
     ld.add_action(estimator_node)
     
     # Controller selection: use simple controller by default, NMPC when specified
