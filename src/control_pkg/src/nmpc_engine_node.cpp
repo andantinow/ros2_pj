@@ -745,6 +745,8 @@ public:
     declare_parameter("v_max_straight", 4.5);              
     declare_parameter("v_min_corner", 1.2);                
     declare_parameter("curvature_lookahead", 5);           
+    declare_parameter("corner_steer_threshold", 0.25);     
+    declare_parameter("corner_speed_cap", 2.5);            
     
     declare_parameter("corner_exit_wall_margin", 0.4);     
     declare_parameter("corner_exit_lateral_limit", 0.15);  
@@ -804,6 +806,8 @@ public:
     v_max_straight_ = get_parameter("v_max_straight").as_double();
     v_min_corner_ = get_parameter("v_min_corner").as_double();
     curvature_lookahead_ = get_parameter("curvature_lookahead").as_int();
+    corner_steer_threshold_ = get_parameter("corner_steer_threshold").as_double();
+    corner_speed_cap_ = get_parameter("corner_speed_cap").as_double();
     
     corner_exit_wall_margin_ = get_parameter("corner_exit_wall_margin").as_double();
     corner_exit_lateral_limit_ = get_parameter("corner_exit_lateral_limit").as_double();
@@ -1186,6 +1190,19 @@ private:
     }
     
     [[maybe_unused]] auto unused_check_a2 = &NMPCEngineNode::checkA2Zone;
+    
+    // Corner speed cap based on steering magnitude (safety layer):
+    // If steering angle is large (cornering), clamp speed so corners are taken slower.
+    {
+      double steer_abs = std::abs(solution.steering);
+      if (steer_abs > corner_steer_threshold_) {
+        double old_speed = solution.speed;
+        solution.speed = std::min(solution.speed, corner_speed_cap_);
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+          "Corner speed cap: |steer|=%.3f > %.3f, speed=%.2f -> %.2f",
+          steer_abs, corner_steer_threshold_, old_speed, solution.speed);
+      }
+    }
     
     publishNMPCVisualization(solution.predicted_trajectory, reference);
     
@@ -2319,6 +2336,8 @@ private:
   double v_max_straight_{4.5};              
   double v_min_corner_{1.2};                
   int curvature_lookahead_{5};              
+  double corner_steer_threshold_{0.25};
+  double corner_speed_cap_{2.5};
   
   double corner_exit_wall_margin_{0.4};     
   double corner_exit_lateral_limit_{0.15};  

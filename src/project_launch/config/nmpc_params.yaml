@@ -231,8 +231,12 @@ nmpc_engine_node:
     curvature_k1: 0.08                # [1/m] Straights threshold (smaller -> more segments treated as corner)
     curvature_k2: 0.40                # [1/m] Tight corner threshold
     v_max_straight: 3.0               # [m/s] Max speed on straights
-    v_min_corner: 2.0                 # [m/s] Max speed in tight corners
+    v_min_corner: 2.5                 # [m/s] Max speed in tight corners
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
+
+    # Corner speed cap based on steering magnitude (safety layer)
+    corner_steer_threshold: 0.25      # [rad] Above this steering angle, treat as corner
+    corner_speed_cap: 2.5             # [m/s] Hard cap on speed while cornering
     
     # =========================================================================
     # CORNER EXIT SMOOTHING (V5.0)
