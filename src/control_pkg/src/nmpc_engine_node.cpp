@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 0.9;  // Further reduced to minimize OUT-IN-OUT movement
-    constexpr double MAX_CORRECTION_FACTOR = 0.5;  // Increased correction to minimize OUT-IN-OUT and return to center
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Reduced to minimize OUT movement
+    constexpr double INITIAL_LIMIT_SCALE = 0.8;  // Further reduced to minimize OUT-IN-OUT movement and prevent extreme path following
+    constexpr double MAX_CORRECTION_FACTOR = 0.4;  // Moderate correction to reduce OUT-IN-OUT without excessive corrections
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.25;  // Further reduced to minimize OUT movement and OUT-IN-OUT
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;

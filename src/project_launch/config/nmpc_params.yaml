@@ -62,17 +62,17 @@ nmpc_engine_node:
     # based on ForzaETH reference architecture recommendations.
     
     # State tracking weights (v4.0: tuned for curvature-based speed control)
-    w_pos: 5.5                   # Position tracking weight (increased to minimize OUT-IN-OUT behavior)
-    w_yaw: 6.0                   # Heading tracking weight (reduced to prevent "heading obsession" in curves)
+    w_pos: 4.0                   # Position tracking weight (reduced to prevent extreme path following and minimize OUT-IN-OUT)
+    w_yaw: 5.5                   # Heading tracking weight (reduced to prevent excessive corrections)
     w_vel: 5.0                   # Velocity tracking weight (increased for strong speed tracking)
     
     # Control effort weights
-    w_steer: 1.0                 # Steering angle magnitude penalty (further increased to reduce pre-turn opposite steering by ~1/3)
+    w_steer: 1.2                 # Steering angle magnitude penalty (increased to reduce excessive steering and OUT-IN-OUT)
     w_accel: 0.3                 # Acceleration magnitude penalty
     
     # CRITICAL: Control rate (slew rate) weights
     # Increased to reduce OUT-IN-OUT steering changes
-    w_steer_rate: 400.0          # Steering rate penalty (increased to minimize OUT-IN-OUT steering movements)
+    w_steer_rate: 450.0          # Steering rate penalty (further increased to minimize OUT-IN-OUT steering movements)
     w_accel_rate: 60.0           # Acceleration rate penalty
     
     # Terminal cost weight (Issue 7.2: convergence improvement)
@@ -83,8 +83,8 @@ nmpc_engine_node:
     # =========================================================================
     # Allows deviation from reference within a "tube" around the path
     # Enables NMPC to find optimal racing lines within track boundaries
-    # Reduced to minimize OUT-IN-OUT behavior
-    lateral_tolerance: 0.12      # [m] Further reduced tolerance to minimize OUT-IN-OUT movement
+    # Balanced to prevent extreme path following while minimizing OUT-IN-OUT
+    lateral_tolerance: 0.14      # [m] Moderate tolerance to prevent extreme path following and reduce OUT-IN-OUT
     
     # =========================================================================
     # LATENCY COMPENSATION (Issue 3.3)
@@ -263,11 +263,11 @@ nmpc_engine_node:
     corner_exit_lateral_limit: 0.05   # [m] Further reduced to minimize OUT-IN-OUT and return to center quickly
     
     # Steering rate limiting
-    # Reduces steering magnitude during corner exit to prevent jerky corrections
+    # Reduces steering magnitude during corner exit to prevent jerky corrections and OUT-IN-OUT
     # 0.0 = no steering allowed, 1.0 = full steering allowed
-    corner_exit_steer_rate_limit: 0.85 # [ratio] Higher limit for quicker return to normal steering (reduced transition time)
+    corner_exit_steer_rate_limit: 0.7 # [ratio] Lower limit to reduce steering changes and minimize OUT-IN-OUT
     
     # Transition time
     # Duration of the smoothing period after exiting a corner
     # Longer = more gradual transition, shorter = quicker return to normal
-    corner_exit_transition_time: 0.6  # [s] Reduced transition time to stop steering angle quickly after corner exit
+    corner_exit_transition_time: 0.5  # [s] Shorter transition time to minimize OUT-IN-OUT movement
