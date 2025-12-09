@@ -229,11 +229,11 @@ nmpc_engine_node:
     # This ensures OUT-IN-OUT racing line with proper corner speed
     
     # Lower corner thresholds so more segments are treated as corners
-    curvature_k1: 0.05                # [1/m] Straights threshold (smaller -> more often 'corner')
-    curvature_k2: 0.25                # [1/m] Tight corner threshold (start strong corner earlier)
+    curvature_k1: 0.06                # [1/m] Straights threshold (slightly increased to avoid false corner detection)
+    curvature_k2: 0.30                # [1/m] Tight corner threshold (increased to delay corner recognition)
     v_max_straight: 2.5               # [m/s] Max speed on straights
     v_min_corner: 1.5                 # [m/s] Max speed in tight corners (slower for safety)
-    curvature_lookahead: 5            # [points] Shorter lookahead to avoid turning too early
+    curvature_lookahead: 3            # [points] Much shorter lookahead to avoid turning too early (reduced from 5)
 
     # Corner speed cap based on steering magnitude (safety layer)
     corner_steer_threshold: 0.15      # [rad] Treat corner earlier based on steering
