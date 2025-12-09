@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.2;  // Balanced: allow outer course in corners, but return to center after
-    constexpr double MAX_CORRECTION_FACTOR = 0.35;  // Moderate correction to ensure return to center after corner
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.35;  // Moderate wall avoidance while allowing outer course in corners
+    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Reduced to allow quicker return to center after corner
+    constexpr double MAX_CORRECTION_FACTOR = 0.4;  // Increased for faster correction and quicker steering return
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Reduced to minimize steering duration after corner exit
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
@@ -2123,9 +2123,51 @@ private:
           double k_abs = std::abs(curvature_now);
 
           // --- Ahead-averaged curvature for pre-brake ---
-          // DISABLED: No pre-brake to avoid turning too early in specific corners.
-          // Use only current segment curvature to prevent premature corner detection.
-          double k_eff = k_abs;  // Use only current segment curvature, no blending
+          // Look ahead moderately to reduce speed before entering corners
+          constexpr int AHEAD_SEGMENTS = 2;  // Look ahead 2 segments for pre-brake
+          double sum_k = k_abs;
+          int count_k = 1;
+          for (int k = 1; k <= AHEAD_SEGMENTS; ++k) {
+            int ref_idx = i + k;
+            if (ref_idx >= NUM_REF_POINTS - 1) {
+              break;
+            }
+            size_t idx_k = (start_idx + ref_idx * stride) % num_poses;
+            size_t next_idx_k = (start_idx + (ref_idx + 1) * stride) % num_poses;
+            double dx_k = poses[next_idx_k].pose.position.x - poses[idx_k].pose.position.x;
+            double dy_k = poses[next_idx_k].pose.position.y - poses[idx_k].pose.position.y;
+            double dist_k = std::sqrt(dx_k * dx_k + dy_k * dy_k);
+            if (dist_k <= 0.01) {
+              continue;
+            }
+
+            double qx_k = poses[idx_k].pose.orientation.x;
+            double qy_k = poses[idx_k].pose.orientation.y;
+            double qz_k = poses[idx_k].pose.orientation.z;
+            double qw_k = poses[idx_k].pose.orientation.w;
+            double yaw_k = std::atan2(2.0 * (qw_k * qz_k + qx_k * qy_k),
+                                      1.0 - 2.0 * (qy_k * qy_k + qz_k * qz_k));
+
+            double qx_kn = poses[next_idx_k].pose.orientation.x;
+            double qy_kn = poses[next_idx_k].pose.orientation.y;
+            double qz_kn = poses[next_idx_k].pose.orientation.z;
+            double qw_kn = poses[next_idx_k].pose.orientation.w;
+            double yaw_kn = std::atan2(2.0 * (qw_kn * qz_kn + qx_kn * qy_kn),
+                                       1.0 - 2.0 * (qy_kn * qy_kn + qz_kn * qz_kn));
+
+            double dyaw_k = yaw_kn - yaw_k;
+            while (dyaw_k > M_PI) dyaw_k -= 2.0 * M_PI;
+            while (dyaw_k < -M_PI) dyaw_k += 2.0 * M_PI;
+
+            double curv_k = std::abs(dyaw_k) / dist_k;
+            sum_k += curv_k;
+            count_k++;
+          }
+
+          double k_ahead_avg = (count_k > 0) ? (sum_k / static_cast<double>(count_k)) : k_abs;
+          // Blend current curvature with ahead curvature for pre-brake (moderate blend to avoid too early braking)
+          constexpr double K_BLEND = 0.3;  // Moderate blend: 30% ahead, 70% current
+          double k_eff = (1.0 - K_BLEND) * k_abs + K_BLEND * k_ahead_avg;
 
           // Use effective curvature to set reference speed (pre-brake before corners)
           if (k_eff < curvature_k1_) {

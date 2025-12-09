@@ -231,12 +231,12 @@ nmpc_engine_node:
     curvature_k1: 0.06                # [1/m] Straights threshold (slightly increased to avoid false corner detection)
     curvature_k2: 0.30                # [1/m] Tight corner threshold (increased to delay corner recognition)
     v_max_straight: 2.5               # [m/s] Max speed on straights
-    v_min_corner: 1.5                 # [m/s] Max speed in tight corners (slower for safety)
-    curvature_lookahead: 3            # [points] Much shorter lookahead to avoid turning too early (reduced from 5)
+    v_min_corner: 1.2                 # [m/s] Reduced speed in tight corners for better control
+    curvature_lookahead: 4            # [points] Moderate lookahead for pre-brake (increased from 3)
 
     # Corner speed cap based on steering magnitude (safety layer)
     corner_steer_threshold: 0.15      # [rad] Treat corner earlier based on steering
-    corner_speed_cap: 2.0             # [m/s] Hard cap on speed while cornering (more conservative)
+    corner_speed_cap: 1.8             # [m/s] Lower cap on speed while cornering (reduced from 2.0)
     
     # =========================================================================
     # CORNER EXIT SMOOTHING (V5.0)
@@ -265,9 +265,9 @@ nmpc_engine_node:
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections
     # 0.0 = no steering allowed, 1.0 = full steering allowed
-    corner_exit_steer_rate_limit: 0.75 # [ratio] Steering limit factor (slightly reduced for smoother return to center)
+    corner_exit_steer_rate_limit: 0.85 # [ratio] Higher limit for quicker return to normal steering (reduced transition time)
     
     # Transition time
     # Duration of the smoothing period after exiting a corner
     # Longer = more gradual transition, shorter = quicker return to normal
-    corner_exit_transition_time: 1.2  # [s] Slightly longer transition for smoother return to center
+    corner_exit_transition_time: 0.6  # [s] Reduced transition time to stop steering angle quickly after corner exit
