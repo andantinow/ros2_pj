@@ -2166,7 +2166,7 @@ private:
 
           double k_ahead_avg = (count_k > 0) ? (sum_k / static_cast<double>(count_k)) : k_abs;
           // Blend current curvature with ahead curvature to avoid braking too early
-          constexpr double K_BLEND = 0.2;  // small blend to reduce early slow/steer
+          constexpr double K_BLEND = 0.1;  // even smaller blend to delay slow/turn
           double k_eff = (1.0 - K_BLEND) * k_abs + K_BLEND * k_ahead_avg;
 
           // Use effective curvature to set reference speed (pre-brake before corners)
