@@ -123,7 +123,7 @@ nmpc_engine_node:
     # PHYSICAL CONSTRAINTS
     # =========================================================================
     # Hard limits on vehicle actuators
-    max_steer: 0.55              # [rad] Maximum steering angle (~31.5 degrees, slightly reduced)
+    max_steer: 0.52              # [rad] Maximum steering angle (~29.8 degrees, further reduced for smoother steering)
     max_steer_rate: 1.3          # [rad/s] Maximum steering rate (slightly reduced for smoother steering)
     max_speed: 2.5               # [m/s] Maximum forward speed
     max_accel: 2.0               # [m/s^2] Maximum acceleration (reduced)
@@ -232,7 +232,7 @@ nmpc_engine_node:
     curvature_k2: 0.30                # [1/m] Tight corner threshold (increased to delay corner recognition)
     v_max_straight: 2.5               # [m/s] Max speed on straights
     v_min_corner: 1.2                 # [m/s] Reduced speed in tight corners for better control
-    curvature_lookahead: 9            # [points] Increased lookahead distance for better corner anticipation
+    curvature_lookahead: 10           # [points] Further increased lookahead distance for better corner anticipation
 
     # Corner speed cap based on steering magnitude (safety layer)
     corner_steer_threshold: 0.15      # [rad] Treat corner earlier based on steering
