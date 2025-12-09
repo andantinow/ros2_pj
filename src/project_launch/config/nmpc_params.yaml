@@ -149,7 +149,7 @@ nmpc_engine_node:
     
     # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
     # User request: Reduce effective LiDAR range, ignore distant walls
-    a1_threshold: 0.15           # [m] Hard STOP only (reduced from 0.22)
+    a1_threshold: 0.20           # [m] Hard STOP only (more margin from wall)
     a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
     a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
     
@@ -256,12 +256,12 @@ nmpc_engine_node:
     
     # Wall margin constraint
     # On corner exit, enforce minimum distance from wall to avoid hugging it
-    corner_exit_wall_margin: 0.35     # [m] Min distance from wall during exit (reduced from 0.4 for more racing character)
+    corner_exit_wall_margin: 0.45     # [m] Min distance from wall during exit (more cautious)
     
     # Lateral deviation limit
     # Maximum allowed lateral deviation from reference during corner exit
     # Prevents the car from pushing too far to one side
-    corner_exit_lateral_limit: 0.18   # [m] Max lateral deviation during transition (increased from 0.15 for more OUT-IN-OUT)
+    corner_exit_lateral_limit: 0.12   # [m] Max lateral deviation during transition (tighter to avoid wall)
     
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections

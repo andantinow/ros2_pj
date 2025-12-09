@@ -49,15 +49,15 @@ bridge:
     # opponent parameters
     num_agent: 2
 
-    # ego starting pose on map - moved further from walls (center-left straight)
-    sx: 0.0
-    sy: -4.5
-    stheta: 3.14159
+    # ego starting pose on map - original position
+    sx: 4.233191
+    sy: -6.017884
+    stheta: 3.344299
 
-    # opp starting pose on map - ahead of ego on the same heading, with larger clearance
-    sx1: -2.0
-    sy1: -3.5
-    stheta1: 3.14159
+    # opp starting pose on map - original position
+    sx1: 2.0
+    sy1: -5.0
+    stheta1: 3.344299
 
     # teleop
     kb_teleop: True
