@@ -62,7 +62,7 @@ nmpc_engine_node:
     # based on ForzaETH reference architecture recommendations.
     
     # State tracking weights (v4.0: tuned for curvature-based speed control)
-    w_pos: 5.5                   # Position tracking weight (increased for stronger path following)
+    w_pos: 6.5                   # Position tracking weight (further increased for stronger raceline following)
     w_yaw: 6.5                   # Heading tracking weight (increased for better path alignment)
     w_vel: 5.0                   # Velocity tracking weight (increased for strong speed tracking)
     
@@ -83,8 +83,8 @@ nmpc_engine_node:
     # =========================================================================
     # Allows deviation from reference within a "tube" around the path
     # Enables NMPC to find optimal racing lines within track boundaries
-    # Reduced for stronger path following
-    lateral_tolerance: 0.12      # [m] Tighter tolerance for stronger path following
+    # Reduced for stronger raceline following
+    lateral_tolerance: 0.10      # [m] Further reduced tolerance for stronger raceline following
     
     # =========================================================================
     # LATENCY COMPENSATION (Issue 3.3)
