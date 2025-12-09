@@ -5,7 +5,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 
@@ -16,7 +15,6 @@ def generate_launch_description():
     planning_pkg_share = get_package_share_directory('planning_pkg')
     stack_master_pkg = get_package_share_directory('stack_master')
     f1tenth_gym_pkg = get_package_share_directory('f1tenth_gym_ros')
-    opponent_pkg = get_package_share_directory('opponent_publisher_cpp')
     localization_pkg = get_package_share_directory('localization_pkg')
 
     # launch arguments
@@ -99,17 +97,6 @@ def generate_launch_description():
             'map_yaml_path': map_yaml_path,
             'params_file': os.path.join(stack_master_pkg, 'config', 'SIM', 'sim_params.yaml'),
             'start_rviz': bridge_start_rviz_conf
-        }.items()
-    )
-
-    opponent_launch = IncludeLaunchDescription(
-        XMLLaunchDescriptionSource(
-            os.path.join(opponent_pkg, 'launch', 'opponent_publisher_launch.xml')
-        ),
-        launch_arguments={
-            'map_name': map_name_conf,
-            'speed': opponent_speed_conf,
-            'path_topic': '/opponent_raceline'
         }.items()
     )
 
@@ -196,8 +183,6 @@ def generate_launch_description():
 
     # add included launches and nodes
     ld.add_action(f1tenth_launch)
-    # Disable legacy opponent_publisher_cpp based opponent controller
-    # ld.add_action(opponent_launch)
     ld.add_action(raceline_node)
     # Opponent nodes only when use_opponent is true
     opponent_raceline_node_cond = Node(
