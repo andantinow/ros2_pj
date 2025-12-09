@@ -62,7 +62,7 @@ nmpc_engine_node:
     # based on ForzaETH reference architecture recommendations.
     
     # State tracking weights (v4.0: tuned for curvature-based speed control)
-    w_pos: 10.0                  # Position tracking weight (lateral error)
+    w_pos: 7.5                   # Position tracking weight (lateral error, reduced to avoid wall-hug)
     w_yaw: 7.0                   # Heading tracking weight (reduced to prevent "heading obsession" in curves)
     w_vel: 5.0                   # Velocity tracking weight (increased for strong speed tracking)
     
@@ -85,7 +85,7 @@ nmpc_engine_node:
     # Allows deviation from reference within a "tube" around the path
     # Enables NMPC to find optimal racing lines within track boundaries
     # v4.0: Set to ±0.15m for tight OUT-IN-OUT racing line tracking
-    lateral_tolerance: 0.15      # [m] Allowed deviation from centerline (±)
+    lateral_tolerance: 0.25      # [m] Allowed deviation from centerline (±) for safer clearance)
     
     # =========================================================================
     # LATENCY COMPENSATION (Issue 3.3)
@@ -149,7 +149,7 @@ nmpc_engine_node:
     
     # Collision detection thresholds (v5.1: REDUCED ranges for near-field only)
     # User request: Reduce effective LiDAR range, ignore distant walls
-    a1_threshold: 0.20           # [m] Hard STOP only (more margin from wall)
+    a1_threshold: 0.25           # [m] Hard STOP only (earlier stop near wall)
     a2_threshold: 0.25           # [m] NOT USED (avoidance disabled, kept for compatibility)
     a2_urgent_threshold: 0.20    # [m] NOT USED (avoidance disabled)
     
@@ -232,12 +232,12 @@ nmpc_engine_node:
     curvature_k1: 0.05                # [1/m] Straights threshold (smaller -> more often 'corner')
     curvature_k2: 0.25                # [1/m] Tight corner threshold (start strong corner earlier)
     v_max_straight: 2.5               # [m/s] Max speed on straights
-    v_min_corner: 1.5                 # [m/s] Max speed in tight corners
+    v_min_corner: 1.2                 # [m/s] Max speed in tight corners (slower for safety)
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
 
     # Corner speed cap based on steering magnitude (safety layer)
-    corner_steer_threshold: 0.18      # [rad] Above this steering angle, treat as corner (more sensitive)
-    corner_speed_cap: 2.5             # [m/s] Hard cap on speed while cornering
+    corner_steer_threshold: 0.15      # [rad] Treat corner earlier based on steering
+    corner_speed_cap: 2.0             # [m/s] Hard cap on speed while cornering (more conservative)
     
     # =========================================================================
     # CORNER EXIT SMOOTHING (V5.0)
@@ -256,12 +256,12 @@ nmpc_engine_node:
     
     # Wall margin constraint
     # On corner exit, enforce minimum distance from wall to avoid hugging it
-    corner_exit_wall_margin: 0.45     # [m] Min distance from wall during exit (more cautious)
+    corner_exit_wall_margin: 0.50     # [m] Min distance from wall during exit (more cautious)
     
     # Lateral deviation limit
     # Maximum allowed lateral deviation from reference during corner exit
     # Prevents the car from pushing too far to one side
-    corner_exit_lateral_limit: 0.12   # [m] Max lateral deviation during transition (tighter to avoid wall)
+    corner_exit_lateral_limit: 0.10   # [m] Max lateral deviation during transition (tighter to avoid wall)
     
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections
