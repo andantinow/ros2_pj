@@ -260,14 +260,14 @@ nmpc_engine_node:
     # Lateral deviation limit
     # Maximum allowed lateral deviation from reference during corner exit
     # Prevents the car from pushing too far to one side and ensures return to center
-    corner_exit_lateral_limit: 0.06   # [m] Moderate limit for better path following
+    corner_exit_lateral_limit: 0.08   # [m] Increased limit to allow staying near center (raceline) after corner exit
     
     # Steering rate limiting
     # Reduces steering magnitude during corner exit to prevent jerky corrections
     # 0.0 = no steering allowed, 1.0 = full steering allowed
-    corner_exit_steer_rate_limit: 0.8 # [ratio] Higher limit for better path following
+    corner_exit_steer_rate_limit: 0.85 # [ratio] Higher limit to allow smooth return to center (raceline) after corner
     
     # Transition time
     # Duration of the smoothing period after exiting a corner
     # Longer = more gradual transition, shorter = quicker return to normal
-    corner_exit_transition_time: 0.5  # [s] Shorter transition time to minimize OUT-IN-OUT movement
+    corner_exit_transition_time: 0.7  # [s] Moderate transition time to return to center (raceline) after corner exit

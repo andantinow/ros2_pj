@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.0;  // Balanced for better path following
-    constexpr double MAX_CORRECTION_FACTOR = 0.45;  // Increased correction for stronger path following
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Moderate wall avoidance while maintaining path following
+    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Slightly increased to allow staying near center after corner
+    constexpr double MAX_CORRECTION_FACTOR = 0.5;  // Increased correction to prevent going too inside and return to center
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.25;  // Reduced to prevent excessive steering away from center
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
@@ -1935,17 +1935,27 @@ private:
       double max_lateral = corner_exit_lateral_limit_ * (INITIAL_LIMIT_SCALE - transition_factor);
       
       if (std::abs(lateral_error) > max_lateral) {
-        double correction_factor = MAX_CORRECTION_FACTOR * (1.0 - transition_factor);
+        // Stronger correction for inner course (lateral_error > 0) to prevent going too inside
+        // Moderate correction for outer course (lateral_error < 0)
+        double base_correction = MAX_CORRECTION_FACTOR * (1.0 - transition_factor);
+        double correction_factor = (lateral_error > 0) ? base_correction * 1.3 : base_correction;
         
+        // Always apply correction to return to center (raceline)
         if ((lateral_error > 0 && solution.steering < 0) ||
             (lateral_error < 0 && solution.steering > 0)) {
+          // Steering is already correcting, apply stronger correction for inner course
+          if (lateral_error > 0) {
+            solution.steering *= (1.0 - correction_factor * 0.5);
+          }
         } else {
+          // Steering is not correcting, apply correction
           solution.steering *= (1.0 - correction_factor);
         }
         
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 200,
-          "Corner exit: lateral=%.2fm > limit=%.2fm, reducing steer by %.0f%%",
-          std::abs(lateral_error), max_lateral, correction_factor * 100);
+          "Corner exit: lateral=%.2fm > limit=%.2fm, reducing steer by %.0f%% (inner=%s)",
+          std::abs(lateral_error), max_lateral, correction_factor * 100,
+          (lateral_error > 0) ? "yes" : "no");
       }
     }
     
