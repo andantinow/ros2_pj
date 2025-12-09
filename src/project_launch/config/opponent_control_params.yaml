@@ -4,9 +4,9 @@ opponent_simple_controller:
     wheelbase: 0.33
     steer_limit: 0.576
     steer_rate_limit: 4.0
-    accel_limit: 3.0
-    decel_limit: -5.0
-    speed_limit: 3.0          # [m/s] overall speed cap
+    accel_limit: 1.5
+    decel_limit: -2.0
+    speed_limit: 0.8          # [m/s] overall speed cap
 
     # Path following
     lookahead_distance: 0.8
@@ -22,8 +22,8 @@ opponent_simple_controller:
     scan_topic: '/opp_scan'
 
     # Speed targets
-    target_speed: 2.5
-    max_speed: 3.0
+    target_speed: 0.8
+    max_speed: 0.8
     max_steer_angle: 0.576
     max_steer_rate: 4.0
 

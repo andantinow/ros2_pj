@@ -71,10 +71,9 @@ nmpc_engine_node:
     w_accel: 0.3                 # Acceleration magnitude penalty
     
     # CRITICAL: Control rate (slew rate) weights
-    # Issue 3.1: High steering rate weight prevents oscillation on straights
-    # Reduced from 600 to 200 to allow faster steering response in curves
-    # This helps prevent "sluggish steering" feeling in corners
-    w_steer_rate: 200.0          # Steering rate penalty - reduced for better curve response
+    # Increase steering rate penalty slightly to avoid too aggressive steering changes
+    # while still allowing responsive behavior in curves.
+    w_steer_rate: 300.0          # Steering rate penalty (was 200.0)
     w_accel_rate: 60.0           # Acceleration rate penalty
     
     # Terminal cost weight (Issue 7.2: convergence improvement)
@@ -126,10 +125,10 @@ nmpc_engine_node:
     # =========================================================================
     # Hard limits on vehicle actuators
     max_steer: 0.576             # [rad] Maximum steering angle (~33 degrees)
-    max_steer_rate: 1.8          # [rad/s] Maximum steering rate
-    max_speed: 6.0               # [m/s] Maximum forward speed
-    max_accel: 4.0               # [m/s^2] Maximum acceleration
-    min_accel: -6.0              # [m/s^2] Maximum deceleration (negative)
+    max_steer_rate: 1.5          # [rad/s] Maximum steering rate (reduced from 1.8)
+    max_speed: 3.0               # [m/s] Maximum forward speed (reduced from 6.0)
+    max_accel: 2.0               # [m/s^2] Maximum acceleration (reduced)
+    min_accel: -3.5              # [m/s^2] Maximum deceleration (softer braking)
     
     # =========================================================================
     # SIMPLIFIED COLLISION HANDLING (V4.0 + V5.1: Reduced LiDAR Range)
@@ -229,10 +228,10 @@ nmpc_engine_node:
     #
     # This ensures OUT-IN-OUT racing line with proper corner speed
     
-    curvature_k1: 0.2                 # [1/m] Curvature threshold: below = straight
-    curvature_k2: 0.8                 # [1/m] Curvature threshold: above = tight corner
-    v_max_straight: 6.5               # [m/s] Speed on straights (increased for much faster racing)
-    v_min_corner: 2.5                 # [m/s] Speed in tight corners (increased for faster corners)
+    curvature_k1: 0.08                # [1/m] Straights threshold (smaller -> more segments treated as corner)
+    curvature_k2: 0.40                # [1/m] Tight corner threshold
+    v_max_straight: 3.0               # [m/s] Max speed on straights
+    v_min_corner: 2.0                 # [m/s] Max speed in tight corners
     curvature_lookahead: 5            # [points] Lookahead for curvature calculation
     
     # =========================================================================

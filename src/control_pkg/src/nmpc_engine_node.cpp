@@ -2079,9 +2079,11 @@ private:
       double qw = poses[idx].pose.orientation.w;
       ref.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       
-      ref.v = v_max_straight_;  
+      // Start with straight-line speed
+      ref.v = v_max_straight_;
       
       if (i < NUM_REF_POINTS - 1) {
+        // --- Current segment curvature ---
         size_t next_idx = (start_idx + (i + 1) * stride) % num_poses;
         double dx = poses[next_idx].pose.position.x - poses[idx].pose.position.x;
         double dy = poses[next_idx].pose.position.y - poses[idx].pose.position.y;
@@ -2100,14 +2102,61 @@ private:
         
         double seg_dist = std::sqrt(dx * dx + dy * dy);
         if (seg_dist > 0.01) {
-          double curvature = dyaw / seg_dist;
-          
-          if (curvature < curvature_k1_) {
+          double curvature_now = dyaw / seg_dist;
+          double k_abs = std::abs(curvature_now);
+
+          // --- Ahead-averaged curvature for pre-brake ---
+          // Look ahead a few segments and average their curvature magnitude.
+          constexpr int AHEAD_SEGMENTS = 4;
+          double sum_k = k_abs;
+          int count_k = 1;
+          for (int k = 1; k <= AHEAD_SEGMENTS; ++k) {
+            int ref_idx = i + k;
+            if (ref_idx >= NUM_REF_POINTS - 1) {
+              break;
+            }
+            size_t idx_k = (start_idx + ref_idx * stride) % num_poses;
+            size_t next_idx_k = (start_idx + (ref_idx + 1) * stride) % num_poses;
+            double dx_k = poses[next_idx_k].pose.position.x - poses[idx_k].pose.position.x;
+            double dy_k = poses[next_idx_k].pose.position.y - poses[idx_k].pose.position.y;
+            double dist_k = std::sqrt(dx_k * dx_k + dy_k * dy_k);
+            if (dist_k <= 0.01) {
+              continue;
+            }
+
+            double qx_k = poses[idx_k].pose.orientation.x;
+            double qy_k = poses[idx_k].pose.orientation.y;
+            double qz_k = poses[idx_k].pose.orientation.z;
+            double qw_k = poses[idx_k].pose.orientation.w;
+            double yaw_k = std::atan2(2.0 * (qw_k * qz_k + qx_k * qy_k),
+                                      1.0 - 2.0 * (qy_k * qy_k + qz_k * qz_k));
+
+            double qx_kn = poses[next_idx_k].pose.orientation.x;
+            double qy_kn = poses[next_idx_k].pose.orientation.y;
+            double qz_kn = poses[next_idx_k].pose.orientation.z;
+            double qw_kn = poses[next_idx_k].pose.orientation.w;
+            double yaw_kn = std::atan2(2.0 * (qw_kn * qz_kn + qx_kn * qy_kn),
+                                       1.0 - 2.0 * (qy_kn * qy_kn + qz_kn * qz_kn));
+
+            double dyaw_k = yaw_kn - yaw_k;
+            while (dyaw_k > M_PI) dyaw_k -= 2.0 * M_PI;
+            while (dyaw_k < -M_PI) dyaw_k += 2.0 * M_PI;
+
+            double curv_k = std::abs(dyaw_k) / dist_k;
+            sum_k += curv_k;
+            count_k++;
+          }
+
+          double k_ahead_avg = (count_k > 0) ? (sum_k / static_cast<double>(count_k)) : k_abs;
+          double k_eff = std::max(k_abs, k_ahead_avg);  // use worst of now vs ahead
+
+          // Use effective curvature to set reference speed (pre-brake before corners)
+          if (k_eff < curvature_k1_) {
             ref.v = v_max_straight_;
-          } else if (curvature > curvature_k2_) {
+          } else if (k_eff > curvature_k2_) {
             ref.v = v_min_corner_;
           } else {
-            double t = (curvature - curvature_k1_) / (curvature_k2_ - curvature_k1_);
+            double t = (k_eff - curvature_k1_) / (curvature_k2_ - curvature_k1_);
             ref.v = v_max_straight_ + t * (v_min_corner_ - v_max_straight_);
           }
         }
