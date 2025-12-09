@@ -2133,8 +2133,8 @@ private:
           double k_abs = std::abs(curvature_now);
 
           // --- Ahead-averaged curvature for pre-brake ---
-          // Look ahead moderately to reduce speed before entering corners
-          constexpr int AHEAD_SEGMENTS = 2;  // Look ahead 2 segments for pre-brake
+          // Look ahead more to reduce speed before entering corners and prevent wall collision
+          constexpr int AHEAD_SEGMENTS = 3;  // Look ahead 3 segments for stronger pre-brake
           double sum_k = k_abs;
           int count_k = 1;
           for (int k = 1; k <= AHEAD_SEGMENTS; ++k) {
@@ -2175,8 +2175,8 @@ private:
           }
 
           double k_ahead_avg = (count_k > 0) ? (sum_k / static_cast<double>(count_k)) : k_abs;
-          // Blend current curvature with ahead curvature for pre-brake (moderate blend to avoid too early braking)
-          constexpr double K_BLEND = 0.3;  // Moderate blend: 30% ahead, 70% current
+          // Blend current curvature with ahead curvature for pre-brake (stronger blend to prevent wall collision)
+          constexpr double K_BLEND = 0.4;  // Stronger blend: 40% ahead, 60% current for earlier speed reduction
           double k_eff = (1.0 - K_BLEND) * k_abs + K_BLEND * k_ahead_avg;
 
           // Use effective curvature to set reference speed (pre-brake before corners)
