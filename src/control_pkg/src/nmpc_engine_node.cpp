@@ -1915,9 +1915,9 @@ private:
       return;
     }
     
-    constexpr double INITIAL_LIMIT_SCALE = 1.1;  // Reduced to allow quicker return to center after corner
-    constexpr double MAX_CORRECTION_FACTOR = 0.4;  // Increased for faster correction and quicker steering return
-    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.3;  // Reduced to minimize steering duration after corner exit
+    constexpr double INITIAL_LIMIT_SCALE = 1.0;  // Minimal extra allowance; favor quick recentering
+    constexpr double MAX_CORRECTION_FACTOR = 0.45;  // Stronger correction to pull back toward center
+    constexpr double MAX_WALL_AVOIDANCE_FACTOR = 0.35;  // Moderate wall avoidance while limiting outer bias
     
     double steer_rate_factor = corner_exit_steer_rate_limit_ + 
                                (1.0 - corner_exit_steer_rate_limit_) * transition_factor;
